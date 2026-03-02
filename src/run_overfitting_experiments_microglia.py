@@ -53,6 +53,9 @@ def build_args(region, exp, gene_encoder, attention, pca_components, base_args):
         lambda_entropy=exp["lambda_entropy"],
         log_base=log_base,
         exp_id=exp_id,
+        patience=getattr(base_args, "patience", 20),
+        n_hidden_layers=getattr(base_args, "n_hidden_layers", 1),
+        hidden_dim_3layer=getattr(base_args, "hidden_dim_3layer", 32),
     )
 
 
@@ -166,11 +169,14 @@ def run_experiments(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run Microglia overfitting experiments (CERAD + Braak)")
-    parser.add_argument("--region", type=str, required=True, help="Region (e.g., EC, ITG, PFC)")
+    parser.add_argument("--region", type=str, required=True, help="Region (e.g., EC, ITG, PFC, MTG). MTG uses Microglia-style two-head model with Thal/Braak.")
     parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--device", type=str, default="cuda" if __import__("torch").cuda.is_available() else "cpu")
     parser.add_argument("--attention_heads", type=int, default=1)
     parser.add_argument("--log_base", type=str, default=None, help="Base dir for logs and CSV (default: Microglia_{region})")
+    parser.add_argument("--patience", type=int, default=20, help="Early stopping patience (default: 20). Set to 0 to disable.")
+    parser.add_argument("--n_hidden_layers", type=int, default=1, choices=[1, 3], help="Baseline MLP: 1 or 3 hidden layers (default: 1).")
+    parser.add_argument("--hidden_dim_3layer", type=int, default=32, help="Hidden size when n_hidden_layers=3 (default: 32).")
     args = parser.parse_args()
     run_experiments(args)

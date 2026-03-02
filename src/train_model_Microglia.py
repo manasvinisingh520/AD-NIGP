@@ -87,11 +87,22 @@ def evaluate_microglia(model, dataloader, criterion_cerad, criterion_braak, devi
 
 
 def main(args):
-    data_path = os.path.join("data", "model_data", f"{args.region}_Microglia_data_for_model_training.pkl")
+    is_mtg = getattr(args, "region", None) == "MTG"
+    if is_mtg:
+        data_path = os.path.join("data", "model_data", "MTG_data_for_model_training.pkl")
+    else:
+        data_path = os.path.join("data", "model_data", f"{args.region}_Microglia_data_for_model_training.pkl")
     print(f"Loading data from {data_path}")
 
     with open(data_path, "rb") as f:
-        embeddings_folds, patient_info_folds, ptau_folds, thal_folds = pickle.load(f)
+        loaded = pickle.load(f)
+    if is_mtg:
+        # MTG: (embeddings_folds, patient_info_folds, thal_folds, braak_folds) - both categorical
+        embeddings_folds, patient_info_folds, thal_folds, braak_folds = loaded
+        ptau_folds = None  # not used for MTG
+    else:
+        embeddings_folds, patient_info_folds, ptau_folds, thal_folds = loaded
+        braak_folds = None
 
     print(f"Loaded {len(embeddings_folds)} folds")
 
@@ -104,6 +115,14 @@ def main(args):
     criterion_cerad = nn.CrossEntropyLoss()
     criterion_braak = nn.CrossEntropyLoss()
 
+    def _braak_to_idx(b):
+        """Map Braak value (numeric or string 2/3/5/6) to class index."""
+        try:
+            v = int(round(float(b)))
+            return BRAAK_TO_IDX.get(v, 0)
+        except (ValueError, TypeError):
+            return 0
+
     n_folds = len(embeddings_folds)
     all_fold_patient_data = []
 
@@ -114,9 +133,12 @@ def main(args):
     for fold_idx in range(n_folds):
         print(f"\nPreparing fold {fold_idx + 1}/{n_folds}...")
         fold_embeddings = embeddings_folds[fold_idx]
-        fold_ptau = ptau_folds[fold_idx]
         fold_thal = thal_folds[fold_idx]
         fold_patient_info = patient_info_folds[fold_idx]
+        if is_mtg:
+            fold_braak = braak_folds[fold_idx]
+        else:
+            fold_ptau = ptau_folds[fold_idx]
 
         use_gene_encoder = getattr(args, "gene_encoder", False)
         pooling = None if use_gene_encoder else getattr(args, "pooling", "mean")
@@ -127,7 +149,6 @@ def main(args):
         print(f"  Pooled embeddings shape: {pooled_embeddings.shape}")
 
         patient_embeddings = []
-        patient_ptau = []
         patient_thal = []
         cell_idx = 0
         for patient_idx, (patient_name, cell_names) in enumerate(fold_patient_info.items()):
@@ -135,23 +156,23 @@ def main(args):
             patient_cell_embeddings = pooled_embeddings[cell_idx : cell_idx + n_cells_patient]
             patient_emb = np.mean(patient_cell_embeddings, axis=0)
             patient_embeddings.append(patient_emb)
-            patient_ptau.append(fold_ptau[patient_idx])
             patient_thal.append(fold_thal[patient_idx])
             cell_idx += n_cells_patient
 
         patient_embeddings = np.array(patient_embeddings)
-        patient_ptau = np.array(patient_ptau)
         patient_thal = np.array(patient_thal)
         patient_cerad = np.array([cerad_to_idx.get(str(t).strip().lower(), 0) for t in patient_thal])
-        # Braak: ptau values 2,3,5,6 only (invalid/NaN patients already filtered in create_data)
-        patient_braak = np.array([BRAAK_TO_IDX.get(int(round(p)), 0) for p in patient_ptau])
+        if is_mtg:
+            patient_braak = np.array([_braak_to_idx(b) for b in fold_braak])
+        else:
+            patient_braak = np.array([BRAAK_TO_IDX.get(int(round(p)), 0) for p in fold_ptau])
 
         all_fold_patient_data.append({
             "embeddings": patient_embeddings,
             "cerad": patient_cerad,
             "braak": patient_braak,
         })
-        print(f"  Patient embeddings shape: {patient_embeddings.shape}, n_patients: {len(patient_ptau)}")
+        print(f"  Patient embeddings shape: {patient_embeddings.shape}, n_patients: {len(patient_thal)}")
 
     fold_results = []
 
@@ -232,6 +253,8 @@ def main(args):
                 use_attention=getattr(args, "attention", False),
                 num_heads=getattr(args, "attention_heads", 1),
                 dropout=args.dropout,
+                n_hidden_layers=getattr(args, "n_hidden_layers", 1),
+                hidden_dim_3layer=getattr(args, "hidden_dim_3layer", 32),
             ).to(device)
 
         optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
@@ -255,6 +278,10 @@ def main(args):
         best_test_f1 = float("-inf")
         best_epoch = 0
         best_test_f1_cerad = best_test_f1_braak = None
+        patience = getattr(args, "patience", 20)
+        if patience is not None and patience <= 0:
+            patience = None
+        epochs_without_improvement = 0
 
         for epoch in range(args.epochs):
             train_loss = train_epoch_microglia(
@@ -276,9 +303,16 @@ def main(args):
                 best_epoch = epoch
                 best_test_f1_cerad = test_f1_cerad
                 best_test_f1_braak = test_f1_braak
+                epochs_without_improvement = 0
+            else:
+                epochs_without_improvement += 1
 
             if (epoch + 1) % 10 == 0:
                 print(f"Epoch {epoch+1}/{args.epochs} - Train Loss: {train_loss:.4f}, Test F1: {test_f1:.4f} (CERAD: {test_f1_cerad:.4f}, Braak: {test_f1_braak:.4f})")
+
+            if patience is not None and epochs_without_improvement >= patience:
+                print(f"  Early stopping at epoch {epoch+1} (no test F1 improvement for {patience} epochs).")
+                break
 
         writer.close()
         print(f"\nTest Fold {test_fold_idx + 1} Best F1: {best_test_f1:.4f} at epoch {best_epoch + 1} (CERAD: {best_test_f1_cerad:.4f}, Braak: {best_test_f1_braak:.4f})")
@@ -319,5 +353,8 @@ if __name__ == "__main__":
     parser.add_argument("--lambda_entropy", type=float, default=1e-3)
     parser.add_argument("--log_base", type=str, default="runs")
     parser.add_argument("--exp_id", type=str, default=None)
+    parser.add_argument("--patience", type=int, default=20, help="Early stopping: stop if test F1 does not improve for this many epochs (default: 20). Set to 0 to disable.")
+    parser.add_argument("--n_hidden_layers", type=int, default=1, choices=[1, 3], help="Number of hidden layers in baseline MLP: 1 or 3 (default: 1).")
+    parser.add_argument("--hidden_dim_3layer", type=int, default=32, help="Hidden size when n_hidden_layers=3 (default: 32).")
     args = parser.parse_args()
     main(args)

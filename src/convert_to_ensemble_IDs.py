@@ -46,14 +46,26 @@ def process_grn_file(grn_file, output_file, mapping):
             line = line.rstrip('\n\r')
             if not line:
                 continue
-            
+
             parts = line.split('\t')
             if len(parts) < 2:
                 continue
-            
-            original_tf, original_target = parts[0].strip(), parts[1].strip()
+
+            original_tf = parts[0].strip()
+            second = parts[1].strip()
             score = parts[2].strip() if len(parts) > 2 else ''
-            
+
+            # If we only got 2 columns but the second contains a space, it may be "Target Score"
+            # (some GRN files use space between target and score instead of tab)
+            if not score and ' ' in second:
+                tok = second.rsplit(None, 1)
+                if len(tok) == 2:
+                    original_target, score = tok[0], tok[1]
+                else:
+                    original_target = second
+            else:
+                original_target = second
+
             # Map to Ensembl IDs
             tf = mapping.get(original_tf, original_tf)
             target = mapping.get(original_target, original_target) if original_target else ''
@@ -167,7 +179,7 @@ def main():
         '-region',
         type=str,
         required=True,
-        help='Region to process (e.g., V1, V2, ITG, PFC, EC)'
+        help='Region to process (e.g., V1, V2, ITG, PFC, EC, MTG for SEA AD)'
     )
     parser.add_argument(
         '-cell_type',

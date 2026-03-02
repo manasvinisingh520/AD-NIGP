@@ -38,7 +38,9 @@ LOSS_PTAU_OPTS = ["none"]
 
 def build_args(region, exp, attention, loss_ptau, pca_components, base_args):
     exp_id = f"attn{attention}_{loss_ptau}_pca{pca_components}_{exp['name']}"
-    log_base = getattr(base_args, "log_base", None) or f"Astrocytes_{region}_Expression"
+    log_base = getattr(base_args, "log_base", None) or (
+        f"MTG_Expression" if region == "MTG" else f"Astrocytes_{region}_Expression"
+    )
     return SimpleNamespace(
         region=region,
         loss_ptau=loss_ptau,
@@ -56,12 +58,15 @@ def build_args(region, exp, attention, loss_ptau, pca_components, base_args):
         verbose=False,
         n_hidden_layers=getattr(base_args, "n_hidden_layers", 1),
         hidden_dim_3layer=getattr(base_args, "hidden_dim_3layer", 32),
+        patience=getattr(base_args, "patience", 20),
     )
 
 
 def run_experiments(args):
     region = args.region
-    log_base_dir = getattr(args, "log_base", None) or f"Astrocytes_{region}_Expression"
+    log_base_dir = getattr(args, "log_base", None) or (
+        f"MTG_Expression" if region == "MTG" else f"Astrocytes_{region}_Expression"
+    )
     output_csv = args.output or os.path.join(log_base_dir, "expression_experiments.csv")
     os.makedirs(log_base_dir, exist_ok=True)
 
@@ -75,7 +80,7 @@ def run_experiments(args):
     best_f1 = -1.0
 
     print(f"\n{'='*70}")
-    print(f"Astrocytes expression experiments: {n_runs} runs")
+    print(f"Expression experiments: {n_runs} runs")
     print(f"Region={region}. Logs: {log_base_dir}/")
     print(f"Results: {output_csv}")
     print(f"{'='*70}\n")
@@ -165,7 +170,7 @@ def run_experiments(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run Astrocytes overfitting experiments on expression data (ptau + Thal)")
-    parser.add_argument("--region", type=str, required=True, help="Region (e.g., EC, ITG, PFC)")
+    parser.add_argument("--region", type=str, required=True, help="Region (e.g., EC, ITG, PFC, MTG). MTG uses SEA_AD_Data/MTG AnnData and CERAD+Braak model.")
     parser.add_argument("--epochs", type=int, default=1000)
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--device", type=str, default="cuda" if __import__("torch").cuda.is_available() else "cpu")
@@ -178,5 +183,6 @@ if __name__ == "__main__":
                         help="Number of hidden layers in baseline MLP: 1 (minimal) or 3 (original). Default: 1.")
     parser.add_argument("--hidden_dim_3layer", type=int, default=32,
                         help="Hidden size when n_hidden_layers=3 (default: 32).")
+    parser.add_argument("--patience", type=int, default=20, help="Early stopping patience (default: 20). Set to 0 to disable.")
     args = parser.parse_args()
     run_experiments(args)

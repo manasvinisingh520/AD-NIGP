@@ -1,15 +1,11 @@
-"""Train baseline ranking model on patient-level raw expression folds (Astrocytes only).
+"""Train baseline ranking model on patient-level raw expression folds (Astrocytes only, or MTG with CERAD+Braak).
 
 This script reuses the model + training utilities from `src/train_model.py` and `src/baseline_model.py`,
-but loads raw expression data produced by `src/create_raw_expression_data.py` with --cell_type Astrocytes.
+but loads raw expression data produced by `src/create_raw_expression_data.py` with --cell_type Astrocytes or MTG.
 
 Expected pickle format (per region):
-    (expression_folds, patient_info_folds, ptau_folds, thal_folds)
-
-Where:
-    expression_folds: list[np.ndarray], each (n_patients_in_fold, n_genes)
-    ptau_folds: list[list[float]], each length n_patients_in_fold
-    thal_folds: list[list[int/str]], each length n_patients_in_fold
+    Astrocytes/Microglia: (expression_folds, patient_info_folds, ptau_folds, thal_folds)
+    MTG: (expression_folds, patient_info_folds, thal_folds, braak_folds)
 """
 
 import argparse
@@ -26,10 +22,142 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 
 from baseline_model import BaselineRankingModel
+from baseline_model_Microglia import (
+    BaselineRankingModelMicroglia,
+    CERAD_CLASS_ORDER,
+    BRAAK_TO_IDX,
+)
 from train_model import EmbeddingDataset, train_epoch, evaluate
+from train_model_Microglia import (
+    EmbeddingDatasetMicroglia,
+    train_epoch_microglia,
+    evaluate_microglia,
+)
+
+
+def _braak_to_idx(b):
+    try:
+        v = int(round(float(b)))
+        return BRAAK_TO_IDX.get(v, 0)
+    except (ValueError, TypeError):
+        return 0
+
+
+def _main_mtg(args):
+    """MTG expression: load MTG_raw_expression_data.pkl, CERAD + Braak two-head classification."""
+    data_path = os.path.join("data", "model_data", "MTG_raw_expression_data.pkl")
+    print(f"Loading MTG raw-expression data from {data_path}")
+    with open(data_path, "rb") as f:
+        expression_folds, patient_info_folds, thal_folds, braak_folds = pickle.load(f)
+    n_folds = len(expression_folds)
+    print(f"Loaded {n_folds} folds")
+
+    device = torch.device(args.device)
+    cerad_to_idx = {s: i for i, s in enumerate(CERAD_CLASS_ORDER)}
+    n_cerad_classes = len(CERAD_CLASS_ORDER)
+    n_braak_classes = len(BRAAK_TO_IDX)
+    criterion_cerad = nn.CrossEntropyLoss()
+    criterion_braak = nn.CrossEntropyLoss()
+
+    all_fold_patient_data = []
+    for fold_idx in range(n_folds):
+        fold_X = np.array(expression_folds[fold_idx], dtype=np.float32)
+        fold_thal = thal_folds[fold_idx]
+        fold_braak = braak_folds[fold_idx]
+        patient_cerad = np.array([cerad_to_idx.get(str(t).strip().lower(), 0) for t in fold_thal], dtype=np.int64)
+        patient_braak = np.array([_braak_to_idx(b) for b in fold_braak], dtype=np.int64)
+        all_fold_patient_data.append({"embeddings": fold_X, "cerad": patient_cerad, "braak": patient_braak})
+        print(f"Fold {fold_idx + 1}: X={fold_X.shape}, patients={len(fold_thal)}")
+
+    fold_results = []
+    for test_fold_idx in range(n_folds):
+        print(f"\n{'='*60}\nTest Fold {test_fold_idx + 1}/{n_folds}\n{'='*60}")
+        train_fold_indices = [i for i in range(n_folds) if i != test_fold_idx]
+        train_embeddings = np.concatenate([all_fold_patient_data[i]["embeddings"] for i in train_fold_indices], axis=0)
+        train_cerad = np.concatenate([all_fold_patient_data[i]["cerad"] for i in train_fold_indices], axis=0)
+        train_braak = np.concatenate([all_fold_patient_data[i]["braak"] for i in train_fold_indices], axis=0)
+        test_embeddings = all_fold_patient_data[test_fold_idx]["embeddings"]
+        test_cerad = all_fold_patient_data[test_fold_idx]["cerad"]
+        test_braak = all_fold_patient_data[test_fold_idx]["braak"]
+
+        scaler = StandardScaler()
+        train_embeddings = scaler.fit_transform(train_embeddings)
+        test_embeddings = scaler.transform(test_embeddings)
+        pca_components = getattr(args, "pca_components", None)
+        if pca_components is not None:
+            pca = PCA(n_components=pca_components)
+            train_embeddings = pca.fit_transform(train_embeddings)
+            test_embeddings = pca.transform(test_embeddings)
+
+        train_dataset = EmbeddingDatasetMicroglia(train_embeddings, train_cerad, train_braak)
+        test_dataset = EmbeddingDatasetMicroglia(test_embeddings, test_cerad, test_braak)
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+        test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
+
+        model = BaselineRankingModelMicroglia(
+            input_dim=train_embeddings.shape[1],
+            input_shape=None,
+            n_cerad_classes=n_cerad_classes,
+            n_braak_classes=n_braak_classes,
+            use_attention=False,
+            num_heads=1,
+            dropout=args.dropout,
+            n_hidden_layers=getattr(args, "n_hidden_layers", 1),
+            hidden_dim_3layer=getattr(args, "hidden_dim_3layer", 32),
+        ).to(device)
+        optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+
+        log_base = getattr(args, "log_base", "runs")
+        exp_id_str = f"_{args.exp_id}" if getattr(args, "exp_id", None) else ""
+        log_dir = os.path.join(log_base, f"MTG_expr{exp_id_str}_testfold{test_fold_idx+1}")
+        writer = SummaryWriter(log_dir)
+
+        best_test_f1 = float("-inf")
+        best_epoch = 0
+        patience = getattr(args, "patience", 20)
+        if patience is not None and patience <= 0:
+            patience = None
+        epochs_without_improvement = 0
+
+        for epoch in range(args.epochs):
+            train_loss = train_epoch_microglia(
+                model, train_loader, criterion_cerad, criterion_braak, optimizer, device, lambda_entropy=0.0
+            )
+            test_loss, test_f1_cerad, test_f1_braak = evaluate_microglia(
+                model, test_loader, criterion_cerad, criterion_braak, device
+            )
+            test_f1 = (test_f1_cerad + test_f1_braak) / 2.0
+            writer.add_scalar("Loss/Train", train_loss, epoch)
+            writer.add_scalar("Loss/Test", test_loss, epoch)
+            writer.add_scalar("Metrics/Test_F1", test_f1, epoch)
+            if test_f1 > best_test_f1:
+                best_test_f1 = test_f1
+                best_epoch = epoch
+                epochs_without_improvement = 0
+            else:
+                epochs_without_improvement += 1
+            if (epoch + 1) % 10 == 0 and getattr(args, "verbose", True):
+                print(f"Epoch {epoch+1}/{args.epochs} - Train Loss: {train_loss:.4f}, Test F1: {test_f1:.4f}")
+            if patience is not None and epochs_without_improvement >= patience:
+                if getattr(args, "verbose", True):
+                    print(f"  Early stopping at epoch {epoch+1} (no test F1 improvement for {patience} epochs).")
+                break
+        writer.close()
+        print(f"\nTest Fold {test_fold_idx + 1} Best F1: {best_test_f1:.4f} at epoch {best_epoch + 1}")
+        fold_results.append({"test_fold": test_fold_idx + 1, "best_f1": best_test_f1, "best_epoch": best_epoch + 1, "best_test_mse": 0.0, "best_test_mae": 0.0})
+
+    print(f"\n{'='*60}\nLeave-One-Fold-Out Summary (MTG Expression)\n{'='*60}")
+    for r in fold_results:
+        print(f"\033[92mTest Fold {r['test_fold']}: F1={r['best_f1']:.4f}\033[0m")
+    avg_f1 = np.mean([r["best_f1"] for r in fold_results])
+    print(f"\nAverage F1: {avg_f1:.4f}")
+    return avg_f1, 0.0, 0.0, fold_results
 
 
 def main(args):
+    if args.region == "MTG":
+        return _main_mtg(args)
+
     data_path = os.path.join(
         "data",
         "model_data",
@@ -253,7 +381,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train baseline ranking model on raw expression folds (Astrocytes only)")
-    parser.add_argument("--region", type=str, required=True, help="Region name (e.g., EC, ITG, PFC)")
+    parser.add_argument("--region", type=str, required=True, help="Region name (e.g., EC, ITG, PFC, MTG). MTG uses CERAD+Braak two-head model.")
     parser.add_argument(
         "--loss_ptau",
         type=str,

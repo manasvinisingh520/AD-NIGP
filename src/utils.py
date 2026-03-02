@@ -462,6 +462,13 @@ def aggregate_cells_into_pseudobulk(adata, target_cells_per_bin, filter_patients
         base_cells_per_bin = num_cells // num_bins
         remainder = num_cells % num_bins
         
+        # Work directly with underlying arrays to avoid AnnData indexing issues
+        # Use raw UMI counts from layer if present (e.g. SEA_AD), else .X
+        if "UMIs" in getattr(patient_cells, "layers", {}):
+            count_matrix = patient_cells.layers["UMIs"]
+        else:
+            count_matrix = patient_cells.X
+        
         cell_idx = 0
         for bin_idx in range(num_bins):
             bin_size = base_cells_per_bin + (1 if bin_idx < remainder else 0)
@@ -469,9 +476,7 @@ def aggregate_cells_into_pseudobulk(adata, target_cells_per_bin, filter_patients
             end_idx = cell_idx + bin_size
             cell_idx = end_idx
             
-            # Work directly with underlying arrays to avoid AnnData indexing issues
-            # Get the subset of the count matrix directly
-            X_subset = patient_cells.X[start_idx:end_idx]
+            X_subset = count_matrix[start_idx:end_idx]
             
             # Calculate bin counts (sum across cells, keep gene dimension)
             if hasattr(X_subset, 'toarray'):
@@ -710,11 +715,12 @@ def get_DEGs(region, top_k=500, cell_type="Astrocytes", disable_intersection=Fal
 def get_grn_file_paths(region, cell_type="Astrocytes", data_dir="data"):
     """
     Construct file paths for GRN files (GRN.tsv, matrix.csv, AnnData.h5ad) based on region and cell type.
-    
+    For region "MTG" (SEA AD), uses data/GRN/MTG/ for GRN and data/GRN/ for matrix and AnnData.
+
     Parameters:
     -----------
     region : str
-        Region name (e.g., "V1", "EC", "ITG", "PFC", "V2")
+        Region name (e.g., "V1", "EC", "ITG", "PFC", "V2", "MTG")
     cell_type : str
         Cell type (e.g., "Astrocytes", "Microglia"). Default: "Astrocytes"
     data_dir : str
@@ -726,6 +732,17 @@ def get_grn_file_paths(region, cell_type="Astrocytes", data_dir="data"):
         Tuple of (grn_file, matrix_file, anndata_file, grn_output, matrix_output, anndata_output)
         Output files are the same as input files but with "_ensembl" suffix before extension
     """
+    # SEA AD MTG: GRN in data/GRN/MTG/, matrix and AnnData in data/GRN/
+    if region == "MTG":
+        grn_dir = os.path.join(data_dir, "GRN", "MTG")
+        grn_file = os.path.join(grn_dir, "MTG_GRN.tsv")
+        matrix_file = os.path.join(grn_dir, "MTG_matrix.csv")
+        anndata_file = os.path.join(grn_dir, "MTG_AnnData.h5ad")
+        grn_output = os.path.join(grn_dir, "MTG_GRN_ensembl.tsv")
+        matrix_output = os.path.join(grn_dir, "MTG_matrix_ensembl.csv")
+        anndata_output = os.path.join(grn_dir, "MTG_AnnData_ensembl.h5ad")
+        return grn_file, matrix_file, anndata_file, grn_output, matrix_output, anndata_output
+
     grn_dir = os.path.join(data_dir, 'GRN', cell_type)
     
     # Construct filenames based on cell_type (Microglia has "_Microglia_" in filename)
@@ -877,6 +894,84 @@ def create_color_mapping(attribute_values, attribute_type='auto', custom_colors=
     # Return extracted values for counting purposes
     return point_colors, color_map, unique_values, attribute_values
 
+def extract_best_per_attn_loss_dim(csv_path: str, embedding: bool = None, microglia: bool = False):
+    """Read experiments CSV and return the best model (by F1) per group.
+    If embedding=True or CSV has 'gene_encoder', group by (gene_encoder, attention, loss_ptau, pca_components).
+    Otherwise (expression) group by (attention, loss_ptau, pca_components).
+    """
+    from read_tensorboard_files import count_overfitts
+    df = pd.read_csv(csv_path)
+    if "avg_f1" not in df.columns:
+        raise ValueError(f"CSV must have column 'avg_f1'. Found: {list(df.columns)}")
+    df = df.dropna(subset=["avg_f1"])
+    use_embedding = embedding if embedding is not None else ("gene_encoder" in df.columns)
+    if use_embedding:
+        if not microglia:
+            group_cols = ["gene_encoder", "attention", "loss_ptau", "pca_components"]
+        else:
+            group_cols = ["gene_encoder", "attention", "pca_components"]
+    else:
+        if not microglia:
+            group_cols = ["attention", "loss_ptau", "pca_components"]
+        else:
+            group_cols = ["attention", "pca_components"]
+    for c in group_cols:
+        if c not in df.columns:
+            raise ValueError(f"CSV must have column '{c}'. Found: {list(df.columns)}")
+    df = df.copy()
+    # Normalize no-PCA for expression (embedding uses 2,4,8,16 only)
+    if not use_embedding:
+        no_pca = (df["pca_components"].isna()) | (df["pca_components"].astype(str).str.lower().isin(("none", "nan", "")))
+        df = df.astype({"pca_components": object})
+        df.loc[no_pca, "pca_components"] = "None"
+    # Best row per group by F1
+    idx = df.groupby(group_cols)["avg_f1"].idxmax()
+    overfits = []
+    for i in idx:
+        row = df.loc[i]
+        logdir = tensorboard_dir_for_row(row, microglia=microglia)
+        try:
+            overfit = count_overfitts(logdir)
+        except Exception as e:
+            print(f"Warning: Could not check overfitting for {logdir}: {e}")
+            overfit = None
+        overfits.append(overfit)
+    df.loc[idx, "overfit"] = overfits
+    best = df.loc[idx].sort_values(group_cols).reset_index(drop=True)
+    return best
+
+
+def tensorboard_dir_for_row(row, log_base=None, microglia=False):
+    """Build TensorBoard directory path for a best-model row.
+    Example: I:\\sf2026\\Astrocytes_V2_run2\\V2_None_mse_geneenc_drop0.5_wd1.0_geTrue_attnFalse_mse_pca16_all_strong_testfold8
+    """
+    region = row["region"]
+    if log_base is None:
+        log_base = os.path.join("I:\\", "sf2026", f"Microglia_{region}")
+    if region != "EC":
+        pooling = row.get("pooling", "None")
+        if not microglia:
+            loss_ptau = row["loss_ptau"]
+        else:
+            loss_ptau = ""
+        gene_encoder = row.get("gene_encoder")
+        pooling = "mean" if not gene_encoder else pooling
+        attention = row.get("attention")
+        dropout = row["dropout"]
+        wd = row["weight_decay"]
+        exp_id = row.get("exp_id", row.get("run", ""))
+        if not microglia:
+            mname = "_geneenc" if gene_encoder else ("_attn" if attention else "")
+            name = f"{region}_{pooling}_{loss_ptau}{mname}_drop{dropout}_wd{wd}_{exp_id}"
+        else:
+            mname = "_ge" if gene_encoder else ("_attn" if attention else "")
+            name = f"{region}_Microglia{mname}_drop{dropout}_wd{wd}_{exp_id}"
+        return os.path.join(log_base, name)
+    else:
+        exp_id = row.get("exp_id", row.get("run", ""))
+        return os.path.join(log_base, exp_id)
+
+
 def scale_embeddings(embeddings_matrix, expression_matrix, n_components=None):
     # expression_matrix: (n_cells, n_genes) - no need to transpose
     # embedding_matrix: (n_genes, n_dims)
@@ -890,3 +985,41 @@ def scale_embeddings(embeddings_matrix, expression_matrix, n_components=None):
     scaled_embeddings_matrix = scaled_embeddings_matrix.astype('float16')
     print(f"Scaled embeddings matrix shape: {scaled_embeddings_matrix.shape}")
     return scaled_embeddings_matrix
+
+
+def get_top_ranked_genes(csv_path, top_k=5):
+    """Return top K gene names from ranked_genes.csv (by rank)."""
+    df = pd.read_csv(csv_path)
+    if "gene" not in df.columns:
+        raise ValueError(f"ranked_genes CSV must have column 'gene'. Found: {list(df.columns)}")
+    if "rank" in df.columns:
+        df = df.sort_values("rank")
+    return df["gene"].head(top_k).astype(str).str.strip().tolist()
+
+
+def get_top_dge_union_genes(region="EC", cell_type="Astrocytes", top_k=5, dge_results_dir=None):
+    """Return top K gene names from union of region DGE results (by best padj)."""
+    default_dge_dir = Path("results/dge_final")
+    dge_dir = Path(dge_results_dir) if dge_results_dir else default_dge_dir
+    if not dge_dir.exists():
+        raise FileNotFoundError(f"DGE results directory not found: {dge_dir}")
+    if cell_type == "Microglia":
+        pattern = f"dge_results_microglia_{region}_*.csv"
+    else:
+        pattern = f"dge_results_{region}_*.csv"
+    dge_files = sorted(dge_dir.glob(pattern))
+    if not dge_files:
+        raise FileNotFoundError(f"No DGE files for region={region} in {dge_dir}")
+    gene_to_best_padj = {}
+    for path in dge_files:
+        df = pd.read_csv(path, index_col=0)
+        if "padj" not in df.columns:
+            continue
+        for gene in df.index[df["padj"].notna()]:
+            p = float(df.loc[gene, "padj"])
+            if gene not in gene_to_best_padj or p < gene_to_best_padj[gene]:
+                gene_to_best_padj[gene] = p
+    if not gene_to_best_padj:
+        raise ValueError("No genes with valid padj in DGE results.")
+    sorted_genes = sorted(gene_to_best_padj.keys(), key=lambda g: gene_to_best_padj[g])
+    return sorted_genes[:top_k]

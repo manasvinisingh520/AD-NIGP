@@ -21,14 +21,13 @@ class BaselineRankingModelMicroglia(nn.Module):
         use_attention=False,
         num_heads=1,
         dropout=0.2,
+        n_hidden_layers=1,
+        hidden_dim_3layer=32,
     ):
         super(BaselineRankingModelMicroglia, self).__init__()
 
         self.use_attention = use_attention
-
-        hidden_dim1 = 8
-        hidden_dim2 = 4
-        hidden_dim3 = 4
+        self.n_hidden_layers = n_hidden_layers
 
         if input_shape is not None and len(input_shape) == 2:
             n_genes, n_dims = input_shape
@@ -50,22 +49,39 @@ class BaselineRankingModelMicroglia(nn.Module):
             self.attention = None
             first_layer_input = input_dim
 
-        self.shared = nn.Sequential(
-            nn.Linear(first_layer_input, hidden_dim1),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim1, hidden_dim2),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim2, hidden_dim3),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-        )
+        if n_hidden_layers == 1:
+            hidden_dim = 4  # keep small for low sample count
+            self.shared = nn.Sequential(
+                nn.Linear(first_layer_input, 8),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+                nn.Linear(8, hidden_dim),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+            )
+        elif n_hidden_layers == 3:
+            h = hidden_dim_3layer
+            self.shared = nn.Sequential(
+                nn.Linear(first_layer_input, h // 2),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+                nn.Linear(h // 2, h // 4),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+                nn.Linear(h // 4, h // 8),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+            )
+            hidden_dim = max(h // 8, 1)
+        else:
+            raise ValueError("n_hidden_layers must be 1 or 3")
+
+        self._hidden_dim = hidden_dim
 
         if n_cerad_classes is None or n_braak_classes is None:
             raise ValueError("n_cerad_classes and n_braak_classes must be specified")
-        self.cerad_head = nn.Linear(hidden_dim3, n_cerad_classes)
-        self.braak_head = nn.Linear(hidden_dim3, n_braak_classes)
+        self.cerad_head = nn.Linear(self._hidden_dim, n_cerad_classes)
+        self.braak_head = nn.Linear(self._hidden_dim, n_braak_classes)
 
     def forward(self, x):
         if self.use_attention and self.attention is not None and len(x.shape) == 3:

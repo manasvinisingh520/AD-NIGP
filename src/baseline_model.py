@@ -58,20 +58,20 @@ class BaselineRankingModel(nn.Module):
                 nn.Dropout(dropout),
             )
         elif n_hidden_layers == 3:
-            # Original 3-layer MLP
+            # Original 3-layer MLP (shrinking: h//2 -> h//4 -> h//8)
             h = hidden_dim_3layer
             self.shared = nn.Sequential(
-                nn.Linear(first_layer_input, h),
+                nn.Linear(first_layer_input, h // 2),
                 nn.ReLU(),
                 nn.Dropout(dropout),
-                nn.Linear(h, h),
+                nn.Linear(h // 2, h // 4),
                 nn.ReLU(),
                 nn.Dropout(dropout),
-                nn.Linear(h, h),
+                nn.Linear(h // 4, h // 8),
                 nn.ReLU(),
                 nn.Dropout(dropout),
             )
-            hidden_dim = h
+            hidden_dim = max(h // 8, 1)  # last layer output size (ensure >= 1)
         else:
             raise ValueError("n_hidden_layers must be 1 or 3")
 
@@ -80,7 +80,6 @@ class BaselineRankingModel(nn.Module):
         # Head 1: P-tau regression (ReLU output for log1p(p-tau)), already have log1p applied in the data
         self.ptau_head = nn.Linear(self._hidden_dim, 1)
 
-        # Head 2: Thal classification (softmax)
         if n_thal_classes is None:
             raise ValueError("n_thal_classes must be specified")
         # do NOT apply softmax here, it will be applied in the loss function

@@ -1,5 +1,6 @@
 """Run overfitting experiments on embedding data: full grid of experiment x gene_encoder x attention x loss x pca.
-Saves CSV to {cell_type}_{region}/overfitting_experiments.csv (or --log_base parent)."""
+Saves CSV to {cell_type}_{region}/overfitting_experiments.csv (or --log_base parent).
+When region is MTG, delegates to Microglia two-head model (CERAD + Braak) using MTG_data_for_model_training.pkl."""
 import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -63,11 +64,18 @@ def build_args(region, cell_type, exp, gene_encoder, attention, loss_ptau, pca_c
         verbose=False,
         n_hidden_layers=getattr(base_args, "n_hidden_layers", 1),
         hidden_dim_3layer=getattr(base_args, "hidden_dim_3layer", 32),
+        patience=getattr(base_args, "patience", 20),
     )
 
 
 def run_experiments(args):
     region = args.region
+    # MTG uses the Microglia two-head model (Thal/CERAD + Braak) and MTG_data_for_model_training.pkl
+    if region == "MTG":
+        from run_overfitting_experiments_microglia import run_experiments as run_microglia_experiments
+        run_microglia_experiments(args)
+        return
+
     cell_type = getattr(args, "cell_type", "Astrocytes")
     log_base = getattr(args, "log_base", None) or f"{cell_type}_{region}"
     output_csv = os.path.join(log_base, "overfitting_experiments.csv")
@@ -186,7 +194,7 @@ def run_experiments(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run overfitting experiments on embedding data")
-    parser.add_argument("--region", type=str, required=True, help="Region (e.g., EC, ITG, PFC)")
+    parser.add_argument("--region", type=str, required=True, help="Region (e.g., EC, ITG, PFC, MTG). MTG runs Microglia two-head model.")
     parser.add_argument("--cell_type", type=str, default="Astrocytes", help="Cell type (use run_overfitting_experiments_microglia.py for Microglia)")
     parser.add_argument("--epochs", type=int, default=1000)
     parser.add_argument("--batch_size", type=int, default=8)
@@ -197,5 +205,6 @@ if __name__ == "__main__":
                         help="Number of hidden layers in baseline MLP: 1 (minimal) or 3 (original). Default: 1.")
     parser.add_argument("--hidden_dim_3layer", type=int, default=32,
                         help="Hidden size when n_hidden_layers=3 (default: 32).")
+    parser.add_argument("--patience", type=int, default=20, help="Early stopping patience (default: 20).")
     args = parser.parse_args()
     run_experiments(args)

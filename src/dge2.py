@@ -141,15 +141,17 @@ class DGEAnalyzer:
             raise ValueError("Failed to filter AnnData object. Check your filter thresholds.")
 
         # Extract counts matrix (cells x genes from AnnData)
-        # PyDESeq2's DeseqDataSet expects samples (cells) as rows, genes as columns
-        # The row index (cell names) must match metadata_df index
-        if hasattr(self.data_file.X, 'toarray'):
-            # Sparse matrix
-            counts_matrix = self.data_file.X.toarray()  # Keep as cells x genes
+        # Use raw UMI counts from layer if present (e.g. SEA_AD), else .X
+        if "UMIs" in getattr(self.data_file, "layers", {}):
+            X = self.data_file.layers["UMIs"]
         else:
-            # Dense matrix
-            counts_matrix = self.data_file.X  # Keep as cells x genes
-        
+            X = self.data_file.X
+        if hasattr(X, 'toarray'):
+            counts_matrix = X.toarray()
+        else:
+            counts_matrix = np.asarray(X)
+        counts_matrix = np.round(counts_matrix).astype(np.int64)
+
         # Create counts DataFrame with cell names as index (rows), gene names as columns
         self.counts_df = pd.DataFrame(
             counts_matrix,
@@ -427,14 +429,14 @@ if __name__ == "__main__":
         '-cell_type',
         type=str,
         required=True,
-        help='Cell type identifier to locate data files (e.g., Astrocytes, Microglia)'
+        help='Cell type identifier to locate data files (e.g., Astrocytes, Microglia), if None, use SEA_AD_Data/MTG/adata.h5ad'
     )
     
     parser.add_argument(
         '-region',
         type=str,
-        required=True,
-        help='Region identifier to locate data files (e.g., EC, ITG, PFC, V1, V2)'
+        required=False,
+        help='Region identifier to locate data files (e.g., EC, ITG, PFC, V1, V2), if SEA_AD: (MTG, PFC)'
     )
     parser.add_argument(
         '-seed',
@@ -452,121 +454,251 @@ if __name__ == "__main__":
         '-bins',
         type=int,
         default=800,
-        help='Target number of cells per bin for pseudobulk aggregation (default: 800)'
+        help='Target number of cells per bin for pseudobulk aggregation (default: 800). Ignored if -pseudobulk is set.'
+    )
+    parser.add_argument(
+        '-adata',
+        type=str,
+        default=None,
+        help='Path to AnnData .h5ad file or to MTG directory (loads all .h5ad under it, keeps only conditions 1–4). Requires -condition_col and -patient_col.'
+    )
+    parser.add_argument(
+        '-condition_col',
+        type=str,
+        default=None,
+        help='Obs column for DGE design. For SEA_AD use "Overall AD neuropathological Change" (mapped to 1=Not AD, 2=Low, 3=Intermediate, 4=High). Required when using -adata.'
+    )
+    parser.add_argument(
+        '-patient_col',
+        type=str,
+        default=None,
+        help='Obs column for patient/donor ID (for pseudobulking). For SEA_AD use "Donor ID". Required when using -adata.'
+    )
+    parser.add_argument(
+        '-pseudobulk',
+        type=str,
+        default=None,
+        help='Pseudobulk: "none" (use default -bins) or integer cells per block (e.g. 100, 200). If unset, use -bins.'
+    )
+    parser.add_argument(
+        '--groups',
+        type=str,
+        nargs='*',
+        default=None,
+        help='Contrasts as group1,group2 (e.g. 1,2 1,3 1,4 2,3 2,4 3,4). Default: all pairwise 1 vs 2, 1 vs 3, 1 vs 4, 2 vs 3, 2 vs 4, 3 vs 4.'
     )
     
     # Parse arguments
     args = parser.parse_args()
     
-    # Set global random seed for reproducibility
     np.random.seed(args.seed)
     
-    # Import utilities and config
     from utils import read_mtx_file, create_anndata_object, read_excel_columns, get_region_file_paths
     from config import REGION_TO_TAB, DATA_DIR
     
-    # Configuration
     base_dir = DATA_DIR
-    region = args.region
-    
-    # Get file paths using utility function
-    if args.cell_type == "Astrocytes":
-        base_prefix = f"2025-11-16_{args.cell_type}_{region}"
-    elif args.cell_type == "Microglia":
-        base_prefix = f"2025-12-27_{args.cell_type}_{region}"
+    region = args.region or "MTG"
+    sea_ad_already_pseudobulked = False
+    pseudobulk_label = str(args.bins)
+
+    # --- Load AnnData: either from h5ad (SEA_AD_Data) or from MTX+metadata (Atlas) ---
+    if args.adata:
+        # SEA_AD_Data: load .h5ad (single file or all .h5ad under a directory)
+        if not args.condition_col or not args.patient_col:
+            raise ValueError("When using -adata you must provide -condition_col and -patient_col.")
+        import anndata
+        adata_path = args.adata
+        if os.path.isdir(adata_path):
+            # MTG directory: load each .h5ad, filter to conditions, pseudobulk per file, then concat (avoids 50GB+ concat of raw cells)
+            from pathlib import Path
+            h5ad_files = sorted(Path(adata_path).rglob("*.h5ad"))
+            if not h5ad_files:
+                raise FileNotFoundError(f"No .h5ad files found under {adata_path}")
+            print(f"Found {len(h5ad_files)} AnnData file(s) under {adata_path}")
+            # Resolve target cells per bin (same as later pseudobulk section)
+            n_cells = args.bins
+            if getattr(args, "pseudobulk", None) is not None and str(args.pseudobulk).strip().lower() != "none":
+                try:
+                    n_cells = int(args.pseudobulk)
+                except ValueError:
+                    pass
+            pseudobulk_label = str(n_cells)
+            AD_LEVEL_MAP = {"Not AD": "1", "Low": "2", "Intermediate": "3", "High": "4"}
+            cond_raw = args.condition_col
+            patient_col = args.patient_col
+            adatas = []
+            for f in h5ad_files:
+                ad = anndata.read_h5ad(str(f))
+                if cond_raw not in ad.obs.columns:
+                    print(f"  Skip {f.name}: missing column '{cond_raw}'")
+                    continue
+                raw = ad.obs[cond_raw].astype(str).str.strip()
+                ad.obs["_dge_condition"] = raw.map(AD_LEVEL_MAP)
+                ad_filtered = ad[ad.obs["_dge_condition"].notna()].copy()
+                if ad_filtered.n_obs == 0:
+                    print(f"  Skip {f.name}: no cells in Not AD / Low / Intermediate / High")
+                    print(f"    Actual condition values: {raw.value_counts().to_dict()}")
+                    continue
+                ad = ad_filtered
+                # Pseudobulk this file before appending to avoid huge concat (saves ~50GB RAM)
+                ad = aggregate_cells_into_pseudobulk(
+                    ad, target_cells_per_bin=n_cells,
+                    filter_patients_cell_threshold=80, seed=args.seed, patient_col=patient_col
+                )
+                adatas.append(ad)
+                print(f"  {f.name}: {ad.n_obs} pseudobulk samples")
+            if not adatas:
+                raise ValueError("No cells in conditions 1–4 across any file.")
+            adata = anndata.concat(adatas, join="inner", label="batch", keys=[str(i) for i in range(len(adatas))])
+            adata.obs.drop(columns=["batch"], inplace=True, errors="ignore")
+            condition_col = "_dge_condition"
+            sea_ad_already_pseudobulked = True
+            print(f"Combined: {adata.n_obs} pseudobulk samples × {adata.n_vars} genes. Condition levels 1–4. Patients: {patient_col}.")
+        else:
+            # Single file
+            adata = anndata.read_h5ad(adata_path)
+            condition_col = args.condition_col
+            patient_col = args.patient_col
+            if condition_col not in adata.obs.columns:
+                raise ValueError(f"Condition column '{condition_col}' not in adata.obs. Available: {list(adata.obs.columns)}")
+            if patient_col not in adata.obs.columns:
+                raise ValueError(f"Patient column '{patient_col}' not in adata.obs. Available: {list(adata.obs.columns)}")
+            print(f"Loaded AnnData from {adata_path}: {adata.shape} (cells × genes)")
+            if condition_col == "Overall AD neuropathological Change":
+                AD_LEVEL_MAP = {"Not AD": "1", "Low": "2", "Intermediate": "3", "High": "4"}
+                raw = adata.obs[condition_col].astype(str).str.strip()
+                adata.obs["_dge_condition"] = raw.map(AD_LEVEL_MAP)
+                n_before = adata.n_obs
+                adata = adata[adata.obs["_dge_condition"].notna()].copy()
+                n_dropped = n_before - adata.n_obs
+                if n_dropped > 0:
+                    print(f"Mapped condition to levels 1–4; dropped {n_dropped} cells with unmapped values (e.g. Reference).")
+                condition_col = "_dge_condition"
+                print(f"Condition levels for DGE: 1=Not AD, 2=Low, 3=Intermediate, 4=High. Patients: {patient_col}.")
     else:
-        raise ValueError(f"Cell type '{args.cell_type}' not supported. Available cell types: Astrocytes, Microglia")
-    
-    mtx_path, row_annotation_path, col_annotation_path = get_region_file_paths(
-        region,
-        data_dir=base_dir,
-        base_prefix=f"{base_prefix}"
-    )
-    if args.cell_type == "Astrocytes":
-        metadata_path = os.path.join(base_dir, f"2025-11-16_Astrocytes_metadata.xlsx")
-    elif args.cell_type == "Microglia":
-        metadata_path = os.path.join(base_dir, f"{base_prefix}_metadata.csv")
-    else:
-        raise ValueError(f"Cell type '{args.cell_type}' not supported. Available cell types: Astrocytes, Microglia")
+        # Atlas data: MTX + metadata
+        if not args.cell_type or not args.region:
+            raise ValueError("When not using -adata you must provide -cell_type and -region.")
+        if args.cell_type == "Astrocytes":
+            base_prefix = f"2025-11-16_{args.cell_type}_{region}"
+        elif args.cell_type == "Microglia":
+            base_prefix = f"2025-12-27_{args.cell_type}_{region}"
+        else:
+            raise ValueError(f"Cell type '{args.cell_type}' not supported. Use Astrocytes, Microglia, or -adata for h5ad.")
         
-    # Get tab index from config
-    if args.cell_type == "Astrocytes":
-        tab_index = REGION_TO_TAB.get(region)
-        if tab_index is None:
-            raise ValueError(f"Region '{region}' not mapped to a tab index. Available regions: {list(REGION_TO_TAB.keys())}")
-        metadata = read_excel_columns(metadata_path, columns=['cell_annotation', "RIN", "Path..Group.", "SampleName", 
-                                                            "Median.UMI.Counts.per.Cell", "percent.mito"],
-                                    sheet_name=tab_index)
-    else:
-        tab_index = None
-        metadata = pd.read_csv(metadata_path)
-        # Rename columns with spaces to use underscores to avoid formula syntax errors
-        rename_dict = {}
-        if 'Pathology Stage' in metadata.columns:
-            rename_dict['Pathology Stage'] = 'Pathology_Stage'
-        if 'Donor ID' in metadata.columns:
-            rename_dict['Donor ID'] = 'Donor_ID'
-        if rename_dict:
-            metadata = metadata.rename(columns=rename_dict)
-        # Convert condition column to strings
-        if 'Pathology_Stage' in metadata.columns:
-            metadata['Pathology_Stage'] = metadata['Pathology_Stage'].astype(str)
-    
-    # Read the MTX file
-    matrix, gene_names, cell_names = read_mtx_file(
-        mtx_path=str(mtx_path),
-        row_annotation_path=str(row_annotation_path),
-        col_annotation_path=str(col_annotation_path),
-        transpose=False
-    )
-    
-    # Create AnnData object
-    adata = create_anndata_object(
-        matrix=matrix,
-        gene_names=gene_names,
-        cell_names=cell_names,
-        transpose=True,  # Matrix is genes x cells, transpose for AnnData (cells x genes)
-        obs=metadata,
-    )
+        mtx_path, row_annotation_path, col_annotation_path = get_region_file_paths(
+            region,
+            data_dir=base_dir,
+            base_prefix=f"{base_prefix}"
+        )
+        if args.cell_type == "Astrocytes":
+            metadata_path = os.path.join(base_dir, f"2025-11-16_Astrocytes_metadata.xlsx")
+        else:
+            metadata_path = os.path.join(base_dir, f"{base_prefix}_metadata.csv")
+        
+        if args.cell_type == "Astrocytes":
+            tab_index = REGION_TO_TAB.get(region)
+            if tab_index is None:
+                raise ValueError(f"Region '{region}' not in REGION_TO_TAB. Available: {list(REGION_TO_TAB.keys())}")
+            metadata = read_excel_columns(metadata_path, columns=['cell_annotation', "RIN", "Path..Group.", "SampleName", 
+                                                                "Median.UMI.Counts.per.Cell", "percent.mito"],
+                                        sheet_name=tab_index)
+        else:
+            metadata = pd.read_csv(metadata_path)
+            rename_dict = {}
+            if 'Pathology Stage' in metadata.columns:
+                rename_dict['Pathology Stage'] = 'Pathology_Stage'
+            if 'Donor ID' in metadata.columns:
+                rename_dict['Donor ID'] = 'Donor_ID'
+            if rename_dict:
+                metadata = metadata.rename(columns=rename_dict)
+            if 'Pathology_Stage' in metadata.columns:
+                metadata['Pathology_Stage'] = metadata['Pathology_Stage'].astype(str)
+        
+        matrix, gene_names, cell_names = read_mtx_file(
+            mtx_path=str(mtx_path),
+            row_annotation_path=str(row_annotation_path),
+            col_annotation_path=str(col_annotation_path),
+            transpose=False
+        )
+        adata = create_anndata_object(
+            matrix=matrix,
+            gene_names=gene_names,
+            cell_names=cell_names,
+            transpose=True,
+            obs=metadata,
+        )
+        condition_col = 'Path..Group.' if args.cell_type == "Astrocytes" else 'Pathology_Stage'
+        patient_col = 'SampleName' if args.cell_type == "Astrocytes" else 'Donor_ID'
+        print(f"Loaded AnnData from MTX: {adata.shape} (cells × genes)")
 
-    print (f"Before filtering: {adata.shape} (cells × genes)")
+    print(f"Before filtering: {adata.shape} (cells × genes)")
 
-    # Apply quality filters
-    if args.cell_type == "Astrocytes":
-        adata = filter_anndata_object(adata, min_genes=0, min_cells=0, min_counts=None, max_counts=None, mito_max=None, gene_type="protein_coding")
+    # Apply quality filters (only for Atlas Astrocytes; no gene-type filter). Skip for h5ad / Microglia.
+    if not args.adata and args.cell_type == "Astrocytes":
+        adata = filter_anndata_object(adata, min_genes=0, min_cells=0, min_counts=None, max_counts=None, mito_max=None, gene_type=None)
     
-    print (f"After filtering: {adata.shape} (cells × genes)")
+    print(f"After filtering: {adata.shape} (cells × genes)")
 
     if adata is None:
         raise ImportError("Failed to create AnnData object. Make sure anndata is installed.")
     
-    if args.cell_type == "Astrocytes":
-        condition_col = 'Path..Group.'
-        patient_col = 'SampleName'
-    else:
-        condition_col = 'Pathology_Stage'  # Use renamed column without space
-        patient_col = 'Donor_ID'  # Use renamed column without space
+    # --- Pseudobulk ---
+    if not sea_ad_already_pseudobulked:
+        if getattr(args, 'pseudobulk', None) is not None:
+            if str(args.pseudobulk).strip().lower() == "none":
+                adata = aggregate_cells_into_pseudobulk(
+                    adata, target_cells_per_bin=args.bins,
+                    filter_patients_cell_threshold=80, seed=args.seed, patient_col=patient_col
+                )
+                pseudobulk_label = "none"
+            else:
+                try:
+                    n_cells = int(args.pseudobulk)
+                    adata = aggregate_cells_into_pseudobulk(
+                        adata, target_cells_per_bin=n_cells,
+                        filter_patients_cell_threshold=80, seed=args.seed, patient_col=patient_col
+                    )
+                    pseudobulk_label = str(n_cells)
+                except ValueError:
+                    raise ValueError(f"-pseudobulk must be 'none' or an integer (e.g. 100, 200), got: {args.pseudobulk}")
+        else:
+            adata = aggregate_cells_into_pseudobulk(
+                adata, target_cells_per_bin=args.bins,
+                filter_patients_cell_threshold=80, seed=args.seed, patient_col=patient_col
+            )
+            pseudobulk_label = str(args.bins)
     
-    # Aggregate cells into pseudobulk samples
-    adata = aggregate_cells_into_pseudobulk(adata, target_cells_per_bin=args.bins, filter_patients_cell_threshold=80, seed=args.seed, patient_col=patient_col)
-    
-    # Ensure condition column is strings (in case aggregation changed types)
+    # Ensure condition column is strings
     if condition_col in adata.obs.columns:
         adata.obs[condition_col] = adata.obs[condition_col].astype(str)
 
     # Create output directory if it doesn't exist
-    output_dir = "results/dge_final_protein_coding"
+    output_dir = "results/dge_final"
     os.makedirs(output_dir, exist_ok=True)
     
-    # Create DGE analyzer with group comparisons (using filtered/aggregated data)
-    if args.cell_type == "Microglia":
-        output_file = os.path.join(output_dir, f"dge_results_microglia_{region}_bins{args.bins}_seed{args.seed}.csv")
+    if getattr(args, 'groups', None) is not None and len(args.groups) > 0:
+        group_tuples = []
+        for g in args.groups:
+            parts = g.split(',')
+            if len(parts) != 2:
+                raise ValueError(f"Each --groups value must be group1,group2 (e.g. 1,2), got: {g}")
+            group_tuples.append((str(parts[0].strip()), str(parts[1].strip())))
     else:
-        output_file = os.path.join(output_dir, f"dge_results_{region}_bins{args.bins}_seed{args.seed}.csv")
+        group_tuples = [('1', '2'), ('1', '3'), ('1', '4'), ('2', '3'), ('2', '4'), ('3', '4')]
+    print(f"Condition comparisons: {group_tuples}")
+
+    if args.adata:
+        out_suffix = f"SEA_AD_MTG_pseudobulk{pseudobulk_label}_seed{args.seed}"
+    elif getattr(args, 'cell_type', None) == "Microglia":
+        out_suffix = f"microglia_{region}_pseudobulk{pseudobulk_label}_seed{args.seed}"
+    else:
+        out_suffix = f"{region}_pseudobulk{pseudobulk_label}_seed{args.seed}"
+    output_file = os.path.join(output_dir, f"dge_results_{out_suffix}.csv")
     dge = DGEAnalyzer(
         data_file=adata,
         condition=condition_col,
-        groups=[('1', '2'), ('1', '3'), ('1', '4'), ('2', '3'), ('2', '4'), ('3', '4')],
+        groups=group_tuples,
         method="deseq2",
         threshold={'padj': 0.05, 'log2fc': 0.5},
         topK=args.topK,

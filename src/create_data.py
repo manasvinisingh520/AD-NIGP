@@ -1,5 +1,6 @@
 """Scale all gene embeddings according to cell expression and save in pickle file.
-Supports Astrocytes and Microglia. 8-fold cross-validation split with target variables.
+Supports Astrocytes, Microglia, and MTG (SEA AD). 8-fold cross-validation split with target variables.
+For MTG, targets are Thal and Braak (both categorical).
 """
 
 import argparse
@@ -50,12 +51,13 @@ def load_gene_embeddings(embeddings_path, gene_list: list[str]):
     return embedding_data
 
 def find_anndata_file(region, cell_type='Astrocytes'):
-    """Find AnnData file for a given region and cell type (perCell only)."""
-    # Use perCell AnnData file specifically
+    """Find AnnData file for a given region and cell type (perCell only, or MTG)."""
     if cell_type == "Astrocytes":
         path = os.path.join('data', 'model_data', f'{region}_AnnData_perCell.h5ad')
     elif cell_type == "Microglia":
         path = os.path.join('data', 'model_data', f'{region}_Microglia_AnnData_perCell.h5ad')
+    elif cell_type == "MTG":
+        path = os.path.join('data', 'SEA_AD_Data', 'MTG', 'MTG_AnnData.h5ad')
     else:
         raise ValueError(f"Invalid cell type: {cell_type}")
     
@@ -140,12 +142,53 @@ def load_anndata_microglia(region):
     return adata
 
 
+def load_anndata_mtg(region):
+    """Load MTG (SEA AD) per-cell AnnData. Targets: Thal and Braak (categorical)."""
+    path = find_anndata_file(region, cell_type="MTG")
+    if path is None:
+        raise FileNotFoundError(
+            f"MTG AnnData not found: data/SEA_AD_Data/MTG/MTG_AnnData.h5ad"
+        )
+    adata = ad.read_h5ad(path)
+    # Patient column: Donor ID or SampleName
+    if "SampleName" not in adata.obs.columns:
+        if "Donor_ID" in adata.obs.columns:
+            adata.obs["SampleName"] = adata.obs["Donor_ID"].astype(str)
+        elif "Donor ID" in adata.obs.columns:
+            adata.obs["SampleName"] = adata.obs["Donor ID"].astype(str)
+        else:
+            raise ValueError(
+                f"MTG AnnData must have obs column 'SampleName' or 'Donor_ID'/'Donor ID'. Found: {list(adata.obs.columns)}"
+            )
+    for col in ["Thal", "Braak"]:
+        if col not in adata.obs.columns:
+            raise ValueError(
+                f"MTG AnnData must have obs column '{col}'. Found: {list(adata.obs.columns)}"
+            )
+    # Keep only cells with valid Thal and Braak: exclude NaN, empty, and "Reference"
+    thal_s = adata.obs["Thal"].astype(str).str.strip()
+    braak_s = adata.obs["Braak"].astype(str).str.strip()
+    valid = (
+        adata.obs["Thal"].notna()
+        & (thal_s != "")
+        & (thal_s != "Reference")
+        & adata.obs["Braak"].notna()
+        & (braak_s != "")
+        & (braak_s != "Reference")
+    )
+    adata = adata[valid].copy()
+    print(f"Loaded MTG AnnData: {adata.shape} from {path}")
+    return adata
+
+
 def create_anndata(region, cell_type='Astrocytes'):
-    """Load or build AnnData for a region. Astrocytes: MTX + Excel. Microglia: pre-built h5ad."""
+    """Load or build AnnData for a region. Astrocytes: MTX + Excel. Microglia/MTG: pre-built h5ad."""
     if cell_type == "Astrocytes":
         return create_anndata_astrocytes(region)
     elif cell_type == "Microglia":
         return load_anndata_microglia(region)
+    elif cell_type == "MTG":
+        return load_anndata_mtg(region)
     raise ValueError(f"Invalid cell type: {cell_type}")
 
 def main(args=None):
@@ -158,6 +201,8 @@ def main(args=None):
         all_regions = ["EC", "ITG", "PFC", "V2", "V1"]
     elif cell_type == "Microglia":
         all_regions = ["CrossRegion", "ITG", "PFC"]
+    elif cell_type == "MTG":
+        all_regions = ["MTG"]
     else:
         raise ValueError(f"Invalid cell type: {cell_type}")
 
@@ -175,8 +220,14 @@ def main(args=None):
         print(f"Processing {region} ({cell_type})")
         if cell_type == "Astrocytes":
             emb_path = os.path.join(embeddings_dir, f"{region}_gene_embeddings.tsv")
-        else:
+        elif cell_type == "Microglia":
             emb_path = os.path.join(embeddings_dir, f"{region}_Microglia_gene_embeddings.tsv")
+        else:
+            # MTG: try MTG_gene_embeddings.tsv, fallback to EC
+            emb_path = os.path.join(embeddings_dir, "MTG_gene_embeddings.tsv")
+            if not os.path.exists(emb_path):
+                emb_path = os.path.join(embeddings_dir, "EC_gene_embeddings.tsv")
+                print(f"  Using EC gene embeddings (MTG_gene_embeddings.tsv not found)")
 
         adata = create_anndata(region, cell_type)
         # Load gene embeddings
@@ -199,9 +250,15 @@ def main(args=None):
             print(f"ERROR: Shape mismatch! Embeddings: {embeddings_matrix.shape[0]} genes, Expression: {expression_matrix.shape[1]} genes.")
             quit()
         
-        # Extract ptau_info and thal_info from obs
-        ptau_info = adata.obs['Ptau.Total.Tau..A.U..']
-        thal_info = adata.obs['Thal']
+        # Target variables: MTG uses Thal and Braak (categorical); others use ptau and thal
+        if cell_type == "MTG":
+            thal_info = adata.obs["Thal"].astype(str).str.strip()
+            braak_info = adata.obs["Braak"].astype(str).str.strip()
+            ptau_info = None  # unused for MTG
+        else:
+            ptau_info = adata.obs['Ptau.Total.Tau..A.U..']
+            thal_info = adata.obs['Thal']
+            braak_info = None  # unused for Astrocytes/Microglia
         
         # expression_matrix = d, embedding = A
         print("Scaling embeddings...")
@@ -214,6 +271,7 @@ def main(args=None):
         all_cell_names = []
         all_ptau = []
         all_thal = []
+        all_braak = []
         unique_patients = adata.obs['SampleName'].unique()
         print(f"Number of unique patients: {len(unique_patients)}")
 
@@ -228,11 +286,17 @@ def main(args=None):
             patient_cell_names = adata.obs.index[patient_mask].tolist()
             all_patient_embeddings.append(patient_embeddings)
             all_cell_names.append(patient_cell_names)
-            # ptau and thal have only one value per patient, so take the first (or unique) value
-            all_ptau.append(ptau_info[patient_mask].iloc[0])
-            all_thal.append(thal_info[patient_mask].iloc[0])
+            if cell_type == "MTG":
+                all_thal.append(thal_info[patient_mask].iloc[0])
+                all_braak.append(braak_info[patient_mask].iloc[0])
+                all_ptau.append(None)
+            else:
+                all_ptau.append(ptau_info[patient_mask].iloc[0])
+                all_thal.append(thal_info[patient_mask].iloc[0])
+                all_braak.append(None)
 
         # Microglia: drop patients with NaN or invalid Braak/CERAD so downstream code never sees them
+        # MTG: already filtered in load_anndata_mtg (valid Thal and Braak)
         if cell_type == "Microglia":
             BRAAK_VALID = {2, 3, 5, 6}
             CERAD_VALID = {"none", "sparse", "moderate", "frequent"}
@@ -256,6 +320,7 @@ def main(args=None):
             all_cell_names = [all_cell_names[i] for i in valid_idx]
             all_ptau = [all_ptau[i] for i in valid_idx]
             all_thal = [all_thal[i] for i in valid_idx]
+            all_braak = [all_braak[i] for i in valid_idx]
 
         # Split patients into 8 folds (not cells, but patients)
         n_patients = len(unique_patients)
@@ -265,6 +330,7 @@ def main(args=None):
         patient_info_folds = []
         ptau_folds = []
         thal_folds = []
+        braak_folds = []
         
         print(f"Splitting {n_patients} patients into {n_folds} folds...")
         for fold_idx, (_, fold_patient_indices) in enumerate(kf.split(range(n_patients))):
@@ -272,33 +338,47 @@ def main(args=None):
             fold_embeddings_list = [all_patient_embeddings[i] for i in fold_patient_indices]
             fold_embeddings = np.concatenate(fold_embeddings_list, axis=0).astype(np.float16)
             
-            # Get ptau and thal for patients in this fold (one value per patient)
-            fold_ptau = [all_ptau[i] for i in fold_patient_indices]
-            fold_thal = [all_thal[i] for i in fold_patient_indices]
+            if cell_type == "MTG":
+                fold_thal = [all_thal[i] for i in fold_patient_indices]
+                fold_braak = [all_braak[i] for i in fold_patient_indices]
+                fold_ptau = []
+            else:
+                fold_ptau = [all_ptau[i] for i in fold_patient_indices]
+                fold_thal = [all_thal[i] for i in fold_patient_indices]
+                fold_braak = []
+            
             fold_patient_info = {unique_patients[i]: all_cell_names[i] for i in fold_patient_indices}
             
             embeddings_folds.append(fold_embeddings)
             patient_info_folds.append(fold_patient_info)
             ptau_folds.append(fold_ptau)
             thal_folds.append(fold_thal)
+            braak_folds.append(fold_braak)
             
             n_fold_cells = fold_embeddings.shape[0]
             n_fold_patients = len(fold_patient_indices)
             print(f"  Fold {fold_idx + 1}: {n_fold_patients} patients, {n_fold_cells} cells")
 
-        # Save folds (Microglia uses separate filename to avoid overwriting Astrocytes)
+        # Save folds
         if cell_type == "Microglia":
             out_name = f"{region}_Microglia_data_for_model_training.pkl"
+        elif cell_type == "MTG":
+            out_name = "MTG_data_for_model_training.pkl"
         else:
             out_name = f"{region}_data_for_model_training.pkl"
         emb_output_dir = os.path.join("data", "model_data", out_name)
         with open(emb_output_dir, "wb") as f:
-            pickle.dump((embeddings_folds, patient_info_folds, ptau_folds, thal_folds), f, protocol=pickle.HIGHEST_PROTOCOL)
-        print(f"Saved {n_folds} folds of rescaled embeddings to {emb_output_dir}")
-        print(f"  Each fold contains: embeddings (3D array), patient_info (dict: patient_name -> cell_names), ptau, thal")
-        del embeddings_folds, patient_info_folds, ptau_folds, thal_folds, region_scaled_embeddings
-        del adata, fold_embeddings, fold_patient_info, fold_ptau, fold_thal
-        del all_patient_embeddings, all_cell_names, all_ptau, all_thal
+            if cell_type == "MTG":
+                pickle.dump((embeddings_folds, patient_info_folds, thal_folds, braak_folds), f, protocol=pickle.HIGHEST_PROTOCOL)
+                print(f"Saved {n_folds} folds of rescaled embeddings to {emb_output_dir}")
+                print(f"  Each fold contains: embeddings (3D array), patient_info (dict), thal (categorical), braak (categorical)")
+            else:
+                pickle.dump((embeddings_folds, patient_info_folds, ptau_folds, thal_folds), f, protocol=pickle.HIGHEST_PROTOCOL)
+                print(f"Saved {n_folds} folds of rescaled embeddings to {emb_output_dir}")
+                print(f"  Each fold contains: embeddings (3D array), patient_info (dict: patient_name -> cell_names), ptau, thal")
+        del embeddings_folds, patient_info_folds, ptau_folds, thal_folds, braak_folds, region_scaled_embeddings
+        del adata, fold_embeddings, fold_patient_info, fold_ptau, fold_thal, fold_braak
+        del all_patient_embeddings, all_cell_names, all_ptau, all_thal, all_braak
         del unique_patients
         gc.collect()
         
@@ -313,8 +393,8 @@ def main(args=None):
   
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Scale gene embeddings by expression and save for model training")
-    parser.add_argument("--cell_type", type=str, default="Astrocytes", choices=["Astrocytes", "Microglia"],
-                        help="Cell type (default: Astrocytes)")
+    parser.add_argument("--cell_type", type=str, default="Astrocytes", choices=["Astrocytes", "Microglia", "MTG"],
+                        help="Cell type (default: Astrocytes). MTG uses Thal and Braak as categorical targets.")
     parser.add_argument("--region", type=str, default=None,
                         help="Process only this region (e.g., EC). If omitted, process all regions for the cell type.")
     args = parser.parse_args()

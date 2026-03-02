@@ -8,7 +8,6 @@ This script converts them to proper tab-separated format: TF\tTarget\tScore
 import os
 import argparse
 from pathlib import Path
-from utils import get_grn_file_paths
 
 
 def fix_grn_format(input_file, output_file):
@@ -93,58 +92,32 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        '-region',
+        'input_file',
         type=str,
-        required=True,
-        help='Region to process (e.g., V1, EC, ITG, PFC, V2)'
+        help='Full path to the GRN file (e.g. data/GRN/Astrocytes/EC_GRN.tsv)',
     )
     parser.add_argument(
-        '-cell_type',
-        type=str,
-        default='Astrocytes',
-        help='Cell type (e.g., Astrocytes, Microglia). Default: Astrocytes'
-    )
-    parser.add_argument(
-        '-input_dir',
+        '-o', '--output',
         type=str,
         default=None,
-        help='Input directory (default: data)'
+        help='Output path. Default: input path with _fixed before extension',
     )
-    parser.add_argument(
-        '-output_suffix',
-        type=str,
-        default='_fixed',
-        help='Suffix to add to output filename (default: _fixed). Use empty string to overwrite original.'
-    )
-    
+
     args = parser.parse_args()
-    
-    # Determine data directory
-    if args.input_dir:
-        data_dir = args.input_dir
-    else:
-        data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
-    
-    # Get file paths using utility function
-    grn_file, _, _, _, _, _ = get_grn_file_paths(
-        args.region, cell_type=args.cell_type, data_dir=data_dir
-    )
-    
-    # Create output filename
-    if args.output_suffix:
-        # Add suffix before extension
-        base, ext = os.path.splitext(grn_file)
-        output_file = f"{base}{args.output_suffix}{ext}"
-    else:
-        # Overwrite original
-        output_file = grn_file
-    
-    if not os.path.exists(grn_file):
-        print(f"Error: GRN file not found: {grn_file}")
+
+    input_file = Path(args.input_file).resolve()
+    if not input_file.exists():
+        print(f"Error: GRN file not found: {input_file}")
         return
-    
+
+    if args.output is not None:
+        output_file = Path(args.output).resolve()
+    else:
+        # Add _fixed before extension
+        output_file = input_file.parent / (input_file.stem + '_fixed' + input_file.suffix)
+
     try:
-        fix_grn_format(grn_file, output_file)
+        fix_grn_format(str(input_file), str(output_file))
         print("\n" + "="*60)
         print("Complete!")
         print("="*60)
