@@ -1,7 +1,7 @@
 """Save region-specific raw gene expression data with Thal and ptau, separated by patient.
 Similar format to create_data.py but saves raw expression instead of scaled embeddings.
 Astrocytes: MTX + Excel. Microglia: pre-built h5ad (data/model_data/{region}_Microglia_AnnData_perCell.h5ad).
-MTG: per-cell AnnData from data/SEA_AD_Data/MTG/MTG_AnnData.h5ad (Thal + Braak, no ptau).
+MTG: per-cell AnnData from data/SEA_AD_Data/MTG/ (prefers MTG_AnnData_perCell.h5ad, else model_data/MTG_AnnData_perCell.h5ad, else MTG_AnnData.h5ad). Thal + Braak, no ptau.
 """
 
 import pandas as pd
@@ -23,14 +23,77 @@ from utils import (
 from config import REGION_TO_TAB, DATA_DIR
 
 
+def _load_symbol_ensembl_mapping():
+    """Load symbol -> Ensembl mapping from data/genes_2_ensembl_ids.pkl if it exists."""
+    path = os.path.join("data", "genes_2_ensembl_ids.pkl")
+    if not os.path.exists(path):
+        return None
+    with open(path, "rb") as f:
+        return pickle.load(f)
+
+
+def _dge_genes_to_var_names(dge_genes, adata_var_names, symbol_to_ensembl=None):
+    """
+    Map DGE gene list (symbols from CSV index) to adata.var_names, handling symbol vs Ensembl.
+    Returns (list of var_names in DGE order, stats dict for diagnostics).
+    """
+    var_set = set(adata_var_names)
+    # Decide if var_names are Ensembl: check majority of first 100 to avoid misclassifying
+    sample = list(adata_var_names[:100])
+    n_ensembl = sum(1 for v in sample if str(v).startswith("ENSG"))
+    var_are_ensembl = n_ensembl > len(sample) / 2
+    ordered_present = []
+    n_direct = 0
+    n_via_mapping = 0
+    rev_map = None
+    if symbol_to_ensembl and not var_are_ensembl:
+        rev_map = {v: k for k, v in symbol_to_ensembl.items()}
+    for g in dge_genes:
+        g = str(g).strip()
+        if g in var_set:
+            ordered_present.append(g)
+            n_direct += 1
+            continue
+        if symbol_to_ensembl and var_are_ensembl:
+            ensembl = symbol_to_ensembl.get(g)
+            if ensembl and ensembl in var_set:
+                ordered_present.append(ensembl)
+                n_via_mapping += 1
+                continue
+        if rev_map and g.startswith("ENSG"):
+            sym = rev_map.get(g)
+            if sym and sym in var_set:
+                ordered_present.append(sym)
+                n_via_mapping += 1
+                continue
+    stats = {
+        "n_dge": len(dge_genes),
+        "n_var": len(adata_var_names),
+        "var_are_ensembl": var_are_ensembl,
+        "n_direct": n_direct,
+        "n_via_mapping": n_via_mapping,
+        "n_matched": len(ordered_present),
+        "var_sample": list(adata_var_names[:5]),
+    }
+    return ordered_present, stats
+
+
 def _find_anndata_microglia(region):
     path = os.path.join("data", "model_data", f"{region}_Microglia_AnnData_perCell.h5ad")
     return path if os.path.exists(path) else None
 
 
 def _find_anndata_mtg():
-    path = os.path.join("data", "SEA_AD_Data", "MTG", "MTG_AnnData.h5ad")
-    return path if os.path.exists(path) else None
+    """Prefer model_data, then SEA_AD_Data; fallback to MTG_AnnData.h5ad."""
+    model_data_per_cell = os.path.join("data", "model_data", "MTG_AnnData_perCell.h5ad")
+    if os.path.exists(model_data_per_cell):
+        return model_data_per_cell
+    base = os.path.join("data", "SEA_AD_Data", "MTG")
+    per_cell = os.path.join(base, "MTG_AnnData_perCell.h5ad")
+    if os.path.exists(per_cell):
+        return per_cell
+    fallback = os.path.join(base, "MTG_AnnData.h5ad")
+    return fallback if os.path.exists(fallback) else None
 
 
 def _load_anndata_mtg():
@@ -103,21 +166,26 @@ def load_top_genes_from_dge_union(
     cell_type: str,
     top_k: int,
     dge_results_dir: str = "E:/sf2026/dge_results/dge_final",
+    padj_threshold: float = 0.05,
+    log2fc_threshold: float = 1.0,
 ) -> list[str]:
     """
     Load an ordered union of top-k DGE genes for a region from DGE result CSVs.
 
     We iterate DGE result files for the region, take the (filtered) top-k genes per file
-    using the same criteria as utils.get_top_k_genes, and build an ordered union until
-    we collect `top_k` unique genes.
+    using get_top_k_genes (padj < padj_threshold, |log2FC| > log2fc_threshold), then
+    sort union by best padj and return top_k. If the union has fewer than top_k genes
+    (strict filter leaves few genes), we fill from all genes sorted by padj.
     """
     dge_dir = Path(dge_results_dir)
     if not dge_dir.exists():
         raise FileNotFoundError(f"DGE results directory not found: {dge_results_dir}")
 
-    # Match utils.get_DEGs() filename conventions
+    # Match utils.get_DEGs() filename conventions (MTG: dge_results_SEA_AD_MTG_*.csv)
     if cell_type == "Microglia":
         pattern = f"dge_results_microglia_{region}_*.csv"
+    elif cell_type == "MTG":
+        pattern = "dge_results_SEA_AD_MTG_*.csv"
     else:
         pattern = f"dge_results_{region}_*.csv"
 
@@ -130,7 +198,11 @@ def load_top_genes_from_dge_union(
     
     for dge_file in dge_files:
         df = pd.read_csv(dge_file, index_col=0)
-        top_list, _top_set = get_top_k_genes(df, k=top_k, sort_by="padj")
+        top_list, _top_set = get_top_k_genes(
+            df, k=top_k, sort_by="padj",
+            padj_threshold=padj_threshold,
+            log2fc_threshold=log2fc_threshold,
+        )
         
         # Update padj values (keep minimum padj for each gene)
         for gene in top_list:
@@ -140,7 +212,21 @@ def load_top_genes_from_dge_union(
     
     # Sort union by padj (ascending = most significant first) and take top_k
     sorted_genes = sorted(gene_to_min_padj.items(), key=lambda x: x[1])
-    return [gene for gene, _ in sorted_genes[:top_k]]
+    result = [gene for gene, _ in sorted_genes[:top_k]]
+    # If strict filter left fewer than top_k genes, fill using all genes with valid padj (ignore log2FC)
+    if len(result) < top_k and dge_files:
+        gene_to_min_padj_any = {}
+        for dge_file in dge_files:
+            df = pd.read_csv(dge_file, index_col=0)
+            if "padj" not in df.columns:
+                continue
+            for g in df.index[df["padj"].notna()]:
+                p = float(df.loc[g, "padj"])
+                if g not in gene_to_min_padj_any or p < gene_to_min_padj_any[g]:
+                    gene_to_min_padj_any[g] = p
+        sorted_any = sorted(gene_to_min_padj_any.items(), key=lambda x: x[1])
+        result = [gene for gene, _ in sorted_any[:top_k]]
+    return result
 
 
 def create_anndata(region, cell_type='Astrocytes'):
@@ -230,36 +316,39 @@ def main(args):
             # Load AnnData for the region
             print(f"\nLoading data for {region}...")
             adata = create_anndata(region, cell_type=args.cell_type)
-            print(f"AnnData shape: {adata.shape} (cells × genes)")
+            print(f"Size of percell data: {adata.shape}")
     
             # Get raw expression matrix (cells × genes)
             expression_matrix = np.array(adata.X.toarray(), dtype=np.float32)
-            print(f"Expression matrix shape: {expression_matrix.shape}")
+            print(f"Size of expression (before gene selection): {expression_matrix.shape}")
             
-            # Select genes: DGE union for Astrocytes/Microglia; top-by-variance for MTG
+            # Gene selection: DGE union for all cell types (Astrocytes, Microglia, MTG)
             n_top_genes = args.top_k_genes
-            if args.cell_type == "MTG":
-                print(f"MTG: Selecting top {n_top_genes} genes by variance...")
-                gene_var = np.var(expression_matrix, axis=0)
-                top_idx = np.argsort(gene_var)[::-1][:n_top_genes]
-                ordered_present = adata.var_names[top_idx].tolist()
-                adata = adata[:, ordered_present].copy()
-                expression_matrix = np.array(adata.X.toarray(), dtype=np.float32)
-                print(f"  Using {expression_matrix.shape[1]} genes. Expression matrix shape: {expression_matrix.shape}")
-            else:
-                print(f"Selecting up to top {n_top_genes} genes from DGE union for region {region}...")
-                dge_genes = load_top_genes_from_dge_union(
-                    region=region,
-                    cell_type=args.cell_type,
-                    top_k=n_top_genes,
-                    dge_results_dir=args.dge_results_dir,
-                )
-                ordered_present = [g for g in dge_genes if g in adata.var_names]
-                if len(ordered_present) == 0:
-                    raise ValueError(f"No DGE genes found in AnnData var_names for region={region}")
-                adata = adata[:, ordered_present].copy()
-                expression_matrix = np.array(adata.X.toarray(), dtype=np.float32)
-                print(f"  Filtered to {expression_matrix.shape[1]} DGE-union genes. Expression matrix shape: {expression_matrix.shape}")
+            print(f"Selecting up to top {n_top_genes} genes from DGE union for region {region}...")
+            dge_genes = load_top_genes_from_dge_union(
+                region=region,
+                cell_type=args.cell_type,
+                top_k=n_top_genes,
+                dge_results_dir=args.dge_results_dir,
+                padj_threshold=getattr(args, "dge_padj", 0.05),
+                log2fc_threshold=getattr(args, "dge_log2fc", 1.0),
+            )
+            symbol_to_ensembl = _load_symbol_ensembl_mapping()
+            ordered_present, match_stats = _dge_genes_to_var_names(dge_genes, adata.var_names, symbol_to_ensembl)
+            if symbol_to_ensembl is not None:
+                print(f"  Using data/genes_2_ensembl_ids.pkl for symbol<->Ensembl matching")
+            # Diagnose why genes might "disappear": DGE vs AnnData ID type and match counts
+            print(f"  DGE genes: {match_stats['n_dge']}, AnnData var_names: {match_stats['n_var']} "
+                  f"(detected as {'Ensembl' if match_stats['var_are_ensembl'] else 'symbol'})")
+            print(f"  Matched: {match_stats['n_matched']} (direct: {match_stats['n_direct']}, via mapping: {match_stats['n_via_mapping']})")
+            if match_stats['n_matched'] < match_stats['n_dge']:
+                print(f"  var_names sample: {match_stats['var_sample']}")
+            if len(ordered_present) == 0:
+                raise ValueError(f"No DGE genes found in AnnData var_names for region={region} (check symbol vs Ensembl ID)")
+            adata = adata[:, ordered_present].copy()
+            expression_matrix = np.array(adata.X.toarray(), dtype=np.float32)
+            print(f"Size of expression (after gene selection): {expression_matrix.shape}")
+            print(f"  Filtered to {expression_matrix.shape[1]} DGE-union genes.")
             
             # Extract target variables from obs
             thal_info = adata.obs['Thal']
@@ -297,6 +386,23 @@ def main(args):
                     all_braak.append(braak_info[patient_mask].iloc[0])
                 else:
                     all_ptau.append(ptau_info[patient_mask].iloc[0])
+
+            # MTG: drop any patient with Thal or Braak "Reference" so model_data has no reference
+            if args.cell_type == "MTG":
+                ref_val = "Reference"
+                valid_idx = [
+                    i for i in range(len(unique_patients))
+                    if (str(all_thal[i]).strip() != ref_val and str(all_braak[i]).strip() != ref_val)
+                ]
+                n_dropped = len(unique_patients) - len(valid_idx)
+                if n_dropped > 0:
+                    print(f"  MTG: dropping {n_dropped} patients with Thal/Braak 'Reference' (keeping {len(valid_idx)})")
+                unique_patients = np.asarray(unique_patients)[valid_idx]
+                all_patient_expressions = [all_patient_expressions[i] for i in valid_idx]
+                all_thal = [all_thal[i] for i in valid_idx]
+                all_braak = [all_braak[i] for i in valid_idx]
+                filtered_names = unique_patients.tolist() if hasattr(unique_patients, 'tolist') else list(unique_patients)
+                all_patient_info = {n: all_patient_info[n] for n in filtered_names}
 
             # Microglia: drop patients with NaN or invalid Braak/CERAD (same as create_data.py)
             if args.cell_type == "Microglia":
@@ -352,7 +458,10 @@ def main(args):
                 
                 n_fold_patients = len(fold_patient_indices)
                 n_genes = fold_expression.shape[1]
-                print(f"  Fold {fold_idx + 1}: {n_fold_patients} patients, {n_genes} genes per patient")
+                if args.cell_type == "MTG":
+                    print(f"Size of model inputs/outputs (fold {fold_idx + 1}): expression {fold_expression.shape}, patient_info {len(fold_patient_info)} patients, thal {len(fold_thal)}, braak {len(braak_folds[-1])}")
+                else:
+                    print(f"Size of model inputs/outputs (fold {fold_idx + 1}): expression {fold_expression.shape}, patient_info {len(fold_patient_info)} patients, thal {len(fold_thal)}")
             
             # Save folds
             output_dir = os.path.join("data", "model_data")
@@ -406,13 +515,17 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Save raw gene expression data with Thal and ptau by patient')
     parser.add_argument('--cell_type', type=str, default='Astrocytes',
                        choices=['Astrocytes', 'Microglia', 'MTG'],
-                       help='Cell type to process (Astrocytes, Microglia, or MTG). MTG uses data/SEA_AD_Data/MTG/MTG_AnnData.h5ad')
+                       help='Cell type to process (Astrocytes, Microglia, or MTG). MTG uses per-cell AnnData from SEA_AD_Data/MTG/ or model_data/.')
     parser.add_argument('--n_folds', type=int, default=8,
                        help='Number of folds for cross-validation split (default: 8)')
     parser.add_argument('--top_k_genes', type=int, default=3000,
                        help='Number of genes to keep from the region DGE union (default: 3000)')
     parser.add_argument('--dge_results_dir', type=str, default='E:/sf2026/dge_results/dge_final',
                        help='Directory containing DGE results CSVs (default: results/dge_final)')
+    parser.add_argument('--dge_padj', type=float, default=0.05,
+                       help='DGE padj threshold for top-k union (default: 0.05). Relax to 0.1 or 1.0 to get more genes.')
+    parser.add_argument('--dge_log2fc', type=float, default=1.0,
+                       help='DGE |log2FC| threshold for top-k union (default: 1.0). Use 0 to include all genes by padj only.')
     
     args = parser.parse_args()
     main(args)

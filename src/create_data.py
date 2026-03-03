@@ -4,6 +4,7 @@ For MTG, targets are Thal and Braak (both categorical).
 """
 
 import argparse
+from collections import defaultdict
 import pandas as pd
 import numpy as np
 import os
@@ -18,36 +19,36 @@ from config import REGION_TO_TAB, DATA_DIR
 
 
 def load_gene_embeddings(embeddings_path, gene_list: list[str]):
-    """Load gene embeddings from TSV/CSV file."""
-    """ gene_list: is list of all genes in the region data"""
-    # Read CSV file with header (first row contains dimension indices)
-    # File is comma-separated: first column is gene IDs, remaining columns are embedding dimensions
-    # Try comma-separated first, then tab-separated as fallback
+    """Load gene embeddings (Ensembl IDs in file), convert to symbols, key by AnnData var_names.
+    When multiple symbols map to the same Ensembl ID, use the one that appears in AnnData."""
     df = pd.read_csv(embeddings_path, sep=',', header=0)
-    
-    # Create a dictionary with gene_ids as key and embedding_data as value
-    gene_ids = df.iloc[:, 0].astype(str).values  # All rows, first column = gene IDs
-    embedding_data = df.iloc[:, 1:].values.astype(float)  # All rows, columns 1 onwards = embeddings
-    gene_embedding_dict = {gene_id: embedding for gene_id, embedding in zip(gene_ids, embedding_data)}
+    gene_ids = df.iloc[:, 0].astype(str).values
+    emb_values = df.iloc[:, 1:].values.astype(float)
+    # Embedding file: Ensembl ID -> vector
+    gene_embedding_dict = {gid: emb for gid, emb in zip(gene_ids, emb_values)}
 
-    # Convert ensembl ids to gene symbols (reverse the mapping)
     with open("data/genes_2_ensembl_ids.pkl", "rb") as f:
         symbol_to_ensembl = pickle.load(f)
 
-    
-    # for each gene in gene_list, if the gene is in gene_embedding_dict, keep the embedding
-    # gene_list may be symbols (from adata with symbol var_names) or Ensembl IDs (from save_perCell_AnnData h5ad)
-    not_found_genes = []
+    # Reverse: Ensembl -> list of symbols (multiple symbols can map to same Ensembl)
+    ensembl_to_symbols = defaultdict(list)
+    for sym, ens in symbol_to_ensembl.items():
+        ensembl_to_symbols[ens].append(sym)
+
+    adata_var_set = set(gene_list)
+    # For each Ensembl in the embedding file, pick the symbol that is in AnnData (if any)
     embedding_data = {}
-    for gene in gene_list:
-        gene_ensembl_id = symbol_to_ensembl.get(gene) if not str(gene).startswith("ENSG") else gene
-        if gene_ensembl_id in gene_embedding_dict:
-            embedding_data[gene] = gene_embedding_dict[gene_ensembl_id]
+    for ensembl_id, vector in gene_embedding_dict.items():
+        candidates = ensembl_to_symbols.get(ensembl_id, [ensembl_id])
+        for sym in candidates:
+            if sym in adata_var_set:
+                embedding_data[sym] = vector
+                break
         else:
-            not_found_genes.append(gene)
-    print(f"Not found genes: {len(not_found_genes)}")
-    print(f"Not found genes: {not_found_genes[:10]}")
-    print(f"Found genes: {len(embedding_data)}")
+            # No symbol in AnnData; keep Ensembl as key only if AnnData uses Ensembl
+            if ensembl_id in adata_var_set:
+                embedding_data[ensembl_id] = vector
+
     return embedding_data
 
 def find_anndata_file(region, cell_type='Astrocytes'):
@@ -57,7 +58,13 @@ def find_anndata_file(region, cell_type='Astrocytes'):
     elif cell_type == "Microglia":
         path = os.path.join('data', 'model_data', f'{region}_Microglia_AnnData_perCell.h5ad')
     elif cell_type == "MTG":
-        path = os.path.join('data', 'SEA_AD_Data', 'MTG', 'MTG_AnnData.h5ad')
+        # Prefer model_data, then SEA_AD_Data
+        model_data_per_cell = os.path.join('data', 'model_data', 'MTG_AnnData_perCell.h5ad')
+        if os.path.exists(model_data_per_cell):
+            path = model_data_per_cell
+        else:
+            print("HERE")
+            exit()
     else:
         raise ValueError(f"Invalid cell type: {cell_type}")
     
@@ -83,7 +90,6 @@ def create_anndata_astrocytes(region):
         columns=['cell_annotation', 'Path..Group.', 'SampleName', 'percent.mito', 'RIN', 'Total.Genes.Detected', 'Thal', 'Ptau.Total.Tau..A.U..'],
         sheet_name=tab_index
     )
-    print(f"Loaded metadata: {metadata.shape}")
 
     matrix, gene_names, cell_names = read_mtx_file(
         mtx_path=str(mtx_path),
@@ -91,7 +97,6 @@ def create_anndata_astrocytes(region):
         col_annotation_path=str(col_annotation_path),
         transpose=False
     )
-    print(f"Loaded matrix shape: {matrix.shape} (genes × cells)")
 
     metadata = metadata.set_index('cell_annotation')
     metadata = metadata.reindex(cell_names)
@@ -138,7 +143,6 @@ def load_anndata_microglia(region):
         )
     valid_cell_mask = (adata.obs["Thal"] != "unk").fillna(False)
     adata = adata[valid_cell_mask].copy()
-    print(f"Loaded Microglia AnnData: {adata.shape} from {path}")
     return adata
 
 
@@ -165,6 +169,8 @@ def load_anndata_mtg(region):
             raise ValueError(
                 f"MTG AnnData must have obs column '{col}'. Found: {list(adata.obs.columns)}"
             )
+    print(len(adata.obs))
+    print(len(adata.var_names))
     # Keep only cells with valid Thal and Braak: exclude NaN, empty, and "Reference"
     thal_s = adata.obs["Thal"].astype(str).str.strip()
     braak_s = adata.obs["Braak"].astype(str).str.strip()
@@ -176,8 +182,8 @@ def load_anndata_mtg(region):
         & (braak_s != "")
         & (braak_s != "Reference")
     )
+    print(valid.sum())
     adata = adata[valid].copy()
-    print(f"Loaded MTG AnnData: {adata.shape} from {path}")
     return adata
 
 
@@ -208,16 +214,10 @@ def main(args=None):
 
     regions = [args.region] if args.region else all_regions
 
-    print("="*80)
-    print(f"Scaling Gene Embeddings by Cell Expression ({cell_type})")
-    print(f"{n_folds}-Fold Cross-Validation Split with Target Variables")
-    print(f"Regions: {regions}")
-    print("="*80)
-
     embeddings_dir = os.path.join("GREmLN", "embeddings")
 
     for region in regions:
-        print(f"Processing {region} ({cell_type})")
+        print("Loading data")
         if cell_type == "Astrocytes":
             emb_path = os.path.join(embeddings_dir, f"{region}_gene_embeddings.tsv")
         elif cell_type == "Microglia":
@@ -227,7 +227,6 @@ def main(args=None):
             emb_path = os.path.join(embeddings_dir, "MTG_gene_embeddings.tsv")
             if not os.path.exists(emb_path):
                 emb_path = os.path.join(embeddings_dir, "EC_gene_embeddings.tsv")
-                print(f"  Using EC gene embeddings (MTG_gene_embeddings.tsv not found)")
 
         adata = create_anndata(region, cell_type)
         # Load gene embeddings
@@ -235,7 +234,7 @@ def main(args=None):
 
         # Filter the adata for which not found genes are not in the adata.var_names
         adata = adata[:, adata.var_names.isin(embeddings_dict.keys())].copy()
-        print(f"Filtered adata shape: {adata.shape}")
+        print(f"Size of percell data: {adata.shape}")
 
          # Get expression matrix with cells as rows and genes as columns
         X = adata.X
@@ -243,8 +242,8 @@ def main(args=None):
 
         # create embeddings matrix from embeddings_dict
         embeddings_matrix = np.array([embeddings_dict[gene] for gene in adata.var_names], dtype=np.float16)
-        print(f"Embeddings matrix shape: {embeddings_matrix.shape}")
-        
+        print(f"Size of embeddings before scaling: {embeddings_matrix.shape}")
+
         # Verify shapes match (should always match since we filtered to common genes)
         if embeddings_matrix.shape[0] != expression_matrix.shape[1]:
             print(f"ERROR: Shape mismatch! Embeddings: {embeddings_matrix.shape[0]} genes, Expression: {expression_matrix.shape[1]} genes.")
@@ -261,10 +260,9 @@ def main(args=None):
             braak_info = None  # unused for Astrocytes/Microglia
         
         # expression_matrix = d, embedding = A
-        print("Scaling embeddings...")
         region_scaled_embeddings = scale_embeddings(embeddings_matrix, expression_matrix, n_components=target_dims)
         del embeddings_matrix, expression_matrix
-        # region_scaled_embeddings shape: (n_cells, n_genes, n_dims)
+        print(f"Size of embeddings after scaling: {region_scaled_embeddings.shape}")
 
         # Collect all patient embeddings into lists for KFold splitting
         all_patient_embeddings = []
@@ -273,7 +271,6 @@ def main(args=None):
         all_thal = []
         all_braak = []
         unique_patients = adata.obs['SampleName'].unique()
-        print(f"Number of unique patients: {len(unique_patients)}")
 
         # verify that the number of cells in the embeddings is the same as the number of cells in the adata.obs
         if region_scaled_embeddings.shape[0] != len(adata.obs):
@@ -295,8 +292,22 @@ def main(args=None):
                 all_thal.append(thal_info[patient_mask].iloc[0])
                 all_braak.append(None)
 
+        # MTG: drop any patient with Thal or Braak "Reference" so model_data has no reference
+        if cell_type == "MTG":
+            ref_val = "Reference"
+            valid_idx = [
+                i for i in range(len(unique_patients))
+                if (str(all_thal[i]).strip() != ref_val and str(all_braak[i]).strip() != ref_val)
+            ]
+            n_dropped = len(unique_patients) - len(valid_idx)
+            unique_patients = np.asarray(unique_patients)[valid_idx]
+            all_patient_embeddings = [all_patient_embeddings[i] for i in valid_idx]
+            all_cell_names = [all_cell_names[i] for i in valid_idx]
+            all_ptau = [all_ptau[i] for i in valid_idx]
+            all_thal = [all_thal[i] for i in valid_idx]
+            all_braak = [all_braak[i] for i in valid_idx]
+
         # Microglia: drop patients with NaN or invalid Braak/CERAD so downstream code never sees them
-        # MTG: already filtered in load_anndata_mtg (valid Thal and Braak)
         if cell_type == "Microglia":
             BRAAK_VALID = {2, 3, 5, 6}
             CERAD_VALID = {"none", "sparse", "moderate", "frequent"}
@@ -312,9 +323,6 @@ def main(args=None):
                 except (ValueError, TypeError):
                     return False
             valid_idx = [i for i in range(len(unique_patients)) if valid_microglia(all_ptau[i], all_thal[i])]
-            n_dropped = len(unique_patients) - len(valid_idx)
-            if n_dropped > 0:
-                print(f"  Microglia: dropping {n_dropped} patients with NaN or invalid Braak/CERAD (keeping {len(valid_idx)})")
             unique_patients = np.asarray(unique_patients)[valid_idx]
             all_patient_embeddings = [all_patient_embeddings[i] for i in valid_idx]
             all_cell_names = [all_cell_names[i] for i in valid_idx]
@@ -332,7 +340,6 @@ def main(args=None):
         thal_folds = []
         braak_folds = []
         
-        print(f"Splitting {n_patients} patients into {n_folds} folds...")
         for fold_idx, (_, fold_patient_indices) in enumerate(kf.split(range(n_patients))):
             # Concatenate embeddings from patients in this fold
             fold_embeddings_list = [all_patient_embeddings[i] for i in fold_patient_indices]
@@ -357,7 +364,17 @@ def main(args=None):
             
             n_fold_cells = fold_embeddings.shape[0]
             n_fold_patients = len(fold_patient_indices)
-            print(f"  Fold {fold_idx + 1}: {n_fold_patients} patients, {n_fold_cells} cells")
+
+        # Size of all model inputs and outputs before dumping
+        for i in range(n_folds):
+            ef = embeddings_folds[i]
+            pf = patient_info_folds[i]
+            tf = thal_folds[i]
+            bf = braak_folds[i] if cell_type == "MTG" else None
+            if cell_type == "MTG":
+                print(f"Size of model inputs/outputs (fold {i+1}): embeddings {ef.shape}, patient_info {len(pf)} patients, thal {len(tf)}, braak {len(bf)}")
+            else:
+                print(f"Size of model inputs/outputs (fold {i+1}): embeddings {ef.shape}, patient_info {len(pf)} patients, thal {len(tf)}")
 
         # Save folds
         if cell_type == "Microglia":
@@ -370,27 +387,14 @@ def main(args=None):
         with open(emb_output_dir, "wb") as f:
             if cell_type == "MTG":
                 pickle.dump((embeddings_folds, patient_info_folds, thal_folds, braak_folds), f, protocol=pickle.HIGHEST_PROTOCOL)
-                print(f"Saved {n_folds} folds of rescaled embeddings to {emb_output_dir}")
-                print(f"  Each fold contains: embeddings (3D array), patient_info (dict), thal (categorical), braak (categorical)")
             else:
                 pickle.dump((embeddings_folds, patient_info_folds, ptau_folds, thal_folds), f, protocol=pickle.HIGHEST_PROTOCOL)
-                print(f"Saved {n_folds} folds of rescaled embeddings to {emb_output_dir}")
-                print(f"  Each fold contains: embeddings (3D array), patient_info (dict: patient_name -> cell_names), ptau, thal")
         del embeddings_folds, patient_info_folds, ptau_folds, thal_folds, braak_folds, region_scaled_embeddings
         del adata, fold_embeddings, fold_patient_info, fold_ptau, fold_thal, fold_braak
         del all_patient_embeddings, all_cell_names, all_ptau, all_thal, all_braak
         del unique_patients
         gc.collect()
-        
-        # Try to get memory info if psutil is available
-        try:
-            import psutil
-            process = psutil.Process()
-            memory_mb = process.memory_info().rss / (1024 * 1024)
-            print(f"Memory after saving: {memory_mb:.2f} MB")
-        except ImportError:
-            print("Memory info not available (psutil not installed)")
-  
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Scale gene embeddings by expression and save for model training")
     parser.add_argument("--cell_type", type=str, default="Astrocytes", choices=["Astrocytes", "Microglia", "MTG"],

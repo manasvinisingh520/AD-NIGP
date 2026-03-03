@@ -983,7 +983,6 @@ def scale_embeddings(embeddings_matrix, expression_matrix, n_components=None):
     # Using similar function to example (expression = d, embedding = A)
     scaled_embeddings_matrix = expression_matrix[:, :, None] * embeddings_matrix[None, :, :]
     scaled_embeddings_matrix = scaled_embeddings_matrix.astype('float16')
-    print(f"Scaled embeddings matrix shape: {scaled_embeddings_matrix.shape}")
     return scaled_embeddings_matrix
 
 

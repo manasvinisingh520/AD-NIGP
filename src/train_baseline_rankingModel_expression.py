@@ -49,8 +49,48 @@ def _main_mtg(args):
     print(f"Loading MTG raw-expression data from {data_path}")
     with open(data_path, "rb") as f:
         expression_folds, patient_info_folds, thal_folds, braak_folds = pickle.load(f)
+    # Filter out any patient with Thal or Braak "Reference" so model_data has no reference
+    ref_val = "Reference"
+    new_expression_folds, new_patient_info_folds, new_thal_folds, new_braak_folds = [], [], [], []
+    for f in range(len(expression_folds)):
+        fold_X = expression_folds[f]
+        fold_pi = patient_info_folds[f]
+        fold_thal = thal_folds[f]
+        fold_braak = braak_folds[f]
+        patient_names = list(fold_pi.keys()) if hasattr(fold_pi, "keys") else list(fold_pi)
+        valid_idx = [
+            i for i in range(len(patient_names))
+            if str(fold_thal[i]).strip() != ref_val and str(fold_braak[i]).strip() != ref_val
+        ]
+        n_dropped = len(patient_names) - len(valid_idx)
+        if n_dropped > 0:
+            fold_X = fold_X[valid_idx]
+            patient_names = [patient_names[i] for i in valid_idx]
+            fold_pi = {n: fold_pi[n] for n in patient_names}
+            fold_thal = [fold_thal[i] for i in valid_idx]
+            fold_braak = [fold_braak[i] for i in valid_idx]
+            print(f"  Fold {f+1}: dropped {n_dropped} patients with Thal/Braak 'Reference'")
+        new_expression_folds.append(fold_X)
+        new_patient_info_folds.append(fold_pi)
+        new_thal_folds.append(fold_thal)
+        new_braak_folds.append(fold_braak)
+    expression_folds = new_expression_folds
+    patient_info_folds = new_patient_info_folds
+    thal_folds = new_thal_folds
+    braak_folds = new_braak_folds
     n_folds = len(expression_folds)
     print(f"Loaded {n_folds} folds")
+
+    # Unique CERAD (from Thal column) and Braak values in this dataset
+    all_thal = [str(t).strip().lower() for fold in thal_folds for t in fold]
+    all_braak_raw = [b for fold in braak_folds for b in fold]
+    unique_cerad = sorted(set(all_thal))
+    unique_braak = sorted(set(str(b) for b in all_braak_raw))
+    print(f"Unique CERAD (Thal) values in dataset: {unique_cerad}", flush=True)
+    print(f"Unique Braak values in dataset: {unique_braak}", flush=True)
+    n_thal_per_fold = [len(f) for f in thal_folds]
+    n_braak_per_fold = [len(f) for f in braak_folds]
+    print(f"Thal and Braak are per-patient: {n_thal_per_fold} Thal values per fold, {n_braak_per_fold} Braak values per fold (one label per patient)", flush=True)
 
     device = torch.device(args.device)
     cerad_to_idx = {s: i for i, s in enumerate(CERAD_CLASS_ORDER)}
@@ -115,6 +155,7 @@ def _main_mtg(args):
         best_test_f1 = float("-inf")
         best_epoch = 0
         patience = getattr(args, "patience", 20)
+        use_best_f1 = getattr(args, "best_f1", False)
         if patience is not None and patience <= 0:
             patience = None
         epochs_without_improvement = 0
@@ -143,13 +184,29 @@ def _main_mtg(args):
                     print(f"  Early stopping at epoch {epoch+1} (no test F1 improvement for {patience} epochs).")
                 break
         writer.close()
-        print(f"\nTest Fold {test_fold_idx + 1} Best F1: {best_test_f1:.4f} at epoch {best_epoch + 1}")
-        fold_results.append({"test_fold": test_fold_idx + 1, "best_f1": best_test_f1, "best_epoch": best_epoch + 1, "best_test_mse": 0.0, "best_test_mae": 0.0})
+        if use_best_f1:
+            print(f"\nTest Fold {test_fold_idx + 1} Best F1: {best_test_f1:.4f} at epoch {best_epoch + 1}")
+            fold_results.append({"test_fold": test_fold_idx + 1, "best_f1": best_test_f1, "final_f1": best_test_f1, "best_epoch": best_epoch + 1, "best_test_mse": 0.0, "best_test_mae": 0.0})
+        else:
+            # Use final-epoch F1 (explicit eval; we never load best state)
+            model.eval()
+            with torch.no_grad():
+                _loss, test_f1_cerad, test_f1_braak = evaluate_microglia(
+                    model, test_loader, criterion_cerad, criterion_braak, device
+                )
+            final_f1 = (test_f1_cerad + test_f1_braak) / 2.0
+            print(f"\nTest Fold {test_fold_idx + 1} Final F1: {final_f1:.4f} (last epoch)")
+            if best_test_f1 != final_f1:
+                print(f"  (best F1 during training was {best_test_f1:.4f} at epoch {best_epoch + 1})")
+            fold_results.append({"test_fold": test_fold_idx + 1, "best_f1": final_f1, "final_f1": final_f1, "best_epoch": epoch + 1, "best_test_mse": 0.0, "best_test_mae": 0.0})
 
     print(f"\n{'='*60}\nLeave-One-Fold-Out Summary (MTG Expression)\n{'='*60}")
+    fold_f1s = [r["final_f1"] for r in fold_results]
+    label = "best" if getattr(args, "best_f1", False) else "final (last-epoch)"
+    print(f"Per-fold {label} F1: {[f'{f:.4f}' for f in fold_f1s]}")
     for r in fold_results:
         print(f"\033[92mTest Fold {r['test_fold']}: F1={r['best_f1']:.4f}\033[0m")
-    avg_f1 = np.mean([r["best_f1"] for r in fold_results])
+    avg_f1 = np.mean(fold_f1s)
     print(f"\nAverage F1: {avg_f1:.4f}")
     return avg_f1, 0.0, 0.0, fold_results
 
@@ -300,6 +357,7 @@ def main(args):
         best_test_mae = None
         best_state = None
         patience = getattr(args, "patience", 20)
+        use_best_f1 = getattr(args, "best_f1", False)
         if patience is not None and patience <= 0:
             patience = None
         epochs_without_improvement = 0
@@ -320,6 +378,26 @@ def main(args):
             writer.add_scalar("Metrics/Test_MAE", test_mae, epoch)
             writer.add_scalar("Metrics/Test_F1", test_f1, epoch)
 
+            if use_best_f1:
+                if test_loss < best_test_loss:
+                    best_test_loss = test_loss
+                    best_test_f1 = test_f1
+                    best_epoch = epoch
+                    best_test_mse = test_mse
+                    best_test_mae = test_mae
+                    best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+                    epochs_without_improvement = 0
+                else:
+                    epochs_without_improvement += 1
+            else:
+                if test_loss < best_test_loss:
+                    best_test_loss = test_loss
+                    epochs_without_improvement = 0
+                else:
+                    epochs_without_improvement += 1
+
+            """
+            # (legacy: best_f1 controlled by --best_f1 above)
             if test_loss < best_test_loss:
                 best_test_loss = test_loss
                 best_test_f1 = test_f1
@@ -330,6 +408,7 @@ def main(args):
                 epochs_without_improvement = 0
             else:
                 epochs_without_improvement += 1
+            """
 
             if (epoch + 1) % 10 == 0 and getattr(args, "verbose", True):
                 print(
@@ -342,13 +421,12 @@ def main(args):
                     print(f"  Early stopping at epoch {epoch+1} (no test loss improvement for {patience} epochs).")
                 break
 
+        """
         if best_state is not None:
             model.load_state_dict(best_state)
         writer.close()
-
         print(f"\nTest Fold {test_fold_idx + 1} Best F1: {best_test_f1:.4f} at epoch {best_epoch + 1}")
         print(f"  MSE at best F1: {best_test_mse:.4f}, MAE at best F1: {best_test_mae:.4f}")
-
         fold_results.append(
             {
                 "test_fold": test_fold_idx + 1,
@@ -358,17 +436,67 @@ def main(args):
                 "best_test_mae": best_test_mae,
             }
         )
+        """
+        if use_best_f1 and best_state is not None:
+            model.load_state_dict(best_state)
+        writer.close()
+
+        if use_best_f1 and best_state is not None:
+            report_f1 = best_test_f1
+            report_mse = best_test_mse
+            report_mae = best_test_mae
+            report_epoch = best_epoch + 1
+            print(f"\nTest Fold {test_fold_idx + 1} Best F1: {report_f1:.4f} (epoch {report_epoch})")
+            print(f"  MSE: {report_mse:.4f}, MAE: {report_mae:.4f}")
+            fold_results.append(
+                {
+                    "test_fold": test_fold_idx + 1,
+                    "best_f1": report_f1,
+                    "final_f1": report_f1,
+                    "best_epoch": report_epoch,
+                    "best_test_mse": report_mse,
+                    "best_test_mae": report_mae,
+                }
+            )
+        else:
+            # Final-epoch F1/MSE/MAE (explicit eval)
+            model.eval()
+            with torch.no_grad():
+                test_loss, test_mse, test_mae, test_f1 = evaluate(
+                    model, test_loader, criterion_ptau, criterion_thal, device, idx_to_thal
+                )
+            report_f1 = test_f1
+            report_mse = test_mse
+            report_mae = test_mae
+            report_epoch = epoch + 1
+            print(f"\nTest Fold {test_fold_idx + 1} Final F1: {report_f1:.4f} (last epoch)")
+            if use_best_f1:
+                print(f"  (no improvement in any epoch; reporting last epoch)")
+            print(f"  MSE: {report_mse:.4f}, MAE: {report_mae:.4f}")
+            fold_results.append(
+                {
+                    "test_fold": test_fold_idx + 1,
+                    "best_f1": report_f1,
+                    "final_f1": report_f1,
+                    "best_epoch": report_epoch,
+                    "best_test_mse": report_mse,
+                    "best_test_mae": report_mae,
+                }
+            )
 
     print(f"\n{'='*60}")
     print("Leave-One-Fold-Out Cross-Validation Summary (Expression)")
     print(f"{'='*60}")
+    fold_f1s = [r["final_f1"] for r in fold_results]
+    label = "best" if getattr(args, "best_f1", False) else "final (last-epoch)"
+    print(f"Per-fold {label} F1: {[f'{f:.4f}' for f in fold_f1s]}")
     for result in fold_results:
         print(
             f"\033[92mTest Fold {result['test_fold']}: F1={result['best_f1']:.4f}, "
             f"MSE={result['best_test_mse']:.4f}, MAE={result['best_test_mae']:.4f}\033[0m"
         )
 
-    avg_f1 = np.mean([r["best_f1"] for r in fold_results])
+    avg_f1 = np.mean(fold_f1s)
     avg_mse = np.mean([r["best_test_mse"] for r in fold_results])
     avg_mae = np.mean([r["best_test_mae"] for r in fold_results])
 
@@ -409,6 +537,8 @@ if __name__ == "__main__":
     parser.add_argument("--patience", type=int, default=20, help="Early stopping: stop if test loss does not improve for this many epochs (default: 20). Set to 0 to disable.")
     parser.add_argument("--n_hidden_layers", type=int, default=1, choices=[1, 3], help="Number of hidden layers in baseline MLP: 1 (minimal) or 3 (original). Default: 1.")
     parser.add_argument("--hidden_dim_3layer", type=int, default=32, help="Hidden size when n_hidden_layers=3 (default: 32).")
+
+    parser.add_argument("--best_f1", action="store_true", help="Use best F1 across epochs and restore best model; default is last-epoch F1.")
 
     main(parser.parse_args())
 

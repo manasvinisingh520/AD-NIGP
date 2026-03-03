@@ -100,6 +100,51 @@ def main(args):
         # MTG: (embeddings_folds, patient_info_folds, thal_folds, braak_folds) - both categorical
         embeddings_folds, patient_info_folds, thal_folds, braak_folds = loaded
         ptau_folds = None  # not used for MTG
+        # Filter out any patient with Thal or Braak "Reference" so model_data has no reference
+        ref_val = "Reference"
+        new_embeddings_folds, new_patient_info_folds, new_thal_folds, new_braak_folds = [], [], [], []
+        for f in range(len(embeddings_folds)):
+            fold_emb = embeddings_folds[f]
+            fold_pi = patient_info_folds[f]
+            fold_thal = thal_folds[f]
+            fold_braak = braak_folds[f]
+            patient_names = list(fold_pi.keys())
+            valid_idx = [
+                i for i in range(len(patient_names))
+                if str(fold_thal[i]).strip() != ref_val and str(fold_braak[i]).strip() != ref_val
+            ]
+            if len(valid_idx) < len(patient_names):
+                # Rebuild fold: keep only valid patients
+                cell_starts = [0]
+                for name in patient_names:
+                    cell_starts.append(cell_starts[-1] + len(fold_pi[name]))
+                new_emb_list = []
+                new_pi = {}
+                new_thal = []
+                new_braak = []
+                for i in valid_idx:
+                    name = patient_names[i]
+                    start, end = cell_starts[i], cell_starts[i + 1]
+                    new_emb_list.append(fold_emb[start:end])
+                    new_pi[name] = fold_pi[name]
+                    new_thal.append(fold_thal[i])
+                    new_braak.append(fold_braak[i])
+                fold_emb = np.concatenate(new_emb_list, axis=0)
+                fold_pi = new_pi
+                fold_thal, fold_braak = new_thal, new_braak
+                print(f"  Fold {f+1}: dropped {len(patient_names) - len(valid_idx)} patients with Thal/Braak 'Reference'")
+            new_embeddings_folds.append(fold_emb)
+            new_patient_info_folds.append(fold_pi)
+            new_thal_folds.append(fold_thal)
+            new_braak_folds.append(fold_braak)
+        embeddings_folds, patient_info_folds, thal_folds, braak_folds = new_embeddings_folds, new_patient_info_folds, new_thal_folds, new_braak_folds
+        # Unique CERAD (Thal) and Braak values in this dataset
+        all_thal = [str(t).strip().lower() for fold in thal_folds for t in fold]
+        all_braak_raw = [b for fold in braak_folds for b in fold]
+        unique_cerad = sorted(set(all_thal))
+        unique_braak = sorted(set(str(b) for b in all_braak_raw))
+        print(f"Unique CERAD (Thal) values in dataset: {unique_cerad}")
+        print(f"Unique Braak values in dataset: {unique_braak}", flush=True)
     else:
         embeddings_folds, patient_info_folds, ptau_folds, thal_folds = loaded
         braak_folds = None
@@ -190,6 +235,7 @@ def main(args):
         test_braak = all_fold_patient_data[test_fold_idx]["braak"]
 
         n_train, n_test = train_embeddings.shape[0], test_embeddings.shape[0]
+        print(f"  Train patients: {n_train}, Test patients: {n_test}")
 
         if len(train_embeddings.shape) == 3:
             n_genes, n_dims = train_embeddings.shape[1], train_embeddings.shape[2]
@@ -277,8 +323,10 @@ def main(args):
 
         best_test_f1 = float("-inf")
         best_epoch = 0
-        best_test_f1_cerad = best_test_f1_braak = None
+        best_test_f1_cerad = 0.0
+        best_test_f1_braak = 0.0
         patience = getattr(args, "patience", 20)
+        use_best_f1 = getattr(args, "best_f1", False)
         if patience is not None and patience <= 0:
             patience = None
         epochs_without_improvement = 0
@@ -315,22 +363,50 @@ def main(args):
                 break
 
         writer.close()
-        print(f"\nTest Fold {test_fold_idx + 1} Best F1: {best_test_f1:.4f} at epoch {best_epoch + 1} (CERAD: {best_test_f1_cerad:.4f}, Braak: {best_test_f1_braak:.4f})")
-        fold_results.append({
-            "test_fold": test_fold_idx + 1,
-            "best_f1": best_test_f1,
-            "best_epoch": best_epoch + 1,
-            "best_test_mse": 0.0,
-            "best_test_mae": 0.0,
-        })
+        if use_best_f1:
+            report_f1 = best_test_f1
+            report_cerad = best_test_f1_cerad
+            report_braak = best_test_f1_braak
+            report_epoch = best_epoch + 1
+            fold_results.append({
+                "test_fold": test_fold_idx + 1,
+                "best_f1": report_f1,
+                "final_f1": report_f1,
+                "best_epoch": report_epoch,
+                "best_test_mse": 0.0,
+                "best_test_mae": 0.0,
+            })
+            print(f"\nTest Fold {test_fold_idx + 1} Best F1: {report_f1:.4f} (epoch {report_epoch}) (CERAD: {report_cerad:.4f}, Braak: {report_braak:.4f})")
+        else:
+            # Explicitly evaluate current (final) model so we report final-epoch metrics
+            model.eval()
+            with torch.no_grad():
+                _loss, test_f1_cerad, test_f1_braak = evaluate_microglia(
+                    model, test_loader, criterion_cerad, criterion_braak, device
+                )
+            final_f1 = (test_f1_cerad + test_f1_braak) / 2.0
+            fold_results.append({
+                "test_fold": test_fold_idx + 1,
+                "best_f1": final_f1,
+                "final_f1": final_f1,
+                "best_epoch": epoch + 1,
+                "best_test_mse": 0.0,
+                "best_test_mae": 0.0,
+            })
+            print(f"\nTest Fold {test_fold_idx + 1} Final F1: {final_f1:.4f} (last epoch) (CERAD: {test_f1_cerad:.4f}, Braak: {test_f1_braak:.4f})")
+            if best_test_f1 != final_f1:
+                print(f"  (best F1 during training was {best_test_f1:.4f} at epoch {best_epoch+1})")
 
     print(f"\n{'='*60}")
     print("Leave-One-Fold-Out Cross-Validation Summary")
     print(f"{'='*60}")
+    fold_f1s = [r["final_f1"] for r in fold_results]
+    label = "best" if getattr(args, "best_f1", False) else "final (last-epoch)"
+    print(f"Per-fold {label} F1: {[f'{f:.4f}' for f in fold_f1s]}")
     for result in fold_results:
         print(f"\033[92mTest Fold {result['test_fold']}: F1={result['best_f1']:.4f}\033[0m")
 
-    avg_f1 = np.mean([r["best_f1"] for r in fold_results])
+    avg_f1 = np.mean(fold_f1s)
     print(f"\nAverage F1: {avg_f1:.4f}")
 
     return avg_f1, 0.0, 0.0, fold_results
@@ -356,5 +432,6 @@ if __name__ == "__main__":
     parser.add_argument("--patience", type=int, default=20, help="Early stopping: stop if test F1 does not improve for this many epochs (default: 20). Set to 0 to disable.")
     parser.add_argument("--n_hidden_layers", type=int, default=1, choices=[1, 3], help="Number of hidden layers in baseline MLP: 1 or 3 (default: 1).")
     parser.add_argument("--hidden_dim_3layer", type=int, default=32, help="Hidden size when n_hidden_layers=3 (default: 32).")
+    parser.add_argument("--best_f1", action="store_true", help="Use best F1 across epochs; default is last-epoch F1.")
     args = parser.parse_args()
     main(args)

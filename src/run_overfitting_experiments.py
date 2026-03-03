@@ -65,6 +65,7 @@ def build_args(region, cell_type, exp, gene_encoder, attention, loss_ptau, pca_c
         n_hidden_layers=getattr(base_args, "n_hidden_layers", 1),
         hidden_dim_3layer=getattr(base_args, "hidden_dim_3layer", 32),
         patience=getattr(base_args, "patience", 20),
+        best_f1=getattr(base_args, "best_f1", False),
     )
 
 
@@ -206,5 +207,6 @@ if __name__ == "__main__":
     parser.add_argument("--hidden_dim_3layer", type=int, default=32,
                         help="Hidden size when n_hidden_layers=3 (default: 32).")
     parser.add_argument("--patience", type=int, default=20, help="Early stopping patience (default: 20).")
+    parser.add_argument("--best_f1", action="store_true", help="Use best F1 across epochs; default is last-epoch F1.")
     args = parser.parse_args()
     run_experiments(args)

@@ -369,6 +369,7 @@ def main(args):
         best_test_mae = None
         best_state = None
         patience = getattr(args, 'patience', 20)
+        use_best_f1 = getattr(args, 'best_f1', False)
         if patience is not None and patience <= 0:
             patience = None
         epochs_without_improvement = 0
@@ -390,6 +391,27 @@ def main(args):
             writer.add_scalar('Metrics/Test_MAE', test_mae, epoch)
             writer.add_scalar('Metrics/Test_F1', test_f1, epoch)
 
+            if use_best_f1:
+                if test_loss < best_test_loss:
+                    best_test_loss = test_loss
+                    best_test_f1 = test_f1
+                    best_epoch = epoch
+                    best_test_mse = test_mse
+                    best_test_mae = test_mae
+                    best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+                    epochs_without_improvement = 0
+                else:
+                    epochs_without_improvement += 1
+            else:
+                if test_loss < best_test_loss:
+                    best_test_loss = test_loss
+                    best_test_f1 = test_f1  # for diagnostic only
+                    epochs_without_improvement = 0
+                else:
+                    epochs_without_improvement += 1
+
+            """
+            # (legacy: best_f1 controlled by --best_f1 above)
             if test_loss < best_test_loss:
                 best_test_loss = test_loss
                 best_test_f1 = test_f1
@@ -400,7 +422,7 @@ def main(args):
                 epochs_without_improvement = 0
             else:
                 epochs_without_improvement += 1
-
+            """
             if (epoch + 1) % 10 == 0 and getattr(args, "verbose", True):
                 print(f"Epoch {epoch+1}/{args.epochs} - Train Loss: {train_loss:.4f}, "
                       f"Test Loss: {test_loss:.4f}, Test F1: {test_f1:.4f}, Test MAE: {test_mae:.4f}")
@@ -410,28 +432,59 @@ def main(args):
                     print(f"  Early stopping at epoch {epoch+1} (no test loss improvement for {patience} epochs).")
                 break
 
+        """
         if best_state is not None:
+            model.load_state_dict(best_state)
+        """
+        if use_best_f1 and best_state is not None:
             model.load_state_dict(best_state)
         writer.close()
 
-        print(f"\nTest Fold {test_fold_idx + 1} Best F1: {best_test_f1:.4f} at epoch {best_epoch + 1}")
-        print(f"  MSE at best F1: {best_test_mse:.4f}, MAE at best F1: {best_test_mae:.4f}")
+        if use_best_f1 and best_state is not None:
+            report_f1 = best_test_f1
+            report_mse = best_test_mse
+            report_mae = best_test_mae
+            report_epoch = best_epoch + 1
+            print(f"\nTest Fold {test_fold_idx + 1} Best F1: {report_f1:.4f} (epoch {report_epoch})")
+            print(f"  MSE: {report_mse:.4f}, MAE: {report_mae:.4f}")
+        else:
+            # Final-epoch metrics (or fallback when --best_f1 but no improvement)
+            model.eval()
+            with torch.no_grad():
+                test_loss, test_mse, test_mae, test_f1 = evaluate(
+                    model, test_loader, criterion_ptau, criterion_thal, device, idx_to_thal
+                )
+            report_f1 = test_f1
+            report_mse = test_mse
+            report_mae = test_mae
+            report_epoch = epoch + 1
+            print(f"\nTest Fold {test_fold_idx + 1} Final F1: {report_f1:.4f} (last epoch)")
+            if use_best_f1:
+                print(f"  (no improvement in any epoch; reporting last epoch)")
+            elif best_test_f1 != report_f1:
+                print(f"  (best F1 during training was {best_test_f1:.4f})")
+            print(f"  MSE: {report_mse:.4f}, MAE: {report_mae:.4f}")
+
         fold_results.append({
             'test_fold': test_fold_idx + 1,
-            'best_f1': best_test_f1,
-            'best_epoch': best_epoch + 1,
-            'best_test_mse': best_test_mse,
-            'best_test_mae': best_test_mae
+            'best_f1': report_f1,
+            'final_f1': report_f1,
+            'best_epoch': report_epoch,
+            'best_test_mse': report_mse,
+            'best_test_mae': report_mae
         })
 
     print(f"\n{'='*60}")
     print("Leave-One-Fold-Out Cross-Validation Summary")
     print(f"{'='*60}")
+    fold_f1s = [r['final_f1'] for r in fold_results]
+    label = "best" if getattr(args, 'best_f1', False) else "final (last-epoch)"
+    print(f"Per-fold {label} F1: {[f'{f:.4f}' for f in fold_f1s]}")
     for result in fold_results:
         print(f"\033[92mTest Fold {result['test_fold']}: F1={result['best_f1']:.4f}, "
               f"MSE={result['best_test_mse']:.4f}, MAE={result['best_test_mae']:.4f}\033[0m")
 
-    avg_f1 = np.mean([r['best_f1'] for r in fold_results])
+    avg_f1 = np.mean(fold_f1s)
     avg_mse = np.mean([r['best_test_mse'] for r in fold_results])
     avg_mae = np.mean([r['best_test_mae'] for r in fold_results])
 
@@ -481,6 +534,8 @@ if __name__ == "__main__":
                        help='Baseline MLP: 1 (minimal) or 3 (original) hidden layers (default: 1).')
     parser.add_argument('--hidden_dim_3layer', type=int, default=32,
                        help='Hidden size when n_hidden_layers=3 (default: 32).')
+    parser.add_argument('--best_f1', action='store_true',
+                       help='Use best F1 across epochs and restore best model; default is last-epoch F1.')
     args = parser.parse_args()
 
     main(args)
