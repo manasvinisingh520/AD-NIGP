@@ -10,7 +10,7 @@ import os
 import pickle
 import gc
 import argparse
-from sklearn.model_selection import KFold
+from sklearn.model_selection import KFold, StratifiedKFold
 from pathlib import Path
 import anndata as ad
 from utils import (
@@ -433,7 +433,28 @@ def main(args):
 
             # Split patients into folds
             n_patients = len(unique_patients)
-            kf = KFold(n_splits=args.n_folds, shuffle=True, random_state=42)
+            if args.cell_type == "MTG":
+                strat_labels_full = [f"{str(all_thal[i]).strip()}_{str(all_braak[i]).strip()}" for i in range(n_patients)]
+                strat_labels_thal = [str(all_thal[i]).strip() for i in range(n_patients)]
+                strat_labels_braak = [str(all_braak[i]).strip() for i in range(n_patients)]
+                fold_splits = None
+                for label_name, strat_labels in [("Thal only", strat_labels_thal), ("Braak only", strat_labels_braak), ("Thal+Braak", strat_labels_full)]:
+                    try:
+                        kf = StratifiedKFold(n_splits=args.n_folds, shuffle=True, random_state=42)
+                        fold_splits = list(kf.split(range(n_patients), strat_labels))
+                        print(f"  Using StratifiedKFold ({label_name}) for MTG folds.")
+                        break
+                    except ValueError as e:
+                        if "least populated class" in str(e) or "cannot be greater" in str(e):
+                            continue
+                        raise
+                if fold_splits is None:
+                    print("  Warning: StratifiedKFold failed (too many rare Thal/Braak combos). Using KFold.")
+                    kf = KFold(n_splits=args.n_folds, shuffle=True, random_state=42)
+                    fold_splits = list(kf.split(range(n_patients)))
+            else:
+                kf = KFold(n_splits=args.n_folds, shuffle=True, random_state=42)
+                fold_splits = list(kf.split(range(n_patients)))
             
             expression_folds = []
             patient_info_folds = []
@@ -442,7 +463,7 @@ def main(args):
             braak_folds = [] if args.cell_type == "MTG" else None
             
             print(f"\nSplitting {n_patients} patients into {args.n_folds} folds...")
-            for fold_idx, (_, fold_patient_indices) in enumerate(kf.split(range(n_patients))):
+            for fold_idx, (_, fold_patient_indices) in enumerate(fold_splits):
                 fold_expression_list = [all_patient_expressions[i] for i in fold_patient_indices]
                 fold_expression = np.vstack(fold_expression_list).astype(np.float32)
                 fold_thal = [all_thal[i] for i in fold_patient_indices]

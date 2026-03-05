@@ -54,7 +54,8 @@ def train_epoch_microglia(model, dataloader, criterion_cerad, criterion_braak, o
         optimizer.zero_grad()
         out = model(embeddings)
         cerad_pred, braak_pred, w = _unpack_model_out(out)
-        loss = criterion_cerad(cerad_pred, cerad) + criterion_braak(braak_pred, braak)
+        loss = criterion_cerad(cerad_pred, cerad)
+        """ + criterion_braak(braak_pred, braak)  # second head: train on Thal only for now """
         if lambda_entropy > 0 and w is not None:
             loss = loss + lambda_entropy * gene_entropy_loss(w)
         loss.backward()
@@ -75,14 +76,20 @@ def evaluate_microglia(model, dataloader, criterion_cerad, criterion_braak, devi
             braak = braak.to(device)
             out = model(embeddings)
             cerad_pred, braak_pred, _ = _unpack_model_out(out)
-            loss = criterion_cerad(cerad_pred, cerad) + criterion_braak(braak_pred, braak)
+            loss = criterion_cerad(cerad_pred, cerad)
+            """ + criterion_braak(braak_pred, braak)  # second head: train on Thal only
+            """
             total_loss += loss.item()
             cerad_preds.extend(torch.argmax(cerad_pred, dim=1).cpu().numpy())
             cerad_targets.extend(cerad.cpu().numpy())
+            """
             braak_preds.extend(torch.argmax(braak_pred, dim=1).cpu().numpy())
             braak_targets.extend(braak.cpu().numpy())
+            """
     f1_cerad = f1_score(cerad_targets, cerad_preds, average="weighted")
-    f1_braak = f1_score(braak_targets, braak_preds, average="weighted")
+    """ f1_braak = f1_score(braak_targets, braak_preds, average="weighted")  # second head disabled
+    """
+    f1_braak = f1_cerad  # so reported F1 = Thal only
     return total_loss / len(dataloader), f1_cerad, f1_braak
 
 
@@ -138,12 +145,12 @@ def main(args):
             new_thal_folds.append(fold_thal)
             new_braak_folds.append(fold_braak)
         embeddings_folds, patient_info_folds, thal_folds, braak_folds = new_embeddings_folds, new_patient_info_folds, new_thal_folds, new_braak_folds
-        # Unique CERAD (Thal) and Braak values in this dataset
+        # MTG: build Thal (cerad) and Braak class order from data so labels map correctly
         all_thal = [str(t).strip().lower() for fold in thal_folds for t in fold]
         all_braak_raw = [b for fold in braak_folds for b in fold]
         unique_cerad = sorted(set(all_thal))
-        unique_braak = sorted(set(str(b) for b in all_braak_raw))
-        print(f"Unique CERAD (Thal) values in dataset: {unique_cerad}")
+        unique_braak = sorted(set(str(b).strip() for b in all_braak_raw))
+        print(f"Unique Thal values in dataset: {unique_cerad}")
         print(f"Unique Braak values in dataset: {unique_braak}", flush=True)
     else:
         embeddings_folds, patient_info_folds, ptau_folds, thal_folds = loaded
@@ -154,19 +161,29 @@ def main(args):
     device = torch.device(args.device)
     print(f"Using device: {device}")
 
-    cerad_to_idx = {s: i for i, s in enumerate(CERAD_CLASS_ORDER)}
-    n_cerad_classes = len(CERAD_CLASS_ORDER)
-    n_braak_classes = len(BRAAK_TO_IDX)
+    if is_mtg:
+        # MTG: data-driven mapping from actual Thal/Braak strings to indices
+        cerad_to_idx = {s: i for i, s in enumerate(unique_cerad)}
+        braak_to_idx = {s: i for i, s in enumerate(unique_braak)}
+        n_cerad_classes = len(unique_cerad)
+        n_braak_classes = len(unique_braak)
+
+        def _braak_to_idx(b):
+            return braak_to_idx.get(str(b).strip(), 0)
+    else:
+        cerad_to_idx = {s: i for i, s in enumerate(CERAD_CLASS_ORDER)}
+        n_cerad_classes = len(CERAD_CLASS_ORDER)
+        n_braak_classes = len(BRAAK_TO_IDX)
+
+        def _braak_to_idx(b):
+            try:
+                v = int(round(float(b)))
+                return BRAAK_TO_IDX.get(v, 0)
+            except (ValueError, TypeError):
+                return 0
+
     criterion_cerad = nn.CrossEntropyLoss()
     criterion_braak = nn.CrossEntropyLoss()
-
-    def _braak_to_idx(b):
-        """Map Braak value (numeric or string 2/3/5/6) to class index."""
-        try:
-            v = int(round(float(b)))
-            return BRAAK_TO_IDX.get(v, 0)
-        except (ValueError, TypeError):
-            return 0
 
     n_folds = len(embeddings_folds)
     all_fold_patient_data = []
@@ -236,6 +253,12 @@ def main(args):
 
         n_train, n_test = train_embeddings.shape[0], test_embeddings.shape[0]
         print(f"  Train patients: {n_train}, Test patients: {n_test}")
+        n_cerad_test = len(np.unique(test_cerad))
+        n_braak_test = len(np.unique(test_braak))
+        if n_cerad_test == 1 or n_braak_test == 1:
+            print(f"  Warning: test set has only one class (Thal: {n_cerad_test}, Braak: {n_braak_test}). F1 will be 1.0 trivially.")
+        else:
+            print(f"  Test set classes: Thal {n_cerad_test}, Braak {n_braak_test}")
 
         if len(train_embeddings.shape) == 3:
             n_genes, n_dims = train_embeddings.shape[1], train_embeddings.shape[2]
@@ -254,6 +277,7 @@ def main(args):
                 test_pca = pca.transform(test_for_pca)
                 train_embeddings = train_pca.reshape(n_train, n_genes, args.pca_components)
                 test_embeddings = test_pca.reshape(n_test, n_genes, args.pca_components)
+                print(f"  Applied PCA: {n_dims} -> {args.pca_components} dims per gene. Train shape: {train_embeddings.shape}, Test shape: {test_embeddings.shape}")
             else:
                 train_embeddings = train_scaled
                 test_embeddings = test_scaled
@@ -265,6 +289,7 @@ def main(args):
                 pca = PCA(n_components=args.pca_components)
                 train_embeddings = pca.fit_transform(train_embeddings)
                 test_embeddings = pca.transform(test_embeddings)
+                print(f"  Applied PCA: -> {args.pca_components} components. Train shape: {train_embeddings.shape}, Test shape: {test_embeddings.shape}")
 
         train_dataset = EmbeddingDatasetMicroglia(train_embeddings, train_cerad, train_braak)
         test_dataset = EmbeddingDatasetMicroglia(test_embeddings, test_cerad, test_braak)
@@ -356,7 +381,7 @@ def main(args):
                 epochs_without_improvement += 1
 
             if (epoch + 1) % 10 == 0:
-                print(f"Epoch {epoch+1}/{args.epochs} - Train Loss: {train_loss:.4f}, Test F1: {test_f1:.4f} (CERAD: {test_f1_cerad:.4f}, Braak: {test_f1_braak:.4f})")
+                print(f"Epoch {epoch+1}/{args.epochs} - Train Loss: {train_loss:.4f}, Test F1: {test_f1:.4f} (Thal: {test_f1_cerad:.4f}, Braak: {test_f1_braak:.4f})")
 
             if patience is not None and epochs_without_improvement >= patience:
                 print(f"  Early stopping at epoch {epoch+1} (no test F1 improvement for {patience} epochs).")
@@ -376,7 +401,7 @@ def main(args):
                 "best_test_mse": 0.0,
                 "best_test_mae": 0.0,
             })
-            print(f"\nTest Fold {test_fold_idx + 1} Best F1: {report_f1:.4f} (epoch {report_epoch}) (CERAD: {report_cerad:.4f}, Braak: {report_braak:.4f})")
+            print(f"\nTest Fold {test_fold_idx + 1} Best F1: {report_f1:.4f} (epoch {report_epoch}) (Thal: {report_cerad:.4f}, Braak: {report_braak:.4f})")
         else:
             # Explicitly evaluate current (final) model so we report final-epoch metrics
             model.eval()
@@ -393,7 +418,7 @@ def main(args):
                 "best_test_mse": 0.0,
                 "best_test_mae": 0.0,
             })
-            print(f"\nTest Fold {test_fold_idx + 1} Final F1: {final_f1:.4f} (last epoch) (CERAD: {test_f1_cerad:.4f}, Braak: {test_f1_braak:.4f})")
+            print(f"\nTest Fold {test_fold_idx + 1} Final F1: {final_f1:.4f} (last epoch) (Thal: {test_f1_cerad:.4f}, Braak: {test_f1_braak:.4f})")
             if best_test_f1 != final_f1:
                 print(f"  (best F1 during training was {best_test_f1:.4f} at epoch {best_epoch+1})")
 

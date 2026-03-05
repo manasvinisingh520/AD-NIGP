@@ -85,17 +85,25 @@ def _main_mtg(args):
     all_thal = [str(t).strip().lower() for fold in thal_folds for t in fold]
     all_braak_raw = [b for fold in braak_folds for b in fold]
     unique_cerad = sorted(set(all_thal))
-    unique_braak = sorted(set(str(b) for b in all_braak_raw))
-    print(f"Unique CERAD (Thal) values in dataset: {unique_cerad}", flush=True)
+    unique_braak = sorted(set(str(b).strip() for b in all_braak_raw))
+    print(f"Unique Thal values in dataset: {unique_cerad}", flush=True)
     print(f"Unique Braak values in dataset: {unique_braak}", flush=True)
     n_thal_per_fold = [len(f) for f in thal_folds]
     n_braak_per_fold = [len(f) for f in braak_folds]
     print(f"Thal and Braak are per-patient: {n_thal_per_fold} Thal values per fold, {n_braak_per_fold} Braak values per fold (one label per patient)", flush=True)
 
     device = torch.device(args.device)
-    cerad_to_idx = {s: i for i, s in enumerate(CERAD_CLASS_ORDER)}
-    n_cerad_classes = len(CERAD_CLASS_ORDER)
-    n_braak_classes = len(BRAAK_TO_IDX)
+    print(f"Using device: {device}")
+
+    # MTG: data-driven Thal/Braak mapping from actual values in the dataset
+    cerad_to_idx = {s: i for i, s in enumerate(unique_cerad)}
+    braak_to_idx = {s: i for i, s in enumerate(unique_braak)}
+    n_cerad_classes = len(unique_cerad)
+    n_braak_classes = len(unique_braak)
+
+    def _braak_to_idx_mtg(b):
+        return braak_to_idx.get(str(b).strip(), 0)
+
     criterion_cerad = nn.CrossEntropyLoss()
     criterion_braak = nn.CrossEntropyLoss()
 
@@ -105,7 +113,7 @@ def _main_mtg(args):
         fold_thal = thal_folds[fold_idx]
         fold_braak = braak_folds[fold_idx]
         patient_cerad = np.array([cerad_to_idx.get(str(t).strip().lower(), 0) for t in fold_thal], dtype=np.int64)
-        patient_braak = np.array([_braak_to_idx(b) for b in fold_braak], dtype=np.int64)
+        patient_braak = np.array([_braak_to_idx_mtg(b) for b in fold_braak], dtype=np.int64)
         all_fold_patient_data.append({"embeddings": fold_X, "cerad": patient_cerad, "braak": patient_braak})
         print(f"Fold {fold_idx + 1}: X={fold_X.shape}, patients={len(fold_thal)}")
 

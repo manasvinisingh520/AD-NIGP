@@ -13,7 +13,7 @@ import gc
 import anndata as ad
 import glob
 from tqdm import tqdm
-from sklearn.model_selection import KFold
+from sklearn.model_selection import KFold, StratifiedKFold
 from utils import get_region_file_paths, read_excel_columns, read_mtx_file, scale_embeddings, create_anndata_object
 from config import REGION_TO_TAB, DATA_DIR
 
@@ -332,7 +332,30 @@ def main(args=None):
 
         # Split patients into 8 folds (not cells, but patients)
         n_patients = len(unique_patients)
-        kf = KFold(n_splits=n_folds, shuffle=True, random_state=42)
+        # MTG: stratify by (Thal, Braak) so each test fold has multiple CERAD/Braak classes (avoids trivial F1=1.0)
+        if cell_type == "MTG":
+            strat_labels_full = [f"{str(all_thal[i]).strip()}_{str(all_braak[i]).strip()}" for i in range(n_patients)]
+            strat_labels_thal = [str(all_thal[i]).strip() for i in range(n_patients)]
+            strat_labels_braak = [str(all_braak[i]).strip() for i in range(n_patients)]
+            fold_splits = None
+            # Prefer Thal-only then Braak-only so each test fold has multiple classes (Thal+Braak often has too many rare combos)
+            for label_name, strat_labels in [("Thal only", strat_labels_thal), ("Braak only", strat_labels_braak), ("Thal+Braak", strat_labels_full)]:
+                try:
+                    kf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
+                    fold_splits = list(kf.split(range(n_patients), strat_labels))
+                    print(f"  Using StratifiedKFold ({label_name}) for MTG folds.")
+                    break
+                except ValueError as e:
+                    if "least populated class" in str(e) or "cannot be greater" in str(e):
+                        continue
+                    raise
+            if fold_splits is None:
+                print("  Warning: StratifiedKFold failed (too many rare Thal/Braak combos). Using KFold; some test folds may have only one class.")
+                kf = KFold(n_splits=n_folds, shuffle=True, random_state=42)
+                fold_splits = list(kf.split(range(n_patients)))
+        else:
+            kf = KFold(n_splits=n_folds, shuffle=True, random_state=42)
+            fold_splits = list(kf.split(range(n_patients)))
         
         embeddings_folds = []
         patient_info_folds = []
@@ -340,7 +363,7 @@ def main(args=None):
         thal_folds = []
         braak_folds = []
         
-        for fold_idx, (_, fold_patient_indices) in enumerate(kf.split(range(n_patients))):
+        for fold_idx, (_, fold_patient_indices) in enumerate(fold_splits):
             # Concatenate embeddings from patients in this fold
             fold_embeddings_list = [all_patient_embeddings[i] for i in fold_patient_indices]
             fold_embeddings = np.concatenate(fold_embeddings_list, axis=0).astype(np.float16)
