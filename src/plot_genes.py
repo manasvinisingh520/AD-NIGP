@@ -25,7 +25,8 @@ from utils import (
     filter_anndata_object,
     min_max_normalize,
     filter_cells,
-    get_DEGs
+    get_DEGs,
+    get_top_dge_union_genes,
 )
 from config import REGIONS, REGION_TO_TAB, DATA_DIR, METADATA_DATE_PREFIX
 import pickle
@@ -491,6 +492,12 @@ def main():
         action='store_true',
         help='Use DGE results from dge_final_protein_coding directory instead of dge_final'
     )
+    parser.add_argument(
+        '--dge_results_dir',
+        type=str,
+        default=None,
+        help='Directory containing DGE result CSVs (e.g. E:/sf2026/dge_results/dge_final). If not set, uses results/dge_final or results/dge_final_protein_coding when --use_protein_coding.'
+    )
     
     args = parser.parse_args()
     
@@ -522,8 +529,16 @@ def main():
 
             if args.use_DEGs:
                 print("Using DEGs...")
-                dge_results_dir = "results/dge_final_protein_coding" if args.use_protein_coding else "results/dge_final"
+                if args.dge_results_dir is not None:
+                    dge_results_dir = args.dge_results_dir
+                else:
+                    dge_results_dir = "results/dge_final_protein_coding" if args.use_protein_coding else "results/dge_final"
+                print(f"DGE results dir: {dge_results_dir}")
                 gene_list = get_DEGs(region, top_k=args.top_k, cell_type=args.cell_type, disable_intersection=True, dge_results_dir=dge_results_dir)
+                # Cap to top_k genes by best padj across all comparisons (top 100 from union)
+                if len(gene_list) > args.top_k:
+                    gene_list = get_top_dge_union_genes(region, args.cell_type, args.top_k, dge_results_dir)
+                    print(f"Capped to top {args.top_k} genes from union (by best padj)")
                 print(f"Found {len(gene_list)} DEGs")
                 if len(gene_list) == 0:
                     print("Warning: get_DEGs returned empty list! Using all genes instead.")

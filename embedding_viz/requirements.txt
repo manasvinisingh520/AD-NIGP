@@ -1,0 +1,8 @@
+# Dependencies for the embedding visualization web app.
+# Install: pip install -r embedding_viz/requirements.txt
+flask>=2.0
+pandas>=1.0
+openpyxl>=3.0
+scikit-learn>=1.0
+umap-learn>=0.5
+numpy>=1.20

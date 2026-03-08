@@ -1,0 +1,1043 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GREmLN Interactive Demo</title>
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { height:100%; overflow:auto; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      margin: 0; padding: 0;
+      background: #f4f4f5; color: #27272a;
+    }
+    header {
+      background: #ffffff; border-bottom: 1px solid #e4e4e7;
+      padding: 6px 20px; display: flex; align-items: center; gap: 24px;
+    }
+    header h1 { font-size: 1.1rem; margin: 0; font-weight: 700; white-space: nowrap; }
+    .tabs { display: flex; gap: 2px; flex-wrap: wrap; }
+    .tab-btn {
+      padding: 7px 16px; border: none; background: transparent; cursor: pointer;
+      font-size: 13px; font-weight: 500; color: #71717a; border-radius: 6px 6px 0 0;
+      transition: background 0.15s, color 0.15s;
+    }
+    .tab-btn:hover { background: #f4f4f5; color: #27272a; }
+    .tab-btn.active { background: #f4f4f5; color: #18181b; font-weight: 600; }
+    .tab-content { display: none; padding: 16px 20px; }
+    .tab-content.active { display: block; }
+    #tab-framework.active { display:flex; flex-direction:column; height:calc(100vh - 50px); padding:8px 12px; }
+    .controls {
+      display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px;
+    }
+    label { display: flex; align-items: center; gap: 5px; font-size: 13px; }
+    select {
+      background: #ffffff; color: #27272a; border: 1px solid #d4d4d8;
+      border-radius: 6px; padding: 5px 8px; font-size: 13px; min-width: 100px;
+    }
+    select:hover, select:focus { border-color: #a1a1aa; outline: none; }
+    .plot-area { width: 100%; height: calc(100vh - 140px); min-height: 400px; }
+    .status { color: #71717a; font-size: 12px; margin-left: 6px; }
+    .error { color: #ef4444; }
+    .card-row { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 16px; }
+    .card {
+      background: #fff; border: 1px solid #e4e4e7; border-radius: 8px;
+      padding: 16px 20px; flex: 1; min-width: 200px;
+    }
+    .card h3 { margin: 0 0 8px 0; font-size: 0.95rem; color: #52525b; }
+    .card .big-num { font-size: 1.8rem; font-weight: 700; color: #18181b; }
+    .ranking-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .ranking-table th, .ranking-table td {
+      padding: 6px 10px; text-align: left; border-bottom: 1px solid #e4e4e7;
+    }
+    .ranking-table th { background: #fafafa; font-weight: 600; position: sticky; top: 0; }
+    .ranking-table tr:hover { background: #f4f4f5; }
+    .ranking-table .ad-gene { color: #dc2626; font-weight: 600; }
+    .table-container { max-height: calc(100vh - 220px); overflow-y: auto; border: 1px solid #e4e4e7; border-radius: 8px; }
+
+    /* Framework animation */
+    .fw-wrap {
+      display:flex; flex-direction:column; align-items:center; gap:10px; padding:10px 12px;
+      background: linear-gradient(160deg, #f8fafc 0%, #eef2ff 40%, #fdf4ff 70%, #fff1f2 100%);
+      border-radius:14px; border:1px solid #e2e8f0;
+      flex:1; min-height:0;
+    }
+    .fw-svg-container { width:100%; flex:1; min-height:0; display:flex; align-items:center; justify-content:center; }
+    .fw-svg-container svg { width:100%; height:100%; }
+    .fw-node rect { stroke-width:2; rx:10; ry:10; transition: all 0.5s; }
+    .fw-node text { font-size:13px; font-weight:600; text-anchor:middle; dominant-baseline:central; pointer-events:none; }
+    .fw-node .fw-sub { font-size:10px; font-weight:400; }
+    .fw-arrow line, .fw-arrow path, .fw-arrow polyline { stroke-width:2.5; fill:none; }
+
+    /* Per-step colors */
+    .fw-c1 rect { fill:#eff6ff; stroke:#3b82f6; } .fw-c1 text { fill:#1e40af; } .fw-c1 .fw-sub { fill:#60a5fa; }
+    .fw-c2 rect { fill:#fef3c7; stroke:#f59e0b; } .fw-c2 text { fill:#92400e; } .fw-c2 .fw-sub { fill:#d97706; }
+    .fw-c3 rect { fill:#ecfdf5; stroke:#10b981; } .fw-c3 text { fill:#065f46; } .fw-c3 .fw-sub { fill:#34d399; }
+    .fw-c4 rect { fill:#fce7f3; stroke:#ec4899; } .fw-c4 text { fill:#9d174d; } .fw-c4 .fw-sub { fill:#f472b6; }
+    .fw-c5 rect { fill:#ede9fe; stroke:#8b5cf6; } .fw-c5 text { fill:#5b21b6; } .fw-c5 .fw-sub { fill:#a78bfa; }
+    .fw-c6 rect { fill:#fef2f2; stroke:#ef4444; } .fw-c6 text { fill:#991b1b; } .fw-c6 .fw-sub { fill:#f87171; }
+
+    .fw-ac1 line, .fw-ac1 polyline { stroke:#3b82f6; }
+    .fw-ac2 line, .fw-ac2 polyline { stroke:#f59e0b; }
+    .fw-ac3 line, .fw-ac3 polyline { stroke:#10b981; }
+    .fw-ac4 line, .fw-ac4 polyline { stroke:#ec4899; }
+    .fw-ac5 line, .fw-ac5 polyline { stroke:#8b5cf6; }
+    .fw-ac6 line, .fw-ac6 polyline { stroke:#ef4444; }
+
+    .fw-node, .fw-arrow { opacity:0; transition: opacity 0.6s ease, transform 0.5s ease; }
+    .fw-node.visible, .fw-arrow.visible { opacity:1; }
+    .fw-node.active rect { stroke-width:3; filter: drop-shadow(0 0 10px rgba(99,102,241,0.4)); }
+    .fw-node.active { transform: scale(1.04); transform-origin: center; }
+
+    @keyframes fw-pulse { 0%,100%{filter:drop-shadow(0 0 6px rgba(99,102,241,0.3))} 50%{filter:drop-shadow(0 0 14px rgba(99,102,241,0.6))} }
+    .fw-node.active rect { animation: fw-pulse 1.5s ease-in-out infinite; }
+
+    .fw-controls { display:flex; gap:10px; align-items:center; flex-shrink:0; }
+    .fw-btn {
+      padding:7px 18px; border:1px solid #d4d4d8; background:#fff; border-radius:8px;
+      cursor:pointer; font-size:13px; font-weight:600; color:#27272a; transition: all 0.2s;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    .fw-btn:hover { border-color:#a1a1aa; background:#f4f4f5; transform: translateY(-1px); box-shadow: 0 3px 8px rgba(0,0,0,0.1); }
+    .fw-btn:disabled { opacity:0.4; cursor:default; transform:none; box-shadow:none; }
+    .fw-btn.primary { background:linear-gradient(135deg,#6366f1,#8b5cf6); color:#fff; border-color:transparent; }
+    .fw-btn.primary:hover { background:linear-gradient(135deg,#4f46e5,#7c3aed); }
+    .fw-step-ind { font-size:13px; font-weight:700; color:#6366f1; min-width:60px; text-align:center; }
+    .fw-desc {
+      max-width:700px; text-align:center; font-size:13px; line-height:1.5;
+      color:#3f3f46; transition: opacity 0.3s;
+      background: linear-gradient(135deg, rgba(238,242,255,0.5), rgba(245,243,255,0.5));
+      padding: 8px 18px; border-radius: 10px; border: 1px solid #e0e7ff;
+      flex-shrink:0;
+    }
+
+    /* Interactive Pipeline tab */
+    .pipe-wrap { max-width:900px; margin:0 auto; }
+    .pipe-step { margin-bottom:20px; }
+    .pipe-step-label {
+      font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.05em;
+      color:#6366f1; margin-bottom:8px;
+    }
+    .pipe-btns { display:flex; flex-wrap:wrap; gap:10px; }
+    .pipe-btn {
+      padding:10px 22px; border:2px solid #d4d4d8; background:#fff; border-radius:10px;
+      cursor:pointer; font-size:14px; font-weight:600; color:#27272a; transition: all 0.2s;
+      box-shadow:0 1px 3px rgba(0,0,0,0.06); position:relative; overflow:hidden;
+    }
+    .pipe-btn:hover { border-color:#6366f1; color:#4f46e5; transform:translateY(-1px); box-shadow:0 4px 12px rgba(99,102,241,0.15); }
+    .pipe-btn.selected { border-color:#6366f1; background:#eef2ff; color:#4338ca; }
+    .pipe-btn:disabled { opacity:0.4; cursor:default; transform:none; box-shadow:none; }
+    .pipe-btn.loading { pointer-events:none; }
+    .pipe-btn.loading::after {
+      content:''; position:absolute; bottom:0; left:0; height:3px; background:linear-gradient(90deg,#6366f1,#8b5cf6);
+      animation:pipe-load 1.2s ease-in-out infinite; width:40%;
+    }
+    @keyframes pipe-load { 0%{left:-40%} 100%{left:100%} }
+    .pipe-btn.done { border-color:#10b981; background:#ecfdf5; color:#065f46; }
+    .pipe-result {
+      margin-top:10px; padding:12px 16px; border-radius:10px; font-size:13px; line-height:1.6;
+      border:1px solid #e4e4e7; background:#fff;
+    }
+    .pipe-result h4 { margin:0 0 6px; font-size:14px; }
+    .pipe-result table { width:100%; border-collapse:collapse; margin-top:8px; }
+    .pipe-result th, .pipe-result td { padding:4px 10px; text-align:left; border-bottom:1px solid #e4e4e7; font-size:12px; }
+    .pipe-result th { font-weight:600; background:#fafafa; }
+    .pipe-divider { border:none; border-top:1px dashed #d4d4d8; margin:16px 0; }
+    .pipe-hidden { display:none; }
+    .pipe-analysis-images { display:flex; flex-wrap:wrap; gap:16px; margin-top:12px; }
+    .pipe-analysis-images img { max-width:100%; border-radius:8px; border:1px solid #e4e4e7; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>GREmLN Interactive Demo</h1>
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="framework">Framework</button>
+      <button class="tab-btn" data-tab="overview">Overview</button>
+      <button class="tab-btn" data-tab="cell-emb">Cell Embeddings</button>
+      <button class="tab-btn" data-tab="gene-emb">Gene Embeddings</button>
+      <button class="tab-btn" data-tab="model-cmp">Embedding vs Expression</button>
+      <button class="tab-btn" data-tab="volcano">DGE Volcano</button>
+      <button class="tab-btn" data-tab="gene-rank">Gene Rankings</button>
+      <button class="tab-btn" data-tab="pipeline">Interactive Pipeline</button>
+    </nav>
+  </header>
+
+  <!-- ===== Tab: Framework ===== -->
+  <div id="tab-framework" class="tab-content active">
+    <div class="fw-wrap">
+      <h2 style="font-size:1.1rem;margin:0;font-weight:700;background:linear-gradient(135deg,#3b82f6,#8b5cf6,#ec4899);-webkit-background-clip:text;-webkit-text-fill-color:transparent;letter-spacing:-0.01em">Biomarker Discovery Framework</h2>
+      <div class="fw-svg-container">
+        <svg viewBox="0 0 1160 500" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker id="ah1" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#3b82f6"/></marker>
+            <marker id="ah2" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#f59e0b"/></marker>
+            <marker id="ah3" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#10b981"/></marker>
+            <marker id="ah4" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#ec4899"/></marker>
+            <marker id="ah5" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#8b5cf6"/></marker>
+            <marker id="ah6" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#ef4444"/></marker>
+          </defs>
+
+          <!-- Step 1: scRNA-seq (blue) — Row 1 y=35 -->
+          <g class="fw-node fw-c1" data-step="1" id="fw-n-scrna">
+            <rect x="15" y="35" width="150" height="52"/>
+            <text x="90" y="55">scRNA-seq Data</text>
+            <text x="90" y="71" class="fw-sub">Single-cell RNA</text>
+          </g>
+
+          <!-- Arrow: scRNA-seq → ARACNe (amber) -->
+          <g class="fw-arrow fw-ac2" data-step="2" id="fw-a-1-2">
+            <line x1="165" y1="61" x2="220" y2="61" marker-end="url(#ah2)"/>
+          </g>
+
+          <!-- Step 2: ARACNe (amber) — Row 1 -->
+          <g class="fw-node fw-c2" data-step="2" id="fw-n-aracne">
+            <rect x="225" y="35" width="140" height="52"/>
+            <text x="295" y="55">ARACNe</text>
+            <text x="295" y="71" class="fw-sub">Network Inference</text>
+          </g>
+
+          <!-- Arrow: ARACNe → GRN (amber) -->
+          <g class="fw-arrow fw-ac2" data-step="2" id="fw-a-2-grn">
+            <line x1="365" y1="61" x2="420" y2="61" marker-end="url(#ah2)"/>
+          </g>
+
+          <!-- Step 2: GRN (amber) — Row 1 -->
+          <g class="fw-node fw-c2" data-step="2" id="fw-n-grn">
+            <rect x="425" y="35" width="140" height="52"/>
+            <text x="495" y="55">GRN</text>
+            <text x="495" y="71" class="fw-sub">Gene Reg. Network</text>
+          </g>
+
+          <!-- Arrows into GREmLN (green) -->
+          <g class="fw-arrow fw-ac3" data-step="3" id="fw-a-grn-gremln">
+            <line x1="495" y1="87" x2="495" y2="175" marker-end="url(#ah3)"/>
+          </g>
+          <g class="fw-arrow fw-ac3" data-step="3" id="fw-a-scrna-gremln">
+            <polyline points="90,87 90,206 420,206" marker-end="url(#ah3)" fill="none"/>
+          </g>
+
+          <!-- Step 3: GREmLN (green) — Row 2 y=180 -->
+          <g class="fw-node fw-c3" data-step="3" id="fw-n-gremln">
+            <rect x="425" y="180" width="140" height="52"/>
+            <text x="495" y="200">GREmLN</text>
+            <text x="495" y="216" class="fw-sub">Embedding Model</text>
+          </g>
+
+          <!-- Arrow: GREmLN → Cell Embeddings (green) -->
+          <g class="fw-arrow fw-ac3" data-step="3" id="fw-a-gremln-cell">
+            <polyline points="565,193 620,193 620,61 665,61" marker-end="url(#ah3)" fill="none"/>
+          </g>
+          <!-- Step 3: Cell Embeddings (green) — Row 1 -->
+          <g class="fw-node fw-c3" data-step="3" id="fw-n-cellemb">
+            <rect x="670" y="35" width="150" height="52"/>
+            <text x="745" y="55">Cell Embeddings</text>
+            <text x="745" y="71" class="fw-sub">512-D per cell</text>
+          </g>
+
+          <!-- Arrow: GREmLN → Gene Embeddings (green) -->
+          <g class="fw-arrow fw-ac3" data-step="3" id="fw-a-gremln-gene">
+            <polyline points="565,219 620,219 620,346 665,346" marker-end="url(#ah3)" fill="none"/>
+          </g>
+          <!-- Step 3: Gene Embeddings (green) — Row 3 y=320 -->
+          <g class="fw-node fw-c3" data-step="3" id="fw-n-geneemb">
+            <rect x="670" y="320" width="150" height="52"/>
+            <text x="745" y="340">Gene Embeddings</text>
+            <text x="745" y="356" class="fw-sub">512-D per gene</text>
+          </g>
+
+          <!-- Arrow: Gene Emb → Ranking Model (pink) -->
+          <g class="fw-arrow fw-ac4" data-step="4" id="fw-a-gene-rank">
+            <line x1="820" y1="346" x2="855" y2="346" marker-end="url(#ah4)"/>
+          </g>
+          <!-- Step 4: Ranking Model (pink) — Row 3 -->
+          <g class="fw-node fw-c4" data-step="4" id="fw-n-rankmodel">
+            <rect x="860" y="320" width="140" height="52"/>
+            <text x="930" y="340">Ranking Model</text>
+            <text x="930" y="356" class="fw-sub">Predict Disease Class</text>
+          </g>
+
+          <!-- Arrow: Ranking Model → Reranking (purple) -->
+          <g class="fw-arrow fw-ac5" data-step="5" id="fw-a-rank-rerank">
+            <line x1="930" y1="372" x2="930" y2="425" marker-end="url(#ah5)"/>
+          </g>
+          <!-- Step 5: Gene Reranking (purple) — Row 4 y=430 -->
+          <g class="fw-node fw-c5" data-step="5" id="fw-n-rerank">
+            <rect x="825" y="430" width="210" height="52"/>
+            <text x="930" y="450">Permutation Importance</text>
+            <text x="930" y="466" class="fw-sub">Rerank genes by effect</text>
+          </g>
+
+          <!-- Arrow: Reranking → Top N (red) -->
+          <g class="fw-arrow fw-ac6" data-step="6" id="fw-a-rerank-topn">
+            <polyline points="1035,456 1070,456 1070,346 1085,346" marker-end="url(#ah6)" fill="none"/>
+          </g>
+          <!-- Step 6: Top N Genes (red) — Row 3 -->
+          <g class="fw-node fw-c6" data-step="6" id="fw-n-topn">
+            <rect x="1005" y="320" width="140" height="52"/>
+            <text x="1075" y="340">Top N Genes</text>
+            <text x="1075" y="356" class="fw-sub">Disease Biomarkers</text>
+          </g>
+
+          <!-- Arrow: Top N → Gene Functions output (red, upward) -->
+          <g class="fw-arrow fw-ac6" data-step="6" id="fw-a-topn-output">
+            <line x1="1075" y1="320" x2="1075" y2="280" marker-end="url(#ah6)"/>
+          </g>
+          <!-- Step 6: Gene Functions output image -->
+          <g class="fw-node fw-c6" data-step="6" id="fw-n-output">
+            <rect x="855" y="30" width="290" height="245" rx="12" ry="12" style="fill:#fff;stroke:#ef4444;stroke-width:2"/>
+            <image href="gene_functions.png" x="860" y="35" width="280" height="220" preserveAspectRatio="xMidYMid meet"/>
+            <text x="1000" y="270" style="font-size:11px;fill:#991b1b;font-weight:700">Gene Functions &amp; AD Relevance</text>
+          </g>
+        </svg>
+      </div>
+
+      <div class="fw-controls">
+        <button class="fw-btn" id="fw-prev" disabled>Prev</button>
+        <span class="fw-step-ind" id="fw-ind">0 / 6</span>
+        <button class="fw-btn" id="fw-next">Next</button>
+        <button class="fw-btn primary" id="fw-play">Play</button>
+        <button class="fw-btn" id="fw-reset">Reset</button>
+      </div>
+
+      <div class="fw-desc" id="fw-desc">
+        Click <strong>Play</strong> to walk through the framework, or use <strong>Next</strong> / <strong>Prev</strong> to step manually.
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Tab: Overview ===== -->
+  <div id="tab-overview" class="tab-content">
+    <h2 style="font-size:1rem;margin:0 0 12px 0">Cohort Overview</h2>
+    <div class="card-row" id="overview-cards"></div>
+    <div style="display:flex;flex-wrap:wrap;gap:16px">
+      <div id="overview-region" style="flex:1;min-width:320px;height:340px"></div>
+      <div id="overview-pathgroup" style="flex:1;min-width:320px;height:340px"></div>
+      <div id="overview-thal" style="flex:1;min-width:320px;height:340px"></div>
+      <div id="overview-sex" style="flex:1;min-width:320px;height:340px"></div>
+    </div>
+  </div>
+
+  <!-- ===== Tab: Cell Embeddings ===== -->
+  <div id="tab-cell-emb" class="tab-content">
+    <div class="controls">
+      <label>Region <select id="cell-region"></select></label>
+      <label>Method <select id="cell-method"><option value="pca">PCA</option><option value="umap">UMAP</option></select></label>
+      <label>Color by <select id="cell-colorBy"><option value="">--</option></select></label>
+      <span id="cell-status" class="status"></span>
+    </div>
+    <div id="cell-plot" class="plot-area"></div>
+  </div>
+
+  <!-- ===== Tab: Gene Embeddings ===== -->
+  <div id="tab-gene-emb" class="tab-content">
+    <div class="controls">
+      <label>Region <select id="gene-region"></select></label>
+      <label>Method <select id="gene-method"><option value="pca">PCA</option><option value="umap">UMAP</option></select></label>
+      <label>Color by <select id="gene-colorBy"><option value="">--</option></select></label>
+      <span id="gene-status" class="status"></span>
+    </div>
+    <div id="gene-plot" class="plot-area"></div>
+  </div>
+
+  <!-- ===== Tab: Model Comparison ===== -->
+  <div id="tab-model-cmp" class="tab-content">
+    <p style="font-size:13px;color:#52525b;margin:0 0 12px 0">
+      Mean F1 scores comparing GREmLN embedding-based models vs raw gene expression models across brain regions (Astrocytes, 3-layer model, 8-fold CV).
+    </p>
+    <div id="model-plot" class="plot-area"></div>
+  </div>
+
+  <!-- ===== Tab: DGE Volcano ===== -->
+  <div id="tab-volcano" class="tab-content">
+    <div class="controls">
+      <label>Comparison <select id="volcano-file"></select></label>
+      <span id="volcano-status" class="status"></span>
+    </div>
+    <div id="volcano-plot" class="plot-area"></div>
+  </div>
+
+  <!-- ===== Tab: Gene Rankings ===== -->
+  <div id="tab-gene-rank" class="tab-content">
+    <div class="controls">
+      <label>Ranked set <select id="rank-set"></select></label>
+      <label>Top N <select id="rank-topn">
+        <option value="25">25</option><option value="50" selected>50</option><option value="100">100</option><option value="200">200</option>
+      </select></label>
+      <span id="rank-status" class="status"></span>
+    </div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap">
+      <div id="rank-plot" style="flex:2;min-width:400px;height:calc(100vh - 180px)"></div>
+      <div id="rank-table-wrap" class="table-container" style="flex:1;min-width:280px"></div>
+    </div>
+  </div>
+
+  <!-- ===== Tab: Interactive Pipeline ===== -->
+  <div id="tab-pipeline" class="tab-content">
+    <div class="pipe-wrap">
+
+      <!-- Step 1: Choose Data -->
+      <div class="pipe-step" id="pipe-s1">
+        <div class="pipe-step-label">Step 1 — Choose Data</div>
+        <div class="pipe-btns">
+          <button class="pipe-btn" data-ds="atlas">Atlas Data</button>
+          <button class="pipe-btn" data-ds="seaad">SEA-AD Data</button>
+        </div>
+      </div>
+
+      <!-- Step 2: Choose Region -->
+      <div class="pipe-step pipe-hidden" id="pipe-s2">
+        <hr class="pipe-divider">
+        <div class="pipe-step-label">Step 2 — Choose Region</div>
+        <div class="pipe-btns" id="pipe-region-btns"></div>
+      </div>
+
+      <!-- Step 3: Load data -->
+      <div class="pipe-step pipe-hidden" id="pipe-s3">
+        <hr class="pipe-divider">
+        <div class="pipe-step-label">Step 3 — Load Data</div>
+        <div class="pipe-btns">
+          <button class="pipe-btn" id="pipe-load-dge">Load DGE Data</button>
+          <button class="pipe-btn" id="pipe-load-grn">Load GRN Data</button>
+          <button class="pipe-btn" id="pipe-load-emb">Load GREmLN Embeddings</button>
+        </div>
+        <div id="pipe-data-results"></div>
+      </div>
+
+      <!-- Step 4: Run Model -->
+      <div class="pipe-step pipe-hidden" id="pipe-s4">
+        <hr class="pipe-divider">
+        <div class="pipe-step-label">Step 4 — Run Model</div>
+        <div class="pipe-btns">
+          <button class="pipe-btn" id="pipe-run-model">Run Model</button>
+        </div>
+        <div id="pipe-model-result"></div>
+      </div>
+
+      <!-- Step 5: Analyze Results -->
+      <div class="pipe-step pipe-hidden" id="pipe-s5">
+        <hr class="pipe-divider">
+        <div class="pipe-step-label">Step 5 — Analyze Results</div>
+        <div class="pipe-btns">
+          <button class="pipe-btn" id="pipe-analyze">Analyze Results</button>
+        </div>
+        <div id="pipe-analyze-result"></div>
+      </div>
+
+      <!-- Step 6: Analysis Images -->
+      <div class="pipe-step pipe-hidden" id="pipe-s6">
+        <hr class="pipe-divider">
+        <div class="pipe-step-label">Step 6 — Downstream Analysis</div>
+        <div class="pipe-btns">
+          <button class="pipe-btn" id="pipe-cluster">clusterProfiler Analysis</button>
+          <button class="pipe-btn" id="pipe-gene-prof">gProfiler Analysis</button>
+        </div>
+        <div id="pipe-analysis-images" class="pipe-analysis-images"></div>
+      </div>
+
+    </div>
+  </div>
+
+<script>
+// =====================================================================
+//  Shared helpers
+// =====================================================================
+const COLORS = [
+  '#2563eb','#dc2626','#16a34a','#ea580c','#9333ea',
+  '#0891b2','#db2777','#65a30d','#ca8a04','#6366f1',
+  '#14b8a6','#f97316','#8b5cf6','#ef4444','#06b6d4'
+];
+const plotBg = { paper_bgcolor:'#f4f4f5', plot_bgcolor:'#ffffff' };
+const axStyle = { gridcolor:'#e4e4e7', zerolinecolor:'#d4d4d8' };
+const fontStyle = { color:'#27272a', size:12 };
+
+function setStatus(el, msg, err) { el.textContent = msg; el.className = 'status' + (err ? ' error' : ''); }
+
+function populateSelect(sel, items, valKey, labelKey) {
+  sel.innerHTML = '';
+  items.forEach(it => {
+    const o = document.createElement('option');
+    o.value = typeof it === 'string' ? it : it[valKey||'value'];
+    o.textContent = typeof it === 'string' ? it : it[labelKey||'name'];
+    sel.appendChild(o);
+  });
+}
+
+// =====================================================================
+//  Tab switching
+// =====================================================================
+const tabBtns = document.querySelectorAll('.tab-btn');
+const tabPanes = document.querySelectorAll('.tab-content');
+const tabInits = {};
+
+tabBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    tabBtns.forEach(b => b.classList.remove('active'));
+    tabPanes.forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    const id = btn.dataset.tab;
+    document.getElementById('tab-' + id).classList.add('active');
+    if (tabInits[id]) { tabInits[id](); tabInits[id] = null; }
+  });
+});
+
+// =====================================================================
+//  Categorical scatter helper (reused by cell & gene embeddings)
+// =====================================================================
+function categoricalScatter(plotEl, points, metaColumns, colorByVal, methodVal, titlePrefix) {
+  const colorVals = colorByVal ? points.map(p => {
+    const v = p[colorByVal];
+    return (v != null && String(v).trim() !== '') ? String(v).trim() : '(missing)';
+  }) : null;
+  const cats = colorVals ? [...new Set(colorVals)].sort() : [];
+  const hasCat = cats.length > 0 && (cats.length > 1 || cats[0] !== '(missing)');
+
+  function hover(p) {
+    const parts = [];
+    for (const k of Object.keys(p)) { if (k !== 'x' && k !== 'y') parts.push(k + ': ' + p[k]); }
+    return parts.join('<br>');
+  }
+
+  let traces; let showLeg;
+  if (hasCat) {
+    traces = cats.map((cat, i) => {
+      const sub = points.filter((_, j) => colorVals[j] === cat);
+      return { x:sub.map(p=>p.x), y:sub.map(p=>p.y), mode:'markers', type:'scatter',
+        marker:{size:5,opacity:0.75,color:COLORS[i%COLORS.length]}, text:sub.map(hover), hoverinfo:'text', name:cat };
+    }); showLeg = true;
+  } else {
+    traces = [{ x:points.map(p=>p.x), y:points.map(p=>p.y), mode:'markers', type:'scatter',
+      marker:{size:4,opacity:0.7,color:COLORS[0]}, text:points.map(hover), hoverinfo:'text', name:'' }];
+    showLeg = false;
+  }
+  const isUmap = methodVal === 'umap';
+  Plotly.newPlot(plotEl, traces, {
+    ...plotBg, font:fontStyle, margin:{t:40,r:20,b:40,l:40},
+    xaxis:{title:isUmap?'UMAP 1':'PC1',...axStyle}, yaxis:{title:isUmap?'UMAP 2':'PC2',...axStyle},
+    title:{text:titlePrefix+' ('+methodVal.toUpperCase()+' 2D)', font:{size:14}},
+    showlegend:showLeg, legend:{font:{color:'#27272a'},bgcolor:'rgba(255,255,255,0.85)'}
+  }, {responsive:true});
+}
+
+// =====================================================================
+//  Tab: Overview
+// =====================================================================
+async function initOverview() {
+  const r = await fetch('/api/pathology_overview');
+  const d = await r.json();
+
+  const totalSamples = Object.values(d.region_samples||{}).reduce((a,b)=>a+b,0);
+  const nRegions = Object.keys(d.region_samples||{}).length;
+  const nPathGroups = Object.keys(d.path_group||{}).length;
+
+  document.getElementById('overview-cards').innerHTML =
+    `<div class="card"><h3>Samples</h3><div class="big-num">${totalSamples}</div></div>` +
+    `<div class="card"><h3>Regions</h3><div class="big-num">${nRegions}</div></div>` +
+    `<div class="card"><h3>Pathology Groups</h3><div class="big-num">${nPathGroups}</div></div>`;
+
+  function bar(el, obj, title, color) {
+    const keys = Object.keys(obj).sort(); const vals = keys.map(k => obj[k]);
+    Plotly.newPlot(el, [{ x:keys, y:vals, type:'bar', marker:{color:color||COLORS[0]} }], {
+      ...plotBg, font:fontStyle, margin:{t:36,r:10,b:40,l:50},
+      title:{text:title,font:{size:13}}, xaxis:{...axStyle}, yaxis:{title:'Count',...axStyle}
+    }, {responsive:true});
+  }
+  bar('overview-region', d.region_samples, 'Samples per Region', COLORS[0]);
+  bar('overview-pathgroup', d.path_group, 'Pathology Groups', COLORS[1]);
+  bar('overview-thal', d.thal, 'Thal Stages', COLORS[4]);
+  bar('overview-sex', d.sex, 'Sex Distribution', COLORS[2]);
+}
+
+// =====================================================================
+//  Tab: Cell Embeddings
+// =====================================================================
+let _cellData = null;
+const cellRegion = document.getElementById('cell-region');
+const cellMethod = document.getElementById('cell-method');
+const cellColor = document.getElementById('cell-colorBy');
+const cellStatus = document.getElementById('cell-status');
+const cellPlot = document.getElementById('cell-plot');
+
+async function loadCellEmb() {
+  const region = cellRegion.value; if (!region) return;
+  setStatus(cellStatus, 'Loading...', false);
+  const r = await fetch(`/api/embeddings?region=${encodeURIComponent(region)}&method=${cellMethod.value}`);
+  const d = await r.json(); _cellData = d;
+  setStatus(cellStatus, '', false);
+  const prev = cellColor.value;
+  cellColor.innerHTML = '<option value="">--</option>';
+  (d.meta_columns||[]).forEach(c => { const o=document.createElement('option'); o.value=c; o.textContent=c; cellColor.appendChild(o); });
+  const def = region === 'All Regions' ? 'region' : prev;
+  if (def && (d.meta_columns||[]).includes(def)) cellColor.value = def;
+  categoricalScatter(cellPlot, d.points||[], d.meta_columns||[], cellColor.value, cellMethod.value, 'Cell embeddings – '+region);
+}
+function replotCell() { if (_cellData) categoricalScatter(cellPlot, _cellData.points||[], _cellData.meta_columns||[], cellColor.value, cellMethod.value, 'Cell embeddings – '+cellRegion.value); }
+
+async function initCellEmb() {
+  const r = await fetch('/api/regions'); const {regions} = await r.json();
+  populateSelect(cellRegion, regions);
+  cellRegion.addEventListener('change', loadCellEmb);
+  cellMethod.addEventListener('change', loadCellEmb);
+  cellColor.addEventListener('change', replotCell);
+  await loadCellEmb();
+}
+
+// =====================================================================
+//  Tab: Gene Embeddings
+// =====================================================================
+let _geneData = null;
+const geneRegion = document.getElementById('gene-region');
+const geneMethod = document.getElementById('gene-method');
+const geneColor = document.getElementById('gene-colorBy');
+const geneStatus = document.getElementById('gene-status');
+const genePlot = document.getElementById('gene-plot');
+
+async function loadGeneEmb() {
+  const region = geneRegion.value; if (!region) return;
+  setStatus(geneStatus, 'Loading...', false);
+  const r = await fetch(`/api/gene_embeddings?region=${encodeURIComponent(region)}&method=${geneMethod.value}`);
+  const d = await r.json(); _geneData = d;
+  setStatus(geneStatus, '', false);
+  const prev = geneColor.value;
+  geneColor.innerHTML = '<option value="">--</option>';
+  (d.meta_columns||[]).forEach(c => { const o=document.createElement('option'); o.value=c; o.textContent=c; geneColor.appendChild(o); });
+  if (!prev || !(d.meta_columns||[]).includes(prev)) geneColor.value = 'gene_type';
+  else geneColor.value = prev;
+  categoricalScatter(genePlot, d.points||[], d.meta_columns||[], geneColor.value, geneMethod.value, 'Gene embeddings – '+region);
+}
+function replotGene() { if (_geneData) categoricalScatter(genePlot, _geneData.points||[], _geneData.meta_columns||[], geneColor.value, geneMethod.value, 'Gene embeddings – '+geneRegion.value); }
+
+async function initGeneEmb() {
+  const r = await fetch('/api/gene_regions'); const {regions} = await r.json();
+  populateSelect(geneRegion, regions);
+  geneRegion.addEventListener('change', loadGeneEmb);
+  geneMethod.addEventListener('change', loadGeneEmb);
+  geneColor.addEventListener('change', replotGene);
+  await loadGeneEmb();
+}
+
+// =====================================================================
+//  Tab: Model Comparison
+// =====================================================================
+async function initModelCmp() {
+  const r = await fetch('/api/model_comparison'); const {comparison} = await r.json();
+  const regions = comparison.map(c=>c.region);
+  const expMeans = comparison.map(c=>c.expression_mean);
+  const geMeans = comparison.map(c=>c.embedding_mean);
+  const expErr = comparison.map(c=>c.expression_std);
+  const geErr = comparison.map(c=>c.embedding_std);
+
+  Plotly.newPlot('model-plot', [
+    { x:regions, y:expMeans, error_y:{type:'data',array:expErr,visible:true,color:'#94a3b8'},
+      type:'bar', name:'Raw Expression', marker:{color:COLORS[1]} },
+    { x:regions, y:geMeans, error_y:{type:'data',array:geErr,visible:true,color:'#94a3b8'},
+      type:'bar', name:'GREmLN Embedding', marker:{color:COLORS[0]} }
+  ], {
+    ...plotBg, font:fontStyle, barmode:'group', margin:{t:50,r:20,b:50,l:60},
+    title:{text:'Model F1 Score: Embedding vs Expression by Region',font:{size:15}},
+    xaxis:{title:'Brain Region',...axStyle}, yaxis:{title:'Mean F1 Score',...axStyle,range:[0,0.4]},
+    legend:{orientation:'h',y:1.08,x:0.5,xanchor:'center',font:{color:'#27272a'}}
+  }, {responsive:true});
+}
+
+// =====================================================================
+//  Tab: DGE Volcano
+// =====================================================================
+const volcFile = document.getElementById('volcano-file');
+const volcStatus = document.getElementById('volcano-status');
+const volcPlot = document.getElementById('volcano-plot');
+
+async function loadVolcano() {
+  const file = volcFile.value; if (!file) return;
+  setStatus(volcStatus, 'Loading...', false);
+  const r = await fetch(`/api/dge_volcano?file=${encodeURIComponent(file)}`);
+  const d = await r.json();
+  setStatus(volcStatus, '', false);
+
+  const groups = {Up:[], Down:[], 'Not significant':[]};
+  (d.points||[]).forEach(p => { (groups[p.significance]||groups['Not significant']).push(p); });
+
+  const traces = [
+    {pts:groups['Not significant'], color:'#a1a1aa', name:'Not significant', size:3, opacity:0.3},
+    {pts:groups['Down'], color:COLORS[0], name:'Down-regulated', size:5, opacity:0.7},
+    {pts:groups['Up'], color:COLORS[1], name:'Up-regulated', size:5, opacity:0.7},
+  ].map(t => ({
+    x:t.pts.map(p=>p.log2FC), y:t.pts.map(p=>p.neg_log10_pval), mode:'markers', type:'scatter',
+    marker:{size:t.size,opacity:t.opacity,color:t.color},
+    text:t.pts.map(p=>p.gene+'<br>log2FC: '+p.log2FC.toFixed(3)+'<br>-log10(p): '+p.neg_log10_pval.toFixed(2)+(p.padj!=null?'<br>padj: '+p.padj.toExponential(2):'')),
+    hoverinfo:'text', name:t.name
+  }));
+
+  Plotly.newPlot(volcPlot, traces, {
+    ...plotBg, font:fontStyle, margin:{t:40,r:20,b:50,l:60},
+    title:{text:'Volcano Plot – '+volcFile.options[volcFile.selectedIndex].text, font:{size:14}},
+    xaxis:{title:'log2 Fold Change',...axStyle}, yaxis:{title:'-log10(p-value)',...axStyle},
+    showlegend:true, legend:{font:{color:'#27272a'},bgcolor:'rgba(255,255,255,0.85)'},
+    shapes:[
+      {type:'line',x0:-d.lfc_cutoff,x1:-d.lfc_cutoff,y0:0,y1:1,yref:'paper',line:{dash:'dot',color:'#a1a1aa'}},
+      {type:'line',x0:d.lfc_cutoff,x1:d.lfc_cutoff,y0:0,y1:1,yref:'paper',line:{dash:'dot',color:'#a1a1aa'}},
+    ]
+  }, {responsive:true});
+}
+
+async function initVolcano() {
+  const r = await fetch('/api/dge_files'); const {files} = await r.json();
+  populateSelect(volcFile, files, 'file', 'name');
+  volcFile.addEventListener('change', loadVolcano);
+  if (files.length) await loadVolcano();
+}
+
+// =====================================================================
+//  Tab: Gene Rankings
+// =====================================================================
+const rankSet = document.getElementById('rank-set');
+const rankTopN = document.getElementById('rank-topn');
+const rankStatus = document.getElementById('rank-status');
+
+async function loadRanking() {
+  const set = rankSet.value; if (!set) return;
+  setStatus(rankStatus, 'Loading...', false);
+  const r = await fetch(`/api/ranked_genes?set=${encodeURIComponent(set)}&top=${rankTopN.value}`);
+  const d = await r.json();
+  setStatus(rankStatus, '', false);
+  const genes = d.genes || [];
+
+  // Lollipop chart
+  const yLabels = genes.map(g=>g.gene).reverse();
+  const xVals = genes.map(g=>g.mean_f1_drop).reverse();
+  const barColors = genes.map(g => g.known_ad ? COLORS[1] : COLORS[0]).reverse();
+
+  Plotly.newPlot('rank-plot', [{
+    y:yLabels, x:xVals, type:'bar', orientation:'h',
+    marker:{color:barColors},
+    text:xVals.map(v=>v.toFixed(4)), textposition:'outside',
+    hovertext:genes.map(g=>g.gene+(g.known_ad?' (Known AD gene)':'')).reverse(),
+    hoverinfo:'text+x'
+  }], {
+    ...plotBg, font:{...fontStyle, size:11}, margin:{t:40,r:20,b:50,l:120},
+    title:{text:'Gene Importance (mean F1 drop) – '+set, font:{size:14}},
+    xaxis:{title:'Mean F1 Drop',...axStyle}, yaxis:{...axStyle, automargin:true},
+    showlegend:false
+  }, {responsive:true});
+
+  // Table
+  let html = '<table class="ranking-table"><thead><tr><th>#</th><th>Gene</th><th>F1 Drop</th></tr></thead><tbody>';
+  genes.forEach(g => {
+    const cls = g.known_ad ? ' class="ad-gene"' : '';
+    html += `<tr><td>${g.rank}</td><td${cls}>${g.gene}${g.known_ad?' *':''}</td><td>${g.mean_f1_drop.toFixed(6)}</td></tr>`;
+  });
+  html += '</tbody></table>';
+  document.getElementById('rank-table-wrap').innerHTML = html;
+}
+
+async function initRanking() {
+  const r = await fetch('/api/ranked_sets'); const {sets} = await r.json();
+  populateSelect(rankSet, sets, 'name', 'name');
+  rankSet.addEventListener('change', loadRanking);
+  rankTopN.addEventListener('change', loadRanking);
+  if (sets.length) await loadRanking();
+}
+
+// =====================================================================
+//  Tab: Framework Animation
+// =====================================================================
+(function() {
+  const STEP_DESCS = [
+    'Click <strong>Play</strong> to walk through the framework, or use <strong>Next</strong> / <strong>Prev</strong> to step manually.',
+    '<strong>Step 1 — Input:</strong> We start with single-cell RNA sequencing (scRNA-seq) data from post-mortem brain tissue of Alzheimer\'s disease patients across multiple brain regions.',
+    '<strong>Step 2 — ARACNe:</strong> The scRNA-seq data is processed by ARACNe (Algorithm for the Reconstruction of Accurate Cellular Networks) to infer a Gene Regulatory Network (GRN) capturing gene-gene regulatory relationships.',
+    '<strong>Step 3 — GREmLN:</strong> Both the GRN and scRNA-seq expression data feed into GREmLN (Gene Regulatory Embedding Model for Learning Networks), which produces 512-dimensional embeddings for every cell and every gene.',
+    '<strong>Step 4 — Ranking Model:</strong> The gene embeddings are used to train a neural ranking model that predicts disease pathology class (e.g., Thal stage, Braak stage) from the learned representations.',
+    '<strong>Step 5 — Gene Reranking:</strong> Using the trained model, we apply permutation importance — systematically removing each gene\'s contribution and measuring the drop in prediction accuracy to quantify each gene\'s influence.',
+    '<strong>Step 6 — Output:</strong> Genes are ranked by their effect on disease prediction. The top N most influential genes are identified as candidate biomarkers for Alzheimer\'s disease.'
+  ];
+
+  let curStep = 0;
+  let playTimer = null;
+  const totalSteps = 6;
+  const indEl = document.getElementById('fw-ind');
+  const descEl = document.getElementById('fw-desc');
+  const prevBtn = document.getElementById('fw-prev');
+  const nextBtn = document.getElementById('fw-next');
+  const playBtn = document.getElementById('fw-play');
+  const resetBtn = document.getElementById('fw-reset');
+
+  function updateUI() {
+    indEl.textContent = curStep + ' / ' + totalSteps;
+    descEl.innerHTML = STEP_DESCS[curStep];
+    prevBtn.disabled = curStep === 0;
+    nextBtn.disabled = curStep === totalSteps;
+
+    document.querySelectorAll('.fw-node, .fw-arrow').forEach(el => {
+      const s = parseInt(el.dataset.step);
+      el.classList.toggle('visible', s <= curStep);
+      el.classList.toggle('active', s === curStep);
+    });
+  }
+
+  function goTo(step) {
+    curStep = Math.max(0, Math.min(totalSteps, step));
+    updateUI();
+  }
+
+  function stopPlay() {
+    if (playTimer) { clearInterval(playTimer); playTimer = null; }
+    playBtn.textContent = 'Play';
+  }
+
+  prevBtn.addEventListener('click', () => { stopPlay(); goTo(curStep - 1); });
+  nextBtn.addEventListener('click', () => { stopPlay(); goTo(curStep + 1); });
+  resetBtn.addEventListener('click', () => { stopPlay(); goTo(0); });
+
+  playBtn.addEventListener('click', () => {
+    if (playTimer) { stopPlay(); return; }
+    if (curStep >= totalSteps) curStep = 0;
+    playBtn.textContent = 'Pause';
+    goTo(curStep + 1);
+    playTimer = setInterval(() => {
+      if (curStep >= totalSteps) { stopPlay(); return; }
+      goTo(curStep + 1);
+    }, 1800);
+  });
+
+  updateUI();
+})();
+
+// =====================================================================
+//  Tab: Interactive Pipeline
+// =====================================================================
+function initPipeline() {
+  let ds = '', region = '';
+  const s1 = document.getElementById('pipe-s1');
+  const s2 = document.getElementById('pipe-s2');
+  const s3 = document.getElementById('pipe-s3');
+  const s4 = document.getElementById('pipe-s4');
+  const s5 = document.getElementById('pipe-s5');
+  const s6 = document.getElementById('pipe-s6');
+  const regionBtns = document.getElementById('pipe-region-btns');
+  const dataResults = document.getElementById('pipe-data-results');
+  const modelResult = document.getElementById('pipe-model-result');
+  const analyzeResult = document.getElementById('pipe-analyze-result');
+  const analysisImgs = document.getElementById('pipe-analysis-images');
+
+  let loadedSteps = {dge:false, grn:false, emb:false};
+
+  function hideFrom(step) {
+    [s2,s3,s4,s5,s6].forEach((el,i) => { if(i+2 >= step) el.classList.add('pipe-hidden'); });
+  }
+
+  function resetBelow(step) {
+    const allBtnIds = ['pipe-load-dge','pipe-load-grn','pipe-load-emb','pipe-run-model','pipe-analyze','pipe-cluster','pipe-gene-prof'];
+    function clearBtn(id) { const b=document.getElementById(id); if(b) b.classList.remove('done','loading','selected'); }
+
+    if(step <= 3) { loadedSteps={dge:false,grn:false,emb:false}; dataResults.innerHTML=''; ['pipe-load-dge','pipe-load-grn','pipe-load-emb'].forEach(clearBtn); }
+    if(step <= 4) { modelResult.innerHTML=''; clearBtn('pipe-run-model'); }
+    if(step <= 5) { analyzeResult.innerHTML=''; clearBtn('pipe-analyze'); }
+    if(step <= 6) { analysisImgs.innerHTML=''; clearBtn('pipe-cluster'); clearBtn('pipe-gene-prof'); }
+    hideFrom(step);
+  }
+
+  // Step 1: Dataset selection
+  s1.querySelectorAll('.pipe-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      s1.querySelectorAll('.pipe-btn').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      ds = btn.dataset.ds;
+      resetBelow(2);
+      regionBtns.innerHTML = '';
+
+      fetch('/api/pipeline/regions?dataset='+ds).then(r=>r.json()).then(data => {
+        data.regions.forEach(r => {
+          const rb = document.createElement('button');
+          rb.className = 'pipe-btn';
+          rb.textContent = r;
+          rb.dataset.region = r;
+          rb.addEventListener('click', () => selectRegion(rb, r));
+          regionBtns.appendChild(rb);
+        });
+        s2.classList.remove('pipe-hidden');
+      });
+    });
+  });
+
+  function selectRegion(btn, r) {
+    regionBtns.querySelectorAll('.pipe-btn').forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    region = r;
+    resetBelow(3);
+    s3.classList.remove('pipe-hidden');
+  }
+
+  async function loadWithButton(btn, url, resultContainer, renderFn) {
+    btn.classList.add('loading');
+    btn.disabled = true;
+    try {
+      const resp = await fetch(url);
+      const data = await resp.json();
+      btn.classList.remove('loading');
+      btn.classList.add('done');
+      renderFn(data, resultContainer);
+    } catch(e) {
+      btn.classList.remove('loading');
+      resultContainer.innerHTML += `<div class="pipe-result" style="border-color:#fca5a5;background:#fef2f2"><strong>Error:</strong> ${e.message}</div>`;
+    }
+    btn.disabled = false;
+  }
+
+  // Step 3: Load data buttons
+  document.getElementById('pipe-load-dge').addEventListener('click', function() {
+    if(this.classList.contains('done')) return;
+    loadWithButton(this, `/api/pipeline/dge?dataset=${ds}&region=${region}`, dataResults, (data, el) => {
+      loadedSteps.dge = true;
+      if(data.error) { el.innerHTML += `<div class="pipe-result"><strong>DGE:</strong> ${data.error}</div>`; return; }
+      let html = `<div class="pipe-result"><h4>DGE Results — ${region}</h4><table><tr><th>Comparison</th><th>Genes</th><th>Sig Up</th><th>Sig Down</th></tr>`;
+      data.comparisons.forEach(c => { html += `<tr><td>${c.name}</td><td>${c.total_genes.toLocaleString()}</td><td style="color:#16a34a">${c.sig_up}</td><td style="color:#dc2626">${c.sig_down}</td></tr>`; });
+      html += '</table></div>'; el.innerHTML += html;
+      checkAllLoaded();
+    });
+  });
+
+  document.getElementById('pipe-load-grn').addEventListener('click', function() {
+    if(this.classList.contains('done')) return;
+    loadWithButton(this, `/api/pipeline/grn?dataset=${ds}&region=${region}`, dataResults, (data, el) => {
+      loadedSteps.grn = true;
+      if(data.error) { el.innerHTML += `<div class="pipe-result"><strong>GRN:</strong> ${data.error}</div>`; return; }
+      el.innerHTML += `<div class="pipe-result"><h4>Gene Regulatory Network — ${region}</h4>
+        <table><tr><th>Metric</th><th>Value</th></tr>
+        <tr><td>Regulatory edges</td><td>${data.edges.toLocaleString()}</td></tr>
+        <tr><td>Regulators (TFs)</td><td>${data.regulators.toLocaleString()}</td></tr>
+        <tr><td>Target genes</td><td>${data.targets.toLocaleString()}</td></tr>
+        <tr><td>TF priors used</td><td>${data.tf_prior_count.toLocaleString()}</td></tr>
+        </table></div>`;
+      checkAllLoaded();
+    });
+  });
+
+  document.getElementById('pipe-load-emb').addEventListener('click', function() {
+    if(this.classList.contains('done')) return;
+    loadWithButton(this, `/api/pipeline/embeddings?dataset=${ds}&region=${region}`, dataResults, (data, el) => {
+      loadedSteps.emb = true;
+      let rows = '';
+      if(data.cell_count) rows += `<tr><td>Cell embeddings</td><td>${data.cell_count} samples × ${data.cell_dims}-D</td></tr>`;
+      if(data.gene_count) rows += `<tr><td>Gene embeddings</td><td>${data.gene_count} genes × ${data.cell_dims || 512}-D</td></tr>`;
+      el.innerHTML += `<div class="pipe-result"><h4>GREmLN Embeddings — ${region}</h4>
+        <table><tr><th>Type</th><th>Shape</th></tr>${rows}</table></div>`;
+      checkAllLoaded();
+    });
+  });
+
+  function checkAllLoaded() {
+    if(loadedSteps.dge && loadedSteps.grn && loadedSteps.emb) {
+      s4.classList.remove('pipe-hidden');
+    }
+  }
+
+  // Step 4: Run model
+  document.getElementById('pipe-run-model').addEventListener('click', function() {
+    if(this.classList.contains('done')) return;
+    loadWithButton(this, `/api/pipeline/model?dataset=${ds}&region=${region}`, modelResult, (data, el) => {
+      const emb = data.embedding_f1_mean != null ? (data.embedding_f1_mean*100).toFixed(1)+'%' : 'N/A';
+      const exp = data.expression_f1_mean != null ? (data.expression_f1_mean*100).toFixed(1)+'%' : 'N/A';
+      const embStd = data.embedding_f1_std != null ? ' ± '+(data.embedding_f1_std*100).toFixed(1)+'%' : '';
+      const expStd = data.expression_f1_std != null ? ' ± '+(data.expression_f1_std*100).toFixed(1)+'%' : '';
+
+      let barData = [];
+      if(data.embedding_f1_mean != null) barData.push({x:['Embedding'], y:[data.embedding_f1_mean], name:'Embedding', marker:{color:'#6366f1'}, type:'bar'});
+      if(data.expression_f1_mean != null) barData.push({x:['Expression'], y:[data.expression_f1_mean], name:'Expression', marker:{color:'#f59e0b'}, type:'bar'});
+
+      el.innerHTML = `<div class="pipe-result"><h4>Model Performance — ${region}</h4>
+        <table><tr><th>Model</th><th>Mean F1</th><th>Folds</th></tr>
+        <tr><td style="color:#6366f1;font-weight:600">Embedding-based</td><td>${emb}${embStd}</td><td>${data.embedding_f1_values.length}</td></tr>
+        <tr><td style="color:#f59e0b;font-weight:600">Expression-based</td><td>${exp}${expStd}</td><td>${data.expression_f1_values.length}</td></tr>
+        </table><div id="pipe-model-chart" style="height:260px;margin-top:8px"></div></div>`;
+
+      if(barData.length) {
+        Plotly.newPlot('pipe-model-chart', barData, {
+          ...plotBg, font:fontStyle, margin:{t:30,r:20,b:30,l:50}, barmode:'group',
+          yaxis:{title:'F1 Score', range:[0,1], ...axStyle}, showlegend:true,
+          legend:{orientation:'h',y:1.12}
+        }, {responsive:true});
+      }
+      s5.classList.remove('pipe-hidden');
+    });
+  });
+
+  // Step 5: Analyze results
+  document.getElementById('pipe-analyze').addEventListener('click', function() {
+    if(this.classList.contains('done')) return;
+    loadWithButton(this, `/api/pipeline/top_genes?dataset=${ds}&region=${region}`, analyzeResult, (data, el) => {
+      let html = '<div class="pipe-result"><h4>Top 10 Genes — '+region+'</h4>';
+      html += '<div style="display:flex;gap:24px;flex-wrap:wrap">';
+
+      // Embedding genes
+      html += '<div style="flex:1;min-width:200px"><h4 style="color:#6366f1;margin:0 0 4px">Embedding-based</h4>';
+      if(data.embedding_genes.length) {
+        html += '<table><tr><th>#</th><th>Gene</th></tr>';
+        data.embedding_genes.forEach(g => { html += `<tr><td>${g.rank}</td><td><strong>${g.gene}</strong></td></tr>`; });
+        html += '</table>';
+      } else { html += '<em style="color:#71717a">No ranked list available for '+region+'</em>'; }
+      html += '</div>';
+
+      // Expression (DGE) genes
+      html += '<div style="flex:1;min-width:200px"><h4 style="color:#f59e0b;margin:0 0 4px">Expression-based (DGE)</h4>';
+      if(data.expression_genes.length) {
+        html += '<table><tr><th>#</th><th>Gene</th><th>log2FC</th><th>padj</th></tr>';
+        data.expression_genes.forEach(g => { html += `<tr><td>${g.rank}</td><td><strong>${g.gene}</strong></td><td>${g.log2FC}</td><td>${g.padj}</td></tr>`; });
+        html += '</table>';
+      } else { html += '<em style="color:#71717a">No DGE data available for '+region+'</em>'; }
+      html += '</div></div></div>';
+      el.innerHTML = html;
+      s6.classList.remove('pipe-hidden');
+    });
+  });
+
+  // Step 6: Analysis images
+  // File naming: {analysisType}_{dataType}_{region}.ext
+  // e.g. clusterProfiler_Atlas_EC.png, gProfiler_SEAAD_MTG.png
+  const dsLabel = {atlas:'Atlas', seaad:'SEAAD'};
+
+  document.getElementById('pipe-cluster').addEventListener('click', function() {
+    this.classList.add('selected');
+    document.getElementById('pipe-gene-prof').classList.remove('selected');
+    showAnalysisImages('clusterProfiler');
+  });
+  document.getElementById('pipe-gene-prof').addEventListener('click', function() {
+    this.classList.add('selected');
+    document.getElementById('pipe-cluster').classList.remove('selected');
+    showAnalysisImages('gProfiler');
+  });
+
+  async function showAnalysisImages(type) {
+    const resp = await fetch('/api/pipeline/analysis_images');
+    const {images} = await resp.json();
+    const dtLabel = dsLabel[ds] || ds;
+    const prefix = `${type}_${dtLabel}_${region}`.toLowerCase();
+    const matching = images.filter(f => f.toLowerCase().startsWith(prefix));
+    if(matching.length === 0) {
+      analysisImgs.innerHTML = `<div class="pipe-result" style="width:100%">
+        <em style="color:#71717a">No ${type} images found for ${dtLabel} / ${region}. Expected filename like <code>${type}_${dtLabel}_${region}.png</code> in <code>visualizer_results/</code>.</em></div>`;
+      return;
+    }
+    analysisImgs.innerHTML = matching.map(f =>
+      `<img src="/visualizer_results/${f}" alt="${f}" style="max-height:500px">`
+    ).join('');
+  }
+}
+
+// =====================================================================
+//  Init: load first tab, defer others
+// =====================================================================
+(async function() {
+  tabInits['overview'] = initOverview;
+  tabInits['cell-emb'] = initCellEmb;
+  tabInits['gene-emb'] = initGeneEmb;
+  tabInits['model-cmp'] = initModelCmp;
+  tabInits['volcano'] = initVolcano;
+  tabInits['gene-rank'] = initRanking;
+  tabInits['pipeline'] = initPipeline;
+})();
+</script>
+</body>
+</html>

@@ -65,7 +65,10 @@ def load_gene_names_embedding(region, cell_type):
         from create_data import create_anndata, load_gene_embeddings
         adata = create_anndata(region, cell_type)
         emb_dir = os.path.join("GREmLN", "embeddings")
-        emb_path = os.path.join(emb_dir, f"{region}_Microglia_gene_embeddings.tsv" if cell_type == "Microglia" else f"{region}_gene_embeddings.tsv")
+        if region == "MTG" or cell_type == "MTG":
+            emb_path = os.path.join(emb_dir, "MTG_gene_embeddings.tsv")
+        else:
+            emb_path = os.path.join(emb_dir, f"{region}_Microglia_gene_embeddings.tsv" if cell_type == "Microglia" else f"{region}_gene_embeddings.tsv")
         emb_dict = load_gene_embeddings(emb_path, gene_list=list(adata.var_names))
         gene_names = [g for g in adata.var_names if g in emb_dict]
         return gene_names
@@ -86,8 +89,9 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="Generate ranked list of genes by permutation importance (F1 drop)"
     )
-    parser.add_argument("--region", type=str, required=True, help="Region (e.g., EC, ITG, PFC, V1)")
-    parser.add_argument("--cell_type", type=str, default="Astrocytes", choices=["Astrocytes", "Microglia"])
+    parser.add_argument("--region", type=str, required=True, help="Region (e.g., EC, ITG, PFC, V1, MTG). MTG uses Microglia two-head model and MTG data.")
+    parser.add_argument("--cell_type", type=str, default="Astrocytes", choices=["Astrocytes", "Microglia"],
+                        help="Cell type (ignored when region=MTG; MTG always uses Microglia model)")
     parser.add_argument("--experiment", type=str, default="baseline", choices=list(EXPERIMENTS.keys()))
     parser.add_argument("--model", type=str, default="expression", choices=["embedding", "expression"])
     parser.add_argument("--gene_encoder", action="store_true", help="Use gene encoder (embedding only)")
@@ -131,8 +135,8 @@ def _compute_f1_astrocytes(model, test_loader, device, idx_to_thal):
     return f1_score(true_labels, pred_labels, average="weighted")
 
 
-def _compute_f1_microglia(model, test_loader, device):
-    """Compute F1 on test set (CERAD + Braak) for Microglia."""
+def _compute_f1_microglia(model, test_loader, device, thal_only=False):
+    """Compute F1 on test set. If thal_only=True (MTG), return only CERAD/Thal F1."""
     model.eval()
     cerad_preds, cerad_targets = [], []
     braak_preds, braak_targets = [], []
@@ -146,6 +150,8 @@ def _compute_f1_microglia(model, test_loader, device):
             cerad_targets.extend(cerad.cpu().numpy())
             braak_targets.extend(braak.cpu().numpy())
     f1_cerad = f1_score(cerad_targets, cerad_preds, average="weighted")
+    if thal_only:
+        return f1_cerad
     f1_braak = f1_score(braak_targets, braak_preds, average="weighted")
     return (f1_cerad + f1_braak) / 2.0
 
@@ -161,22 +167,35 @@ def _permute_gene_column(X, gene_idx, rng):
 # --- Cell-type config: data paths, target encoding, model/dataset creation ---
 
 def _get_expression_data_path(region, cell_type):
+    if region == "MTG":
+        return os.path.join("data", "model_data", "MTG_raw_expression_data.pkl")
     base = f"{region}_Microglia_raw_expression_data.pkl" if cell_type == "Microglia" else f"{region}_raw_expression_data.pkl"
     return os.path.join("data", "model_data", base)
 
 
 def _get_embedding_data_path(region, cell_type):
+    if region == "MTG":
+        return os.path.join("data", "model_data", "MTG_data_for_model_training.pkl")
     base = f"{region}_Microglia_data_for_model_training.pkl" if cell_type == "Microglia" else f"{region}_data_for_model_training.pkl"
     return os.path.join("data", "model_data", base)
 
 
-def _build_expression_fold_data(expression_folds, ptau_folds, thal_folds, fold_idx, cell_type, thal_to_idx=None):
+def _build_expression_fold_data(expression_folds, ptau_folds, thal_folds, fold_idx, cell_type, thal_to_idx=None,
+                                braak_folds=None, cerad_to_idx=None, braak_to_idx=None, thal_only=False):
     """Build fold dict with X, and cell-type-specific targets."""
     X = np.array(expression_folds[fold_idx], dtype=np.float32)
     if cell_type == "Astrocytes":
         ptau = np.log1p(np.array(ptau_folds[fold_idx], dtype=np.float32))
         thal = np.array([thal_to_idx[int(t)] for t in thal_folds[fold_idx]], dtype=np.int64)
         return {"X": X, "ptau": ptau, "thal": thal}
+    elif cerad_to_idx is not None and braak_to_idx is not None and braak_folds is not None:
+        cerad = np.array([cerad_to_idx.get(str(t).strip().lower(), 0) for t in thal_folds[fold_idx]], dtype=np.int64)
+        braak = np.array([braak_to_idx.get(str(b).strip(), 0) for b in braak_folds[fold_idx]], dtype=np.int64)
+        return {"X": X, "cerad": cerad, "braak": braak}
+    elif cerad_to_idx is not None and thal_only:
+        cerad = np.array([cerad_to_idx.get(str(t).strip().lower(), 0) for t in thal_folds[fold_idx]], dtype=np.int64)
+        n = len(cerad)
+        return {"X": X, "cerad": cerad, "braak": np.zeros(n, dtype=np.int64)}
     else:
         cerad_to_idx = {s: i for i, s in enumerate(CERAD_CLASS_ORDER)}
         cerad = np.array([cerad_to_idx.get(str(t).strip().lower(), 0) for t in thal_folds[fold_idx]])
@@ -184,25 +203,38 @@ def _build_expression_fold_data(expression_folds, ptau_folds, thal_folds, fold_i
         return {"X": X, "cerad": cerad, "braak": braak}
 
 
-def _build_embedding_fold_data(embeddings_folds, patient_info_folds, ptau_folds, thal_folds, fold_idx, cell_type, thal_to_idx=None):
+def _build_embedding_fold_data(embeddings_folds, patient_info_folds, ptau_folds, thal_folds, fold_idx, cell_type, thal_to_idx=None,
+                               braak_folds=None, cerad_to_idx=None, braak_to_idx=None, thal_only=False):
     """Build fold dict with X (n_patients, n_genes, n_dims) and targets."""
     fold_emb = embeddings_folds[fold_idx]
     fold_patient_info = patient_info_folds[fold_idx]
     patient_embs = []
     patient_ptau_raw = []
     patient_thal_raw = []
+    patient_braak_raw = [] if braak_folds is not None else None
     cell_idx = 0
     for patient_idx, (_, cell_names) in enumerate(fold_patient_info.items()):
         n_cells = len(cell_names)
         patient_embs.append(np.mean(fold_emb[cell_idx : cell_idx + n_cells], axis=0))
-        patient_ptau_raw.append(ptau_folds[fold_idx][patient_idx])
+        if ptau_folds is not None:
+            patient_ptau_raw.append(ptau_folds[fold_idx][patient_idx])
         patient_thal_raw.append(thal_folds[fold_idx][patient_idx])
+        if braak_folds is not None:
+            patient_braak_raw.append(braak_folds[fold_idx][patient_idx])
         cell_idx += n_cells
     X = np.array(patient_embs, dtype=np.float32)
     if cell_type == "Astrocytes":
         ptau = np.log1p(np.array(patient_ptau_raw, dtype=np.float32))
         thal = np.array([thal_to_idx[int(t)] for t in patient_thal_raw], dtype=np.int64)
         return {"X": X, "ptau": ptau, "thal": thal}
+    elif cerad_to_idx is not None and braak_to_idx is not None and patient_braak_raw is not None:
+        cerad = np.array([cerad_to_idx.get(str(t).strip().lower(), 0) for t in patient_thal_raw], dtype=np.int64)
+        braak = np.array([braak_to_idx.get(str(b).strip(), 0) for b in patient_braak_raw], dtype=np.int64)
+        return {"X": X, "cerad": cerad, "braak": braak}
+    elif cerad_to_idx is not None and thal_only:
+        cerad = np.array([cerad_to_idx.get(str(t).strip().lower(), 0) for t in patient_thal_raw], dtype=np.int64)
+        n = len(cerad)
+        return {"X": X, "cerad": cerad, "braak": np.zeros(n, dtype=np.int64)}
     else:
         cerad_to_idx = {s: i for i, s in enumerate(CERAD_CLASS_ORDER)}
         cerad = np.array([cerad_to_idx.get(str(t).strip().lower(), 0) for t in patient_thal_raw], dtype=np.int64)
@@ -211,33 +243,55 @@ def _build_embedding_fold_data(embeddings_folds, patient_info_folds, ptau_folds,
 
 
 def run_permutation_importance_expression(args):
-    """8-fold CV, permute one gene at a time, measure F1 drop. Expression model (Astrocytes or Microglia)."""
+    """8-fold CV, permute one gene at a time, measure F1 drop. Expression model (Astrocytes, Microglia, or MTG)."""
     data_path = _get_expression_data_path(args.region, args.cell_type)
     if not os.path.exists(data_path):
         raise FileNotFoundError(f"Expression data not found: {data_path}")
 
     with open(data_path, "rb") as f:
-        expression_folds, patient_info_folds, ptau_folds, thal_folds = pickle.load(f)
+        raw = pickle.load(f)
+    if args.region == "MTG":
+        expression_folds, patient_info_folds, thal_folds, braak_folds = raw
+        ptau_folds = None
+    else:
+        expression_folds, patient_info_folds, ptau_folds, thal_folds = raw
+        braak_folds = None
 
     n_folds = len(expression_folds)
     if n_folds != args.n_folds:
         print(f"Warning: data has {n_folds} folds. Using {n_folds}.")
 
-    gene_names = load_gene_names(args.region, args.cell_type, args.top_k_genes)
+    gene_load_cell_type = "MTG" if args.region == "MTG" else args.cell_type
+    gene_names = load_gene_names(args.region, gene_load_cell_type, args.top_k_genes)
     n_genes = expression_folds[0].shape[1]
     if gene_names is None or len(gene_names) != n_genes:
         gene_names = [f"gene_{i}" for i in range(n_genes)]
 
     thal_to_idx = None
     idx_to_thal = None
-    if args.cell_type == "Astrocytes":
+    cerad_to_idx = None
+    braak_to_idx = None
+    n_cerad_classes = len(CERAD_CLASS_ORDER)
+    n_braak_classes = len(BRAAK_TO_IDX)
+    if args.cell_type == "Astrocytes" and args.region != "MTG":
         all_thal = [t for fold in thal_folds for t in fold]
         thal_classes = sorted(set(int(x) for x in all_thal))
         thal_to_idx = {c: i for i, c in enumerate(thal_classes)}
         idx_to_thal = {i: c for c, i in thal_to_idx.items()}
+    elif args.region == "MTG":
+        # MTG: Thal (CERAD) only; no Braak head
+        all_thal = [str(t).strip().lower() for fold in thal_folds for t in fold]
+        unique_cerad = sorted(set(all_thal))
+        cerad_to_idx = {s: i for i, s in enumerate(unique_cerad)}
+        n_cerad_classes = len(unique_cerad)
+        n_braak_classes = 1
+        braak_to_idx = None  # unused for MTG Thal-only
 
     all_fold_data = [
-        _build_expression_fold_data(expression_folds, ptau_folds, thal_folds, i, args.cell_type, thal_to_idx)
+        _build_expression_fold_data(expression_folds, ptau_folds, thal_folds, i,
+                                    "Microglia" if args.region == "MTG" else args.cell_type,
+                                    thal_to_idx, braak_folds=braak_folds, cerad_to_idx=cerad_to_idx, braak_to_idx=braak_to_idx,
+                                    thal_only=(args.region == "MTG"))
         for i in range(n_folds)
     ]
 
@@ -248,7 +302,7 @@ def run_permutation_importance_expression(args):
     baseline_f1_list = []
 
     for test_fold_idx in range(n_folds):
-        print(f"\n{'='*60}\nTest fold {test_fold_idx + 1}/{n_folds} (expression {args.cell_type})\n{'='*60}")
+        print(f"\n{'='*60}\nTest fold {test_fold_idx + 1}/{n_folds} (expression {args.region if args.region == 'MTG' else args.cell_type})\n{'='*60}")
 
         train_idx = [i for i in range(n_folds) if i != test_fold_idx]
         train_X = np.concatenate([all_fold_data[i]["X"] for i in train_idx], axis=0)
@@ -257,7 +311,7 @@ def run_permutation_importance_expression(args):
         test_cerad = all_fold_data[test_fold_idx].get("cerad")
         test_braak = all_fold_data[test_fold_idx].get("braak")
 
-        if args.cell_type == "Astrocytes":
+        if args.cell_type == "Astrocytes" and args.region != "MTG":
             train_ptau = np.concatenate([all_fold_data[i]["ptau"] for i in train_idx], axis=0)
             train_thal = np.concatenate([all_fold_data[i]["thal"] for i in train_idx], axis=0)
         else:
@@ -274,7 +328,7 @@ def run_permutation_importance_expression(args):
         else:
             pca = None
 
-        if args.cell_type == "Astrocytes":
+        if args.cell_type == "Astrocytes" and args.region != "MTG":
             train_ds = EmbeddingDataset(train_X, train_ptau, train_thal)
             test_ds = EmbeddingDataset(test_X_orig, test_ptau, test_thal)
             model = BaselineRankingModel(
@@ -290,7 +344,7 @@ def run_permutation_importance_expression(args):
             train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
             test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False)
             compute_f1 = lambda m, loader: _compute_f1_astrocytes(m, loader, device, idx_to_thal)
-            log_dir = os.path.join(args.log_base, f"{args.region}_{args.cell_type}_expression_{args.experiment}_testfold{test_fold_idx+1}")
+            log_dir = os.path.join(args.log_base, f"{args.region}_{gene_load_cell_type}_expression_{args.experiment}_testfold{test_fold_idx+1}")
             writer = SummaryWriter(log_dir)
             best_f1, best_state = -1.0, None
             for epoch in range(args.epochs):
@@ -311,7 +365,7 @@ def run_permutation_importance_expression(args):
             test_ds = EmbeddingDatasetMicroglia(test_X_orig, test_cerad, test_braak)
             model = BaselineRankingModelMicroglia(
                 input_dim=train_X.shape[1], input_shape=None,
-                n_cerad_classes=len(CERAD_CLASS_ORDER), n_braak_classes=len(BRAAK_TO_IDX),
+                n_cerad_classes=n_cerad_classes, n_braak_classes=n_braak_classes,
                 use_attention=False, num_heads=1, dropout=exp_cfg["dropout"],
             ).to(device)
             optimizer = torch.optim.Adam(model.parameters(), lr=exp_cfg["lr"], weight_decay=exp_cfg["weight_decay"])
@@ -319,8 +373,8 @@ def run_permutation_importance_expression(args):
             criterion_braak = nn.CrossEntropyLoss()
             train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
             test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False)
-            compute_f1 = lambda m, loader: _compute_f1_microglia(m, loader, device)
-            log_dir = os.path.join(args.log_base, f"{args.region}_{args.cell_type}_expression_{args.experiment}_testfold{test_fold_idx+1}")
+            compute_f1 = lambda m, loader: _compute_f1_microglia(m, loader, device, thal_only=(args.region == "MTG"))
+            log_dir = os.path.join(args.log_base, f"{args.region}_{gene_load_cell_type}_expression_{args.experiment}_testfold{test_fold_idx+1}")
             writer = SummaryWriter(log_dir)
             best_f1, best_state = -1.0, None
             for epoch in range(args.epochs):
@@ -348,7 +402,7 @@ def run_permutation_importance_expression(args):
                 test_X_perm = scaler.transform(test_X_perm)
                 if pca is not None:
                     test_X_perm = pca.transform(test_X_perm)
-                if args.cell_type == "Astrocytes":
+                if args.cell_type == "Astrocytes" and args.region != "MTG":
                     test_ds_perm = EmbeddingDataset(test_X_perm, test_ptau, test_thal)
                 else:
                     test_ds_perm = EmbeddingDatasetMicroglia(test_X_perm, test_cerad, test_braak)
@@ -360,24 +414,30 @@ def run_permutation_importance_expression(args):
                 print(f"  Gene {g + 1}/{n_genes} done")
 
     print(f"\nAverage best F1 across {n_folds} folds: {np.mean(baseline_f1_list):.4f}")
-    return
     return _aggregate_and_rank(gene_f1_drops, gene_names, n_folds)
 
 
 def run_permutation_importance_embedding(args):
-    """8-fold CV, permute one gene at a time on embedding, measure F1 drop. Embedding model (Astrocytes or Microglia)."""
+    """8-fold CV, permute one gene at a time on embedding, measure F1 drop. Embedding model (Astrocytes, Microglia, or MTG)."""
     data_path = _get_embedding_data_path(args.region, args.cell_type)
     if not os.path.exists(data_path):
         raise FileNotFoundError(f"Embedding data not found: {data_path}")
 
     with open(data_path, "rb") as f:
-        embeddings_folds, patient_info_folds, ptau_folds, thal_folds = pickle.load(f)
+        raw = pickle.load(f)
+    if args.region == "MTG":
+        embeddings_folds, patient_info_folds, thal_folds, braak_folds = raw
+        ptau_folds = None
+    else:
+        embeddings_folds, patient_info_folds, ptau_folds, thal_folds = raw
+        braak_folds = None
 
     n_folds = len(embeddings_folds)
     if n_folds != args.n_folds:
         print(f"Warning: data has {n_folds} folds. Using {n_folds}.")
 
-    gene_names = load_gene_names_embedding(args.region, args.cell_type)
+    gene_load_cell_type = "MTG" if args.region == "MTG" else args.cell_type
+    gene_names = load_gene_names_embedding(args.region, gene_load_cell_type)
     device = torch.device(args.device)
     rng = np.random.default_rng(42)
     exp_cfg = EXPERIMENTS[args.experiment]
@@ -385,14 +445,29 @@ def run_permutation_importance_embedding(args):
 
     thal_to_idx = None
     idx_to_thal = None
-    if args.cell_type == "Astrocytes":
+    cerad_to_idx = None
+    braak_to_idx = None
+    n_cerad_classes = len(CERAD_CLASS_ORDER)
+    n_braak_classes = len(BRAAK_TO_IDX)
+    if args.cell_type == "Astrocytes" and args.region != "MTG":
         all_thal = [t for fold in thal_folds for t in fold]
         thal_classes = sorted(set(int(x) for x in all_thal))
         thal_to_idx = {c: i for i, c in enumerate(thal_classes)}
         idx_to_thal = {i: c for c, i in thal_to_idx.items()}
+    elif args.region == "MTG":
+        # MTG: Thal (CERAD) only; no Braak head
+        all_thal = [str(t).strip().lower() for fold in thal_folds for t in fold]
+        unique_cerad = sorted(set(all_thal))
+        cerad_to_idx = {s: i for i, s in enumerate(unique_cerad)}
+        n_cerad_classes = len(unique_cerad)
+        n_braak_classes = 1
+        braak_to_idx = None  # unused for MTG Thal-only
 
     all_fold_data = [
-        _build_embedding_fold_data(embeddings_folds, patient_info_folds, ptau_folds, thal_folds, i, args.cell_type, thal_to_idx)
+        _build_embedding_fold_data(embeddings_folds, patient_info_folds, ptau_folds, thal_folds, i,
+                                  "Microglia" if args.region == "MTG" else args.cell_type,
+                                  thal_to_idx, braak_folds=braak_folds, cerad_to_idx=cerad_to_idx, braak_to_idx=braak_to_idx,
+                                  thal_only=(args.region == "MTG"))
         for i in range(n_folds)
     ]
     n_genes = all_fold_data[0]["X"].shape[1]
@@ -403,7 +478,7 @@ def run_permutation_importance_embedding(args):
     baseline_f1_list = []
 
     for test_fold_idx in range(n_folds):
-        print(f"\n{'='*60}\nTest fold {test_fold_idx + 1}/{n_folds} (embedding {args.cell_type})\n{'='*60}")
+        print(f"\n{'='*60}\nTest fold {test_fold_idx + 1}/{n_folds} (embedding {args.region if args.region == 'MTG' else args.cell_type})\n{'='*60}")
 
         train_idx = [i for i in range(n_folds) if i != test_fold_idx]
         train_X = np.concatenate([all_fold_data[i]["X"] for i in train_idx], axis=0)
@@ -415,7 +490,7 @@ def run_permutation_importance_embedding(args):
         test_cerad = all_fold_data[test_fold_idx].get("cerad")
         test_braak = all_fold_data[test_fold_idx].get("braak")
 
-        if args.cell_type == "Astrocytes":
+        if args.cell_type == "Astrocytes" and args.region != "MTG":
             train_ptau = np.concatenate([all_fold_data[i]["ptau"] for i in train_idx], axis=0)
             train_thal = np.concatenate([all_fold_data[i]["thal"] for i in train_idx], axis=0)
         else:
@@ -448,7 +523,7 @@ def run_permutation_importance_embedding(args):
             input_shape = (n_genes, n_dims)
             input_dim = None
 
-        if args.cell_type == "Astrocytes":
+        if args.cell_type == "Astrocytes" and args.region != "MTG":
             train_ds = EmbeddingDataset(train_input, train_ptau, train_thal)
             test_ds = EmbeddingDataset(test_input, test_ptau, test_thal)
             criterion_ptau = None if args.loss_ptau == "none" else {"mse": nn.MSELoss(), "mae": nn.L1Loss(), "huber": nn.HuberLoss()}[args.loss_ptau]
@@ -470,7 +545,7 @@ def run_permutation_importance_embedding(args):
             pca_str = f"_pca{args.pca_components}" if args.pca_components else ""
             test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False)
             compute_f1 = lambda m, loader: _compute_f1_astrocytes(m, loader, device, idx_to_thal)
-            log_dir = os.path.join(args.log_base, f"{args.region}_{args.cell_type}_embedding{ge_str}{attn_str}{pca_str}_{args.experiment}_testfold{test_fold_idx+1}")
+            log_dir = os.path.join(args.log_base, f"{args.region}_{gene_load_cell_type}_embedding{ge_str}{attn_str}{pca_str}_{args.experiment}_testfold{test_fold_idx+1}")
             writer = SummaryWriter(log_dir)
             best_f1, best_state = -1.0, None
             for epoch in range(args.epochs):
@@ -490,12 +565,12 @@ def run_permutation_importance_embedding(args):
             train_ds = EmbeddingDatasetMicroglia(train_input, train_cerad, train_braak)
             test_ds = EmbeddingDatasetMicroglia(test_input, test_cerad, test_braak)
             if args.gene_encoder:
-                model = GeneEncoderModelMicroglia(n_dims=n_dims, n_cerad_classes=len(CERAD_CLASS_ORDER),
-                    n_braak_classes=len(BRAAK_TO_IDX), dropout=exp_cfg["dropout"]).to(device)
+                model = GeneEncoderModelMicroglia(n_dims=n_dims, n_cerad_classes=n_cerad_classes,
+                    n_braak_classes=n_braak_classes, dropout=exp_cfg["dropout"]).to(device)
                 lambda_entropy = exp_cfg["lambda_entropy"]
             else:
                 model = BaselineRankingModelMicroglia(input_dim=input_dim, input_shape=input_shape,
-                    n_cerad_classes=len(CERAD_CLASS_ORDER), n_braak_classes=len(BRAAK_TO_IDX),
+                    n_cerad_classes=n_cerad_classes, n_braak_classes=n_braak_classes,
                     use_attention=args.attention, num_heads=1, dropout=exp_cfg["dropout"]).to(device)
                 lambda_entropy = 0.0
             criterion_cerad = nn.CrossEntropyLoss()
@@ -506,8 +581,8 @@ def run_permutation_importance_embedding(args):
             attn_str = "_attn" if args.attention else ""
             pca_str = f"_pca{args.pca_components}" if args.pca_components else ""
             test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False)
-            compute_f1 = lambda m, loader: _compute_f1_microglia(m, loader, device)
-            log_dir = os.path.join(args.log_base, f"{args.region}_{args.cell_type}_embedding{ge_str}{attn_str}{pca_str}_{args.experiment}_testfold{test_fold_idx+1}")
+            compute_f1 = lambda m, loader: _compute_f1_microglia(m, loader, device, thal_only=(args.region == "MTG"))
+            log_dir = os.path.join(args.log_base, f"{args.region}_{gene_load_cell_type}_embedding{ge_str}{attn_str}{pca_str}_{args.experiment}_testfold{test_fold_idx+1}")
             writer = SummaryWriter(log_dir)
             best_f1, best_state = -1.0, None
             for epoch in range(args.epochs):
@@ -540,7 +615,7 @@ def run_permutation_importance_embedding(args):
                     test_input_perm = np.mean(test_scaled_perm, axis=1)
                 else:
                     test_input_perm = test_scaled_perm
-                if args.cell_type == "Astrocytes":
+                if args.cell_type == "Astrocytes" and args.region != "MTG":
                     test_ds_perm = EmbeddingDataset(test_input_perm, test_ptau, test_thal)
                 else:
                     test_ds_perm = EmbeddingDatasetMicroglia(test_input_perm, test_cerad, test_braak)
@@ -587,7 +662,8 @@ def main():
         ge_str = "_ge" if getattr(args, "gene_encoder", False) else ""
         attn_str = "_attn" if args.attention else ""
         pca_str = f"_pca{args.pca_components}" if args.pca_components else ""
-        model_name = f"{args.region}_{args.cell_type}_{args.model}{ge_str}{attn_str}{pca_str}_{args.experiment}"
+        cell_label = "MTG" if args.region == "MTG" else args.cell_type
+        model_name = f"{args.region}_{cell_label}_{args.model}{ge_str}{attn_str}{pca_str}_{args.experiment}"
         out_path = os.path.join(
             "ranked_lists", model_name, "ranked_genes.csv",
         )

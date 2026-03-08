@@ -32,7 +32,12 @@ PCA_OPTS = [2, 4, 8, 16]
 
 
 def build_args(region, exp, gene_encoder, attention, pca_components, base_args):
-    pooling = None if gene_encoder else "mean"
+    # Gene encoder always uses pooling=None; else use --pooling if set, default "mean"
+    if gene_encoder:
+        pooling = None
+    else:
+        pooling_opt = getattr(base_args, "pooling", None)
+        pooling = None if (pooling_opt and str(pooling_opt).lower() == "none") else (pooling_opt or "mean")
     exp_id = f"ge{gene_encoder}_attn{attention}_pca{pca_components}_{exp['name']}"
     log_base = getattr(base_args, "log_base", None) or f"Microglia_{region}"
     return SimpleNamespace(
@@ -180,5 +185,7 @@ if __name__ == "__main__":
     parser.add_argument("--n_hidden_layers", type=int, default=1, choices=[1, 3], help="Baseline MLP: 1 or 3 hidden layers (default: 1).")
     parser.add_argument("--hidden_dim_3layer", type=int, default=32, help="Hidden size when n_hidden_layers=3 (default: 32).")
     parser.add_argument("--best_f1", action="store_true", help="Use best F1 across epochs; default is last-epoch F1.")
+    parser.add_argument("--pooling", type=str, default=None,
+                        help="Pooling when not using gene_encoder: mean, max, or none (no pooling, 3D input). Default: mean. Ignored when gene_encoder=True.")
     args = parser.parse_args()
     run_experiments(args)

@@ -40,7 +40,12 @@ LOSS_PTAU_OPTS = ["none"]
 PCA_OPTS = [2, 4, 8, 16]
 
 def build_args(region, cell_type, exp, gene_encoder, attention, loss_ptau, pca_components, base_args):
-    pooling = None if gene_encoder else "mean"
+    # Gene encoder always uses pooling=None; else use --pooling if set, default "mean"
+    if gene_encoder:
+        pooling = None
+    else:
+        pooling_opt = getattr(base_args, "pooling", None)
+        pooling = None if (pooling_opt and str(pooling_opt).lower() == "none") else (pooling_opt or "mean")
     exp_id = f"ge{gene_encoder}_attn{attention}_{loss_ptau}_pca{pca_components}_{exp['name']}"
     log_base = getattr(base_args, "log_base", None) or f"{cell_type}_{region}"
     return SimpleNamespace(
@@ -71,8 +76,12 @@ def build_args(region, cell_type, exp, gene_encoder, attention, loss_ptau, pca_c
 
 def run_experiments(args):
     region = args.region
-    # MTG uses the Microglia two-head model (Thal/CERAD + Braak) and MTG_data_for_model_training.pkl
+    # MTG and CrossRegion use the Microglia two-head model and their respective pkls
     if region == "MTG":
+        from run_overfitting_experiments_microglia import run_experiments as run_microglia_experiments
+        run_microglia_experiments(args)
+        return
+    if region == "CrossRegion":
         from run_overfitting_experiments_microglia import run_experiments as run_microglia_experiments
         run_microglia_experiments(args)
         return
@@ -208,5 +217,7 @@ if __name__ == "__main__":
                         help="Hidden size when n_hidden_layers=3 (default: 32).")
     parser.add_argument("--patience", type=int, default=20, help="Early stopping patience (default: 20).")
     parser.add_argument("--best_f1", action="store_true", help="Use best F1 across epochs; default is last-epoch F1.")
+    parser.add_argument("--pooling", type=str, default=None,
+                        help="Pooling when not using gene_encoder: mean, max, or none (no pooling, 3D input). Default: mean. Ignored when gene_encoder=True.")
     args = parser.parse_args()
     run_experiments(args)

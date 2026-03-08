@@ -15,9 +15,22 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 
-# Default base dir for CSVs (ranking_model_runs)
-EXP_DIRS = ["exp_all_3L_shrinking", "exp_1L"]
-GE_DIRS = ["ge_all_3L_shrinking", "ge_1L"]
+# Pairs (expression dir, embedding dir) in ranking_model_runs with same model params; MTG excluded.
+# Found: Astrocytes_ITG/PFC/V1/V2 have overfitting_experiments.csv + _Expression has expression_experiments.csv. EC has no expression CSV.
+EXP_DIRS = [
+    "ge_all_3L_shrinking_patience60_32_EC_Expression",
+    "ge_all_3L_shrinking_patience60_32_ITG_Expression",
+    "ge_all_3L_shrinking_patience60_32_PFC_Expression",
+    "ge_all_3L_shrinking_patience60_32_V1_Expression",
+    "ge_all_3L_shrinking_patience60_32_V2_Expression"
+]
+GE_DIRS = [
+    "ge_all_3L_shrinking_patience60_32_EC",
+    "ge_all_3L_shrinking_patience60_32_ITG",
+    "ge_all_3L_shrinking_patience60_32_PFC",
+    "ge_all_3L_shrinking_patience60_32_V1",
+    "ge_all_3L_shrinking_patience60_32_V2",
+]
 EXP_CSV = "expression_experiments.csv"
 GE_CSV = "overfitting_experiments.csv"
 
@@ -136,6 +149,52 @@ def plot_exp_vs_ge(summary: pd.DataFrame, out_path: str):
     print(f"Saved exp vs ge plot: {out_path}")
 
 
+def _short_label(ge_dir: str) -> str:
+    """Short label for x-axis: Astrocytes_ITG -> ITG; ge_all_3L_shrinking_*_MTG -> patience*."""
+    if ge_dir.startswith("Astrocytes_"):
+        return ge_dir.replace("Astrocytes_", "")
+    s = ge_dir.replace("ge_all_3L_shrinking_", "").replace("_MTG", "").replace("_Expression", "")
+    return s if s else ge_dir
+
+
+def plot_direct_comparison(summary: pd.DataFrame, out_path: str):
+    """Side-by-side bar graph: for each index i, expression (EXP_DIRS[i]) vs embedding (GE_DIRS[i])."""
+    n = min(len(EXP_DIRS), len(GE_DIRS))
+    if n == 0:
+        return
+    exp_means, ge_means = [], []
+    exp_stds, ge_stds = [], []
+    x_labels = []
+    for i in range(n):
+        exp_dir = EXP_DIRS[i]
+        ge_dir = GE_DIRS[i]
+        se = summary[summary["dir"] == exp_dir]
+        sg = summary[summary["dir"] == ge_dir]
+        exp_mean = se["mean"].values[0] if len(se) and se["n"].values[0] > 0 else np.nan
+        ge_mean = sg["mean"].values[0] if len(sg) and sg["n"].values[0] > 0 else np.nan
+        exp_std = se["std"].values[0] if len(se) and se["n"].values[0] > 0 else 0.0
+        ge_std = sg["std"].values[0] if len(sg) and sg["n"].values[0] > 0 else 0.0
+        exp_means.append(exp_mean)
+        ge_means.append(ge_mean)
+        exp_stds.append(exp_std)
+        ge_stds.append(ge_std)
+        x_labels.append(_short_label(ge_dir))
+    x = np.arange(n)
+    w = 0.35
+    fig, ax = plt.subplots(figsize=(max(6, n * 1.8), 5))
+    ax.bar(x - w / 2, exp_means, w, yerr=exp_stds, capsize=4, label="Expression", color="#7eb8da")
+    ax.bar(x + w / 2, ge_means, w, yerr=ge_stds, capsize=4, label="Embedding", color="#e8a87c")
+    ax.set_xticks(x)
+    ax.set_xticklabels(x_labels, rotation=20, ha="right")
+    ax.set_ylabel("Mean F1 ± std")
+    ax.set_title("F1: Expression vs Embedding (same index in exp_dirs / ge_dirs)")
+    ax.legend()
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+    print(f"Saved direct comparison bar graph: {out_path}")
+
+
 def print_conclusions(summary: pd.DataFrame, data: dict):
     print("\n" + "=" * 60)
     print("CONCLUSIONS (qualitative)")
@@ -221,6 +280,7 @@ def main():
         plot_box(data, os.path.join(args.output_dir, "f1_boxplot_by_dir.png"))
         plot_mean_bars(summary, os.path.join(args.output_dir, "f1_mean_bars.png"))
         plot_exp_vs_ge(summary, os.path.join(args.output_dir, "f1_exp_vs_ge.png"))
+        plot_direct_comparison(summary, os.path.join(args.output_dir, "f1_direct_comparison_barGraph.png"))
 
     # Save summary CSV
     out_csv = os.path.join(args.output_dir, "f1_summary.csv")

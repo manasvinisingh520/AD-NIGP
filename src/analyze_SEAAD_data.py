@@ -1,5 +1,8 @@
-"""Analyze MTG/SEA AD: plot Braak/Thal bar charts, ADNC pie chart, and Thal x Braak heatmap."""
+"""Analyze MTG/SEA AD: plot Braak/Thal bar charts, ADNC pie chart, and Thal x Braak heatmap.
+Also: plot original atlas Astrocytes cell metadata - pie chart of overall pathology stage (Path..Group.).
+"""
 import os
+import sys
 
 import anndata as ad
 import numpy as np
@@ -85,7 +88,9 @@ def _braak_sort_key(s):
 def run_plots(outdir=None):
     """Plot bar charts (Braak, Thal), pie chart (ADNC), and heatmap (Thal x Braak)."""
     import matplotlib
-    matplotlib.use("Agg")
+    do_save = outdir is not None
+    if do_save:
+        matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     import seaborn as sns
 
@@ -98,7 +103,6 @@ def run_plots(outdir=None):
     if patient_ids is None:
         print("MTG AnnData not found. Cannot plot.")
         return
-    do_save = outdir is not None
     if do_save:
         os.makedirs(outdir, exist_ok=True)
     thal = np.asarray([str(t).strip() for t in thal])
@@ -120,8 +124,7 @@ def run_plots(outdir=None):
     if do_save:
         fig.savefig(os.path.join(outdir, "braak_stage_bar.png"), dpi=150, bbox_inches="tight")
         print(f"Saved {os.path.join(outdir, 'braak_stage_bar.png')}")
-    plt.close()
-
+        plt.close()
     # Bar chart: Thal stage distribution
     thal_counts = pd.Series(thal).value_counts()
     thal_ordered = sorted(thal_counts.index, key=lambda x: (x.replace("thal", "").strip(), x))
@@ -138,7 +141,7 @@ def run_plots(outdir=None):
     if do_save:
         fig.savefig(os.path.join(outdir, "thal_stage_bar.png"), dpi=150, bbox_inches="tight")
         print(f"Saved {os.path.join(outdir, 'thal_stage_bar.png')}")
-    plt.close()
+        plt.close()
 
     # Pie chart: Overall ADNC stage
     if adnc is not None and len(adnc) > 0:
@@ -156,7 +159,7 @@ def run_plots(outdir=None):
             if do_save:
                 fig.savefig(os.path.join(outdir, "adnc_stage_pie.png"), dpi=150, bbox_inches="tight")
                 print(f"Saved {os.path.join(outdir, 'adnc_stage_pie.png')}")
-            plt.close()
+                plt.close()
         else:
             print("No ADNC values to plot; skipping pie chart.")
     else:
@@ -179,15 +182,92 @@ def run_plots(outdir=None):
     if do_save:
         fig.savefig(os.path.join(outdir, "thal_braak_heatmap.png"), dpi=150, bbox_inches="tight")
         print(f"Saved {os.path.join(outdir, 'thal_braak_heatmap.png')}")
-    plt.close()
+        plt.close()
+    if not do_save:
+        plt.show()
+
+
+def _load_atlas_astrocytes_metadata():
+    """Load original atlas Astrocytes cell metadata from Excel (all region sheets). Returns DataFrame with Path..Group. or None."""
+    try:
+        from config import REGION_TO_TAB, DATA_DIR
+        from utils import read_excel_columns
+    except ImportError:
+        return None
+    path = os.path.join(DATA_DIR, "2025-11-16_Astrocytes_metadata.xlsx")
+    if not os.path.exists(path):
+        return None
+    PATHOLOGY_COL = "Path..Group."
+    dfs = []
+    for region, tab_idx in REGION_TO_TAB.items():
+        try:
+            df = read_excel_columns(
+                path,
+                columns=["cell_annotation", PATHOLOGY_COL],
+                sheet_name=tab_idx,
+            )
+            df["region"] = region
+            dfs.append(df)
+        except Exception:
+            continue
+    if not dfs:
+        return None
+    return pd.concat(dfs, ignore_index=True)
+
+
+def run_atlas_astrocytes_plot(outdir=None):
+    """Load atlas Astrocytes cell metadata and plot pie chart of overall pathology stage (Path..Group.)."""
+    import matplotlib
+    do_save = outdir is not None
+    if do_save:
+        matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    df = _load_atlas_astrocytes_metadata()
+    if df is None:
+        print("Atlas Astrocytes metadata not found (data/AtlasData/2025-11-16_Astrocytes_metadata.xlsx).")
+        return
+    PATHOLOGY_COL = "Path..Group."
+    if PATHOLOGY_COL not in df.columns:
+        print("Column 'Path..Group.' not in metadata. Available: %s" % list(df.columns))
+        return
+    s = df[PATHOLOGY_COL].dropna().astype(str).str.strip()
+    s = s[s != ""]
+    if s.empty:
+        print("No pathology stage values to plot.")
+        return
+    vc = s.value_counts()
+
+    fig, ax = plt.subplots(figsize=(7, 7))
+    colors = plt.cm.Set3(np.linspace(0, 1, len(vc)))
+    wedges, labels, pct = ax.pie(vc.values, labels=vc.index, autopct="%1.1f%%", colors=colors, startangle=90)
+    for w in wedges:
+        w.set_edgecolor("white")
+        w.set_linewidth(1)
+    ax.set_title("Atlas Astrocytes - overall pathology stage (Path..Group., cell-level)")
+    plt.tight_layout()
+    if do_save:
+        os.makedirs(outdir, exist_ok=True)
+        fig.savefig(os.path.join(outdir, "atlas_astrocytes_pathology_stage_pie.png"), dpi=150, bbox_inches="tight")
+        print("Saved %s" % os.path.join(outdir, "atlas_astrocytes_pathology_stage_pie.png"))
+        plt.close()
+    else:
+        plt.show()
 
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="Plot MTG/SEA AD stage distributions: Braak/Thal bars, ADNC pie, Thal x Braak heatmap")
+    parser = argparse.ArgumentParser(
+        description="Plot stage distributions: MTG/SEA AD (Braak/Thal/ADNC/heatmap) or atlas Astrocytes (pathology stage pie)"
+    )
     parser.add_argument("--outdir", type=str, default=None, help="Output directory for figures (if not set, figures are not saved)")
+    parser.add_argument("--atlas_astrocytes", action="store_true", help="Plot atlas Astrocytes cell metadata: pie chart of overall pathology stage (Path..Group.)")
     args = parser.parse_args()
-    run_plots(outdir=args.outdir)
+
+    if args.atlas_astrocytes:
+        run_atlas_astrocytes_plot(outdir=args.outdir)
+    else:
+        run_plots(outdir=args.outdir)
 
 
 if __name__ == "__main__":

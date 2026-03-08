@@ -48,6 +48,10 @@ def build_args(region, exp, attention, pca_components, base_args):
         pca_components=pca_components,
         log_base=log_base,
         exp_id=exp_id,
+        n_hidden_layers=getattr(base_args, "n_hidden_layers", 1),
+        hidden_dim_3layer=getattr(base_args, "hidden_dim_3layer", 32),
+        patience=getattr(base_args, "patience", 20),
+        best_f1=getattr(base_args, "best_f1", False),
     )
 
 
@@ -162,5 +166,11 @@ if __name__ == "__main__":
                         help="Base dir for logs and CSV (default: Microglia_{region}_Expression)")
     parser.add_argument("--output", type=str, default=None,
                         help="Output CSV path (default: Microglia_{region}_Expression/microglia_expression_experiments.csv)")
+    parser.add_argument("--n_hidden_layers", type=int, default=1, choices=[1, 3],
+                        help="Number of hidden layers in baseline MLP: 1 (minimal) or 3 (original). Default: 1.")
+    parser.add_argument("--hidden_dim_3layer", type=int, default=32,
+                        help="Hidden size when n_hidden_layers=3 (default: 32).")
+    parser.add_argument("--patience", type=int, default=20, help="Early stopping patience (default: 20). Set to 0 to disable.")
+    parser.add_argument("--best_f1", action="store_true", help="Use best F1 across epochs; default is last-epoch F1.")
     args = parser.parse_args()
     run_experiments(args)
