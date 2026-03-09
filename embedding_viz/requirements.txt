@@ -6,3 +6,4 @@ openpyxl>=3.0
 scikit-learn>=1.0
 umap-learn>=0.5
 numpy>=1.20
+mygene>=3.2

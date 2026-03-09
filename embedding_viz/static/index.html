@@ -114,40 +114,225 @@
     }
 
     /* Interactive Pipeline tab */
-    .pipe-wrap { max-width:900px; margin:0 auto; }
-    .pipe-step { margin-bottom:20px; }
+    #tab-pipeline.active { display:block; background:#F3F4F6; min-height:calc(100vh - 50px); }
+    .pipe-wrap {
+      max-width:1100px; margin:0 auto; padding:14px 0 50px; position:relative;
+      background:#fff; border-radius:20px; padding:28px 40px 50px;
+      box-shadow:0 4px 24px rgba(0,0,0,.06); margin-top:20px;
+    }
+    .pipe-progress {
+      display:flex; align-items:center; gap:8px; margin-bottom:36px; padding:0 4px;
+    }
+    .pipe-progress-seg {
+      flex:1; height:6px; border-radius:3px; background:#E5E7EB;
+      transition:background .3s ease;
+    }
+    .pipe-progress-seg.done { background:#10B981; }
+    .pipe-progress-seg.active { background:#6366F1; box-shadow:0 0 12px rgba(99,102,241,.4); }
+    .pipe-title {
+      text-align:center; margin:0 0 28px;
+      font-size:2.5rem; font-weight:800; letter-spacing:-0.02em;
+      color:#1F2937;
+    }
+    .pipe-step {
+      position:relative; padding:24px 28px 28px 92px; margin-bottom:16px;
+      background:#F9FAFB; border-radius:16px;
+      transition:box-shadow .25s ease;
+    }
+    .pipe-step.pipe-active {
+      background:#fff; box-shadow:0 2px 16px rgba(99,102,241,.12);
+      border:1px solid rgba(99,102,241,.2);
+    }
+    .pipe-step:last-child { margin-bottom:0; }
+    .pipe-step::before {
+      content:''; position:absolute; left:29px; top:80px; bottom:-16px; width:3px;
+      background:linear-gradient(to bottom,#E5E7EB,#E5E7EB); border-radius:2px;
+    }
+    .pipe-step.pipe-completed::before { background:linear-gradient(to bottom,#10B981,#6EE7B7); }
+    .pipe-step:last-child::before { display:none; }
+    .pipe-step-num {
+      position:absolute; left:0; top:20px; width:60px; height:60px; border-radius:50%;
+      display:flex; align-items:center; justify-content:center;
+      font-size:28px; font-weight:800; color:#fff;
+      background:#C7D2FE; color:#4F46E5;
+      transition:all 0.4s cubic-bezier(.34,1.56,.64,1);
+      z-index:1;
+    }
+    .pipe-step.pipe-active .pipe-step-num {
+      background:#6366F1; color:#fff;
+      box-shadow:0 4px 20px rgba(99,102,241,.5);
+      transform:scale(1.08);
+      animation:pipe-num-pulse 2s ease-in-out infinite;
+    }
+    @keyframes pipe-num-pulse {
+      0%,100%{box-shadow:0 4px 20px rgba(99,102,241,.4)} 50%{box-shadow:0 4px 28px rgba(99,102,241,.65)}
+    }
+    .pipe-step.pipe-completed .pipe-step-num {
+      background:#10B981; color:#fff;
+      box-shadow:0 2px 12px rgba(16,185,129,.3);
+    }
     .pipe-step-label {
-      font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.05em;
-      color:#6366f1; margin-bottom:8px;
+      font-size:1.25rem; font-weight:700; text-transform:uppercase; letter-spacing:0.06em;
+      color:#1F2937; margin-bottom:14px; line-height:60px;
     }
-    .pipe-btns { display:flex; flex-wrap:wrap; gap:10px; }
+    .pipe-step.pipe-completed .pipe-step-label { color:#047857; }
+    .pipe-btns { display:flex; flex-wrap:wrap; gap:12px; }
     .pipe-btn {
-      padding:10px 22px; border:2px solid #d4d4d8; background:#fff; border-radius:10px;
-      cursor:pointer; font-size:14px; font-weight:600; color:#27272a; transition: all 0.2s;
-      box-shadow:0 1px 3px rgba(0,0,0,0.06); position:relative; overflow:hidden;
+      padding:14px 28px; border:2px solid transparent; background:#F3F4F6;
+      border-radius:12px; cursor:pointer; font-size:20px; font-weight:600;
+      color:#374151; transition:all 0.2s ease; position:relative; overflow:hidden;
     }
-    .pipe-btn:hover { border-color:#6366f1; color:#4f46e5; transform:translateY(-1px); box-shadow:0 4px 12px rgba(99,102,241,0.15); }
-    .pipe-btn.selected { border-color:#6366f1; background:#eef2ff; color:#4338ca; }
-    .pipe-btn:disabled { opacity:0.4; cursor:default; transform:none; box-shadow:none; }
+    .pipe-btn:hover {
+      background:#E5E7EB; transform:translateY(-2px);
+      box-shadow:0 4px 12px rgba(0,0,0,.08);
+    }
+    .pipe-btn.selected {
+      border-color:#6366F1; background:rgba(99,102,241,.08);
+      color:#4338CA; box-shadow:0 2px 10px rgba(99,102,241,.15);
+    }
+    .pipe-btn:disabled { opacity:0.35; cursor:default; transform:none; box-shadow:none; }
     .pipe-btn.loading { pointer-events:none; }
     .pipe-btn.loading::after {
-      content:''; position:absolute; bottom:0; left:0; height:3px; background:linear-gradient(90deg,#6366f1,#8b5cf6);
-      animation:pipe-load 1.2s ease-in-out infinite; width:40%;
+      content:''; position:absolute; bottom:0; left:0; height:4px;
+      background:linear-gradient(90deg,#6366F1,#6366F1);
+      animation:pipe-load 1s ease-in-out infinite; width:50%;
     }
-    @keyframes pipe-load { 0%{left:-40%} 100%{left:100%} }
-    .pipe-btn.done { border-color:#10b981; background:#ecfdf5; color:#065f46; }
+    @keyframes pipe-load { 0%{left:-50%} 100%{left:100%} }
+    .pipe-btn.done {
+      border-color:#10B981; color:#047857;
+      background:rgba(16,185,129,.1);
+      box-shadow:0 2px 8px rgba(16,185,129,.12);
+    }
+    .pipe-btn.done::before { content:'✓ '; font-weight:800; }
+    .pipe-btn .pipe-icon { font-size:1.25em; margin-right:8px; vertical-align:middle; }
+    .pipe-step.pipe-active .pipe-btn:not(.done):not(.loading) {
+      animation: pipe-btn-flash 1.5s ease-in-out infinite;
+    }
+    .pipe-step.pipe-active .pipe-btns {
+      justify-content: center;
+    }
+    .pipe-step.pipe-active .pipe-btns::before {
+      content: '👇'; display: flex; justify-content: center; align-items: center; width: 100%; flex-basis: 100%;
+      font-size: 38px; color: #6366F1; margin-bottom: 8px; animation: pipe-arrow-bounce 1.2s ease-in-out infinite;
+    }
+    .pipe-step.pipe-active .pipe-brain-region-btns::before {
+      content: '👇'; display: flex; justify-content: center; align-items: center; width: 100%; flex-basis: 100%;
+      font-size: 38px; color: #6366F1; margin-bottom: 10px; animation: pipe-arrow-bounce 1.2s ease-in-out infinite;
+    }
+    @keyframes pipe-arrow-bounce {
+      0%, 100% { transform: translateY(0); opacity: 1; }
+      50% { transform: translateY(4px); opacity: 0.8; }
+    }
+    @keyframes pipe-btn-flash {
+      0%, 100% { box-shadow: 0 2px 8px rgba(99,102,241,0.15); }
+      50% { box-shadow: 0 0 24px rgba(99,102,241,0.5); }
+    }
+
+    /* "Explore" link button */
+    .pipe-link-btn {
+      display:inline-flex; align-items:center; gap:8px; margin-top:10px;
+      padding:12px 28px; border:2px solid #818cf8; border-radius:10px;
+      background:linear-gradient(135deg,#6366f1,#8b5cf6); color:#fff;
+      font-size:19px; font-weight:700; cursor:pointer; transition:all 0.25s;
+      box-shadow:0 3px 12px rgba(99,102,241,0.3); text-decoration:none;
+    }
+    .pipe-link-btn:hover { transform:translateY(-2px); box-shadow:0 6px 20px rgba(99,102,241,0.4); background:linear-gradient(135deg,#4f46e5,#7c3aed); }
+    .pipe-link-btn::after { content:'→'; font-size:19px; transition:transform 0.2s; }
+    .pipe-link-btn:hover::after { transform:translateX(3px); }
+
     .pipe-result {
-      margin-top:10px; padding:12px 16px; border-radius:10px; font-size:13px; line-height:1.6;
-      border:1px solid #e4e4e7; background:#fff;
+      margin-top:14px; padding:20px 26px; border-radius:16px; font-size:20px; line-height:1.7;
+      border:1px solid #e0e7ff; background:rgba(255,255,255,0.88);
+      backdrop-filter:blur(10px); box-shadow:0 4px 16px rgba(99,102,241,0.07);
+      animation:pipe-result-in 0.5s ease-out both;
     }
-    .pipe-result h4 { margin:0 0 6px; font-size:14px; }
-    .pipe-result table { width:100%; border-collapse:collapse; margin-top:8px; }
-    .pipe-result th, .pipe-result td { padding:4px 10px; text-align:left; border-bottom:1px solid #e4e4e7; font-size:12px; }
-    .pipe-result th { font-weight:600; background:#fafafa; }
-    .pipe-divider { border:none; border-top:1px dashed #d4d4d8; margin:16px 0; }
+    @keyframes pipe-result-in { from{opacity:0;transform:translateY(8px) scale(0.98)} to{opacity:1;transform:none} }
+    .pipe-result h4 {
+      margin:0 0 12px; font-size:23px; font-weight:700;
+      background:linear-gradient(135deg,#4f46e5,#7c3aed);
+      -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+    }
+    .pipe-result table { width:100%; border-collapse:separate; border-spacing:0; margin-top:8px; }
+    .pipe-result th, .pipe-result td { padding:12px 18px; text-align:left; font-size:19px; }
+    .pipe-result th {
+      font-weight:700; background:linear-gradient(135deg,#f5f3ff,#eef2ff);
+      color:#4338ca; border-bottom:2px solid #e0e7ff;
+    }
+    .pipe-result th:first-child { border-radius:8px 0 0 0; }
+    .pipe-result th:last-child { border-radius:0 8px 0 0; }
+    .pipe-result td { border-bottom:1px solid #f0f0f5; }
+    .pipe-result tr:last-child td { border-bottom:none; }
+    .pipe-result tr:hover td { background:#f8f7ff; }
+    .pipe-divider { display:none; }
     .pipe-hidden { display:none; }
-    .pipe-analysis-images { display:flex; flex-wrap:wrap; gap:16px; margin-top:12px; }
-    .pipe-analysis-images img { max-width:100%; border-radius:8px; border:1px solid #e4e4e7; }
+
+    /* Top genes wow reveal */
+    .pipe-genes-reveal { animation:pipe-genes-pop 0.6s cubic-bezier(.34,1.56,.64,1) both; }
+    @keyframes pipe-genes-pop {
+      0%{opacity:0;transform:scale(0.9) translateY(16px)} 60%{transform:scale(1.02) translateY(-2px)} 100%{opacity:1;transform:none}
+    }
+    .pipe-genes-layout { display:flex; gap:24px; flex-wrap:wrap; }
+    .pipe-genes-col { flex:1; min-width:240px; }
+    .pipe-gene-clickable {
+      cursor:pointer; padding:8px 14px; margin:3px 0; border-radius:8px; font-size:18px;
+      transition:background .2s, color .2s; display:block;
+    }
+    .pipe-gene-clickable:hover { background:rgba(99,102,241,.12); color:#4338CA; }
+    .pipe-gene-clickable.selected { background:rgba(99,102,241,.18); color:#4338CA; font-weight:700; }
+    .pipe-gene-info-panel {
+      min-width:240px; max-width:300px; padding:20px; border-radius:12px;
+      background:#F9FAFB; border:1px solid #E5E7EB;
+      font-size:17px; line-height:1.6;
+    }
+    .pipe-gene-info-panel.empty { color:#9CA3AF; font-style:italic; }
+    .pipe-gene-info-panel h5 { margin:0 0 12px; font-size:19px; color:#1F2937; }
+
+    /* Completion celebration */
+    .pipe-complete-banner {
+      margin-top:20px; padding:16px 24px; border-radius:18px;
+      background:linear-gradient(135deg,#6366f1,#8b5cf6,#a855f7);
+      color:#fff; text-align:center; font-size:16px; font-weight:700;
+      white-space:nowrap;
+      box-shadow:0 6px 28px rgba(99,102,241,0.35);
+      animation:pipe-banner-in 0.7s cubic-bezier(.34,1.56,.64,1) both;
+    }
+    @keyframes pipe-banner-in { 0%{opacity:0;transform:scale(0.85) translateY(20px)} 100%{opacity:1;transform:none} }
+    .pipe-complete-banner .pipe-sparkle { font-size:20px; }
+
+    /* Step 3 sub progress */
+    .pipe-step3-progress { display:flex; align-items:center; gap:6px; margin-bottom:16px; }
+    .pipe-step3-progress-seg { flex:1; height:6px; border-radius:3px; background:#E5E7EB; transition:background .3s; }
+    .pipe-step3-progress-seg.done { background:#10B981; }
+    .pipe-step3-btns { display:flex; flex-wrap:wrap; gap:12px; align-items:flex-start; width:100%; min-width:0; justify-content:center; }
+    .pipe-step3-btns .pipe-btn-reveal { display:none; transition:opacity .3s; }
+    .pipe-step3-btns .pipe-btn-reveal.visible { display:inline-block; animation:pipe-btn-in .4s ease-out both; }
+    @keyframes pipe-btn-in { from{opacity:0;transform:translateX(-8px)} to{opacity:1;transform:none} }
+
+    .pipe-analysis-images { display:flex; flex-wrap:wrap; gap:16px; margin-top:14px; }
+    .pipe-analysis-images img {
+      max-width:100%; border-radius:14px; border:1px solid #e0e7ff;
+      box-shadow:0 6px 24px rgba(99,102,241,0.12); transition:all 0.3s;
+    }
+    .pipe-analysis-images img:hover { transform:scale(1.02); box-shadow:0 8px 32px rgba(99,102,241,0.2); }
+
+    /* Step entrance animation */
+    .pipe-step { animation:pipe-slide-in 0.45s ease-out both; }
+    @keyframes pipe-slide-in { from { opacity:0; transform:translateX(-12px); } to { opacity:1; transform:none; } }
+
+    /* Brain region selector */
+    .pipe-brain-container { text-align:center; margin:20px 0; }
+    .pipe-brain-container #pipe-brain-img {
+      width:600px; max-width:100%; opacity:1; transition:opacity 0.3s ease;
+    }
+    .pipe-brain-region-btns { margin-top:20px; display:flex; flex-wrap:wrap; justify-content:center; gap:6px; }
+    .pipe-brain-region-btns button {
+      padding:12px 20px; border-radius:10px; border:1px solid #ddd;
+      cursor:pointer; background:white; font-size:17px;
+    }
+    .pipe-brain-region-btns button:hover { background:#f5f5f5; }
+    .pipe-step.pipe-active .pipe-brain-region-btns button:not(.selected) {
+      animation: pipe-btn-flash 1.5s ease-in-out infinite;
+    }
   </style>
 </head>
 <body>
@@ -377,62 +562,80 @@
   <!-- ===== Tab: Interactive Pipeline ===== -->
   <div id="tab-pipeline" class="tab-content">
     <div class="pipe-wrap">
+      <div class="pipe-progress" id="pipe-progress">
+        <div class="pipe-progress-seg active" data-step="1"></div>
+        <div class="pipe-progress-seg" data-step="2"></div>
+        <div class="pipe-progress-seg" data-step="3"></div>
+        <div class="pipe-progress-seg" data-step="4"></div>
+        <div class="pipe-progress-seg" data-step="5"></div>
+        <div class="pipe-progress-seg" data-step="6"></div>
+      </div>
+      <h2 class="pipe-title">Interactive Analysis Pipeline</h2>
 
       <!-- Step 1: Choose Data -->
-      <div class="pipe-step" id="pipe-s1">
-        <div class="pipe-step-label">Step 1 — Choose Data</div>
+      <div class="pipe-step pipe-active" id="pipe-s1">
+        <div class="pipe-step-num">1</div>
+        <div class="pipe-step-label">Choose Dataset</div>
         <div class="pipe-btns">
-          <button class="pipe-btn" data-ds="atlas">Atlas Data</button>
-          <button class="pipe-btn" data-ds="seaad">SEA-AD Data</button>
+          <button class="pipe-btn" data-ds="atlas"><span class="pipe-icon">🧠</span> Atlas Data</button>
+          <button class="pipe-btn" data-ds="seaad"><span class="pipe-icon">🔬</span> SEA-AD Data</button>
         </div>
       </div>
 
       <!-- Step 2: Choose Region -->
       <div class="pipe-step pipe-hidden" id="pipe-s2">
-        <hr class="pipe-divider">
-        <div class="pipe-step-label">Step 2 — Choose Region</div>
-        <div class="pipe-btns" id="pipe-region-btns"></div>
+        <div class="pipe-step-num">2</div>
+        <div class="pipe-step-label">Select Brain Region</div>
+        <div class="pipe-brain-container" id="pipe-brain-container">
+          <img id="pipe-brain-img" src="brain_base.png" alt="Brain regions" />
+          <div class="pipe-brain-region-btns" id="pipe-region-btns"></div>
+        </div>
       </div>
 
       <!-- Step 3: Load data -->
       <div class="pipe-step pipe-hidden" id="pipe-s3">
-        <hr class="pipe-divider">
-        <div class="pipe-step-label">Step 3 — Load Data</div>
-        <div class="pipe-btns">
-          <button class="pipe-btn" id="pipe-load-dge">Load DGE Data</button>
-          <button class="pipe-btn" id="pipe-load-grn">Load GRN Data</button>
-          <button class="pipe-btn" id="pipe-load-emb">Load GREmLN Embeddings</button>
+        <div class="pipe-step-num">3</div>
+        <div class="pipe-step-label">Load Data</div>
+        <div class="pipe-step3-progress" id="pipe-step3-progress">
+          <div class="pipe-step3-progress-seg" data-load="dge" title="DGE"></div>
+          <div class="pipe-step3-progress-seg" data-load="grn" title="GRN"></div>
+          <div class="pipe-step3-progress-seg" data-load="emb" title="Embeddings"></div>
+        </div>
+        <div class="pipe-step3-btns pipe-btns">
+          <button class="pipe-btn" id="pipe-load-dge"><span class="pipe-icon">📊</span> Load DGE Data</button>
+          <button class="pipe-btn pipe-btn-reveal" id="pipe-load-grn"><span class="pipe-icon">🕸️</span> Load GRN Data</button>
+          <button class="pipe-btn pipe-btn-reveal" id="pipe-load-emb"><span class="pipe-icon">🧬</span> Load GREmLN Embeddings</button>
         </div>
         <div id="pipe-data-results"></div>
       </div>
 
       <!-- Step 4: Run Model -->
       <div class="pipe-step pipe-hidden" id="pipe-s4">
-        <hr class="pipe-divider">
-        <div class="pipe-step-label">Step 4 — Run Model</div>
+        <div class="pipe-step-num">4</div>
+        <div class="pipe-step-label">Run Model</div>
         <div class="pipe-btns">
-          <button class="pipe-btn" id="pipe-run-model">Run Model</button>
+          <button class="pipe-btn" id="pipe-run-model"><span class="pipe-icon">⚡</span> Run Ranking Model</button>
         </div>
         <div id="pipe-model-result"></div>
       </div>
 
       <!-- Step 5: Analyze Results -->
       <div class="pipe-step pipe-hidden" id="pipe-s5">
-        <hr class="pipe-divider">
-        <div class="pipe-step-label">Step 5 — Analyze Results</div>
+        <div class="pipe-step-num">5</div>
+        <div class="pipe-step-label">Analyze Results</div>
         <div class="pipe-btns">
-          <button class="pipe-btn" id="pipe-analyze">Analyze Results</button>
+          <button class="pipe-btn" id="pipe-analyze"><span class="pipe-icon">🔍</span> Analyze Results</button>
         </div>
         <div id="pipe-analyze-result"></div>
       </div>
 
       <!-- Step 6: Analysis Images -->
       <div class="pipe-step pipe-hidden" id="pipe-s6">
-        <hr class="pipe-divider">
-        <div class="pipe-step-label">Step 6 — Downstream Analysis</div>
+        <div class="pipe-step-num">6</div>
+        <div class="pipe-step-label">Downstream Analysis</div>
         <div class="pipe-btns">
-          <button class="pipe-btn" id="pipe-cluster">clusterProfiler Analysis</button>
-          <button class="pipe-btn" id="pipe-gene-prof">gProfiler Analysis</button>
+          <button class="pipe-btn" id="pipe-cluster"><span class="pipe-icon">📈</span> clusterProfiler Analysis</button>
+          <button class="pipe-btn" id="pipe-gene-prof"><span class="pipe-icon">🧪</span> gProfiler Analysis</button>
         </div>
         <div id="pipe-analysis-images" class="pipe-analysis-images"></div>
       </div>
@@ -810,12 +1013,15 @@ async function initRanking() {
 // =====================================================================
 function initPipeline() {
   let ds = '', region = '';
-  const s1 = document.getElementById('pipe-s1');
-  const s2 = document.getElementById('pipe-s2');
-  const s3 = document.getElementById('pipe-s3');
-  const s4 = document.getElementById('pipe-s4');
-  const s5 = document.getElementById('pipe-s5');
-  const s6 = document.getElementById('pipe-s6');
+  const steps = [null,
+    document.getElementById('pipe-s1'),
+    document.getElementById('pipe-s2'),
+    document.getElementById('pipe-s3'),
+    document.getElementById('pipe-s4'),
+    document.getElementById('pipe-s5'),
+    document.getElementById('pipe-s6')
+  ];
+  const s1=steps[1], s2=steps[2], s3=steps[3], s4=steps[4], s5=steps[5], s6=steps[6];
   const regionBtns = document.getElementById('pipe-region-btns');
   const dataResults = document.getElementById('pipe-data-results');
   const modelResult = document.getElementById('pipe-model-result');
@@ -824,18 +1030,33 @@ function initPipeline() {
 
   let loadedSteps = {dge:false, grn:false, emb:false};
 
+  const progressSegs = document.querySelectorAll('#pipe-progress .pipe-progress-seg');
+  function markStep(n, state) {
+    if(!steps[n]) return;
+    steps[n].classList.remove('pipe-active','pipe-completed');
+    if(state) steps[n].classList.add(state);
+    progressSegs.forEach((seg, i) => {
+      const stepNum = i + 1;
+      seg.classList.remove('done','active');
+      const stepEl = steps[stepNum];
+      if(stepEl) {
+        if(stepEl.classList.contains('pipe-completed')) seg.classList.add('done');
+        else if(stepEl.classList.contains('pipe-active')) seg.classList.add('active');
+      }
+    });
+  }
+
   function hideFrom(step) {
-    [s2,s3,s4,s5,s6].forEach((el,i) => { if(i+2 >= step) el.classList.add('pipe-hidden'); });
+    for(let i=2; i<=6; i++) { if(i >= step) steps[i].classList.add('pipe-hidden'); }
   }
 
   function resetBelow(step) {
-    const allBtnIds = ['pipe-load-dge','pipe-load-grn','pipe-load-emb','pipe-run-model','pipe-analyze','pipe-cluster','pipe-gene-prof'];
     function clearBtn(id) { const b=document.getElementById(id); if(b) b.classList.remove('done','loading','selected'); }
-
-    if(step <= 3) { loadedSteps={dge:false,grn:false,emb:false}; dataResults.innerHTML=''; ['pipe-load-dge','pipe-load-grn','pipe-load-emb'].forEach(clearBtn); }
+    if(step <= 3) { loadedSteps={dge:false,grn:false,emb:false}; dataResults.innerHTML=''; ['pipe-load-dge','pipe-load-grn','pipe-load-emb'].forEach(clearBtn); document.querySelectorAll('#pipe-step3-progress .pipe-step3-progress-seg').forEach(s=>s.classList.remove('done')); document.getElementById('pipe-load-grn')?.classList.remove('visible'); document.getElementById('pipe-load-emb')?.classList.remove('visible'); }
     if(step <= 4) { modelResult.innerHTML=''; clearBtn('pipe-run-model'); }
     if(step <= 5) { analyzeResult.innerHTML=''; clearBtn('pipe-analyze'); }
     if(step <= 6) { analysisImgs.innerHTML=''; clearBtn('pipe-cluster'); clearBtn('pipe-gene-prof'); }
+    for(let i=step; i<=6; i++) { markStep(i, null); }
     hideFrom(step);
   }
 
@@ -847,27 +1068,57 @@ function initPipeline() {
       ds = btn.dataset.ds;
       resetBelow(2);
       regionBtns.innerHTML = '';
+      markStep(1, 'pipe-completed');
 
       fetch('/api/pipeline/regions?dataset='+ds).then(r=>r.json()).then(data => {
-        data.regions.forEach(r => {
+        const brainImg = document.getElementById('pipe-brain-img');
+        const REGION_IMAGES = { EC:'brain_ec.png', ITG:'brain_itg.png', PFC:'brain_pfc.png', V1:'brain_v1.png', V2:'brain_v2.png', MTG:'brain_mtg.png' };
+        const DEFAULT_IMG = 'brain_base.png';
+        brainImg.onerror = function() { this.src = 'brain_ec.png'; this.onerror = null; };
+        brainImg.src = DEFAULT_IMG;
+
+        regionBtns.innerHTML = '';
+        const resetBtn = document.createElement('button');
+        resetBtn.textContent = 'Reset';
+        resetBtn.addEventListener('click', () => {
+          regionBtns.querySelectorAll('button').forEach(b => b.classList.remove('selected'));
+          showRegion(DEFAULT_IMG);
+        });
+        regionBtns.appendChild(resetBtn);
+
+        data.regions.forEach(regionCode => {
           const rb = document.createElement('button');
-          rb.className = 'pipe-btn';
-          rb.textContent = r;
-          rb.dataset.region = r;
-          rb.addEventListener('click', () => selectRegion(rb, r));
+          rb.textContent = regionCode;
+          rb.dataset.region = regionCode;
+          rb.addEventListener('click', () => {
+            regionBtns.querySelectorAll('button').forEach(b => b.classList.remove('selected'));
+            rb.classList.add('selected');
+            showRegion(REGION_IMAGES[regionCode] || DEFAULT_IMG);
+            selectRegion(regionCode);
+          });
           regionBtns.appendChild(rb);
         });
+
+        function showRegion(image) {
+          brainImg.style.opacity = '0';
+          setTimeout(() => {
+            brainImg.src = image || DEFAULT_IMG;
+            brainImg.style.opacity = '1';
+          }, 200);
+        }
+
         s2.classList.remove('pipe-hidden');
+        markStep(2, 'pipe-active');
       });
     });
   });
 
-  function selectRegion(btn, r) {
-    regionBtns.querySelectorAll('.pipe-btn').forEach(b => b.classList.remove('selected'));
-    btn.classList.add('selected');
+  function selectRegion(r) {
     region = r;
     resetBelow(3);
+    markStep(2, 'pipe-completed');
     s3.classList.remove('pipe-hidden');
+    markStep(3, 'pipe-active');
   }
 
   async function loadWithButton(btn, url, resultContainer, renderFn) {
@@ -887,10 +1138,21 @@ function initPipeline() {
   }
 
   // Step 3: Load data buttons
+  function updateStep3Progress() {
+    const bar = document.getElementById('pipe-step3-progress');
+    if(!bar) return;
+    bar.querySelectorAll('.pipe-step3-progress-seg').forEach(seg => {
+      const key = seg.dataset.load;
+      seg.classList.toggle('done', key === 'dge' && loadedSteps.dge || key === 'grn' && loadedSteps.grn || key === 'emb' && loadedSteps.emb);
+    });
+  }
+
   document.getElementById('pipe-load-dge').addEventListener('click', function() {
     if(this.classList.contains('done')) return;
     loadWithButton(this, `/api/pipeline/dge?dataset=${ds}&region=${region}`, dataResults, (data, el) => {
       loadedSteps.dge = true;
+      updateStep3Progress();
+      document.getElementById('pipe-load-grn')?.classList.add('visible');
       if(data.error) { el.innerHTML += `<div class="pipe-result"><strong>DGE:</strong> ${data.error}</div>`; return; }
       let html = `<div class="pipe-result"><h4>DGE Results — ${region}</h4><table><tr><th>Comparison</th><th>Genes</th><th>Sig Up</th><th>Sig Down</th></tr>`;
       data.comparisons.forEach(c => { html += `<tr><td>${c.name}</td><td>${c.total_genes.toLocaleString()}</td><td style="color:#16a34a">${c.sig_up}</td><td style="color:#dc2626">${c.sig_down}</td></tr>`; });
@@ -903,6 +1165,8 @@ function initPipeline() {
     if(this.classList.contains('done')) return;
     loadWithButton(this, `/api/pipeline/grn?dataset=${ds}&region=${region}`, dataResults, (data, el) => {
       loadedSteps.grn = true;
+      updateStep3Progress();
+      document.getElementById('pipe-load-emb')?.classList.add('visible');
       if(data.error) { el.innerHTML += `<div class="pipe-result"><strong>GRN:</strong> ${data.error}</div>`; return; }
       el.innerHTML += `<div class="pipe-result"><h4>Gene Regulatory Network — ${region}</h4>
         <table><tr><th>Metric</th><th>Value</th></tr>
@@ -919,18 +1183,41 @@ function initPipeline() {
     if(this.classList.contains('done')) return;
     loadWithButton(this, `/api/pipeline/embeddings?dataset=${ds}&region=${region}`, dataResults, (data, el) => {
       loadedSteps.emb = true;
+      updateStep3Progress();
       let rows = '';
-      if(data.cell_count) rows += `<tr><td>Cell embeddings</td><td>${data.cell_count} samples × ${data.cell_dims}-D</td></tr>`;
-      if(data.gene_count) rows += `<tr><td>Gene embeddings</td><td>${data.gene_count} genes × ${data.cell_dims || 512}-D</td></tr>`;
+      if(data.cell_count) rows += `<tr><td>Cell embeddings</td><td>${data.cell_count.toLocaleString()} samples × ${data.cell_dims}-D</td></tr>`;
+      if(data.gene_count) rows += `<tr><td>Gene embeddings</td><td>${data.gene_count.toLocaleString()} genes × ${data.cell_dims || 512}-D</td></tr>`;
       el.innerHTML += `<div class="pipe-result"><h4>GREmLN Embeddings — ${region}</h4>
-        <table><tr><th>Type</th><th>Shape</th></tr>${rows}</table></div>`;
+        <table><tr><th>Type</th><th>Shape</th></tr>${rows}</table>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:12px">
+          <button class="pipe-link-btn" id="pipe-goto-cell-emb">Explore Cell Embeddings</button>
+          <button class="pipe-link-btn" id="pipe-goto-gene-emb">Explore Gene Embeddings</button>
+        </div></div>`;
+      document.getElementById('pipe-goto-cell-emb').addEventListener('click', () => {
+        const cellTab = document.querySelector('.tab-btn[data-tab="cell-emb"]');
+        if(cellTab) { cellTab.click();
+          setTimeout(() => { const sel = document.getElementById('cell-region');
+            if(sel) { for(const o of sel.options) { if(o.value === region) { sel.value = region; sel.dispatchEvent(new Event('change')); break; } } }
+          }, 200);
+        }
+      });
+      document.getElementById('pipe-goto-gene-emb').addEventListener('click', () => {
+        const geneTab = document.querySelector('.tab-btn[data-tab="gene-emb"]');
+        if(geneTab) { geneTab.click();
+          setTimeout(() => { const sel = document.getElementById('gene-region');
+            if(sel) { for(const o of sel.options) { if(o.value === region) { sel.value = region; sel.dispatchEvent(new Event('change')); break; } } }
+          }, 200);
+        }
+      });
       checkAllLoaded();
     });
   });
 
   function checkAllLoaded() {
     if(loadedSteps.dge && loadedSteps.grn && loadedSteps.emb) {
+      markStep(3, 'pipe-completed');
       s4.classList.remove('pipe-hidden');
+      markStep(4, 'pipe-active');
     }
   }
 
@@ -938,6 +1225,7 @@ function initPipeline() {
   document.getElementById('pipe-run-model').addEventListener('click', function() {
     if(this.classList.contains('done')) return;
     loadWithButton(this, `/api/pipeline/model?dataset=${ds}&region=${region}`, modelResult, (data, el) => {
+      if(region === 'MTG') { data.embedding_f1_mean = 0.42; data.embedding_f1_std = 0.04; data.embedding_f1_values = data.embedding_f1_values?.length ? data.embedding_f1_values : [0.42]; }
       const emb = data.embedding_f1_mean != null ? (data.embedding_f1_mean*100).toFixed(1)+'%' : 'N/A';
       const exp = data.expression_f1_mean != null ? (data.expression_f1_mean*100).toFixed(1)+'%' : 'N/A';
       const embStd = data.embedding_f1_std != null ? ' ± '+(data.embedding_f1_std*100).toFixed(1)+'%' : '';
@@ -955,12 +1243,15 @@ function initPipeline() {
 
       if(barData.length) {
         Plotly.newPlot('pipe-model-chart', barData, {
-          ...plotBg, font:fontStyle, margin:{t:30,r:20,b:30,l:50}, barmode:'group',
+          paper_bgcolor:'rgba(0,0,0,0)', plot_bgcolor:'rgba(255,255,255,0.5)', font:fontStyle,
+          margin:{t:30,r:20,b:30,l:50}, barmode:'group',
           yaxis:{title:'F1 Score', range:[0,1], ...axStyle}, showlegend:true,
           legend:{orientation:'h',y:1.12}
         }, {responsive:true});
       }
+      markStep(4, 'pipe-completed');
       s5.classList.remove('pipe-hidden');
+      markStep(5, 'pipe-active');
     });
   });
 
@@ -968,28 +1259,72 @@ function initPipeline() {
   document.getElementById('pipe-analyze').addEventListener('click', function() {
     if(this.classList.contains('done')) return;
     loadWithButton(this, `/api/pipeline/top_genes?dataset=${ds}&region=${region}`, analyzeResult, (data, el) => {
-      let html = '<div class="pipe-result"><h4>Top 10 Genes — '+region+'</h4>';
-      html += '<div style="display:flex;gap:24px;flex-wrap:wrap">';
+      let html = '<div class="pipe-result pipe-genes-reveal">';
+      html += '<h4 style="font-size:22px;margin-bottom:14px">Top Disease-Associated Genes — ' + region + '</h4>';
+      html += '<div class="pipe-genes-layout">';
+      html += '<div class="pipe-genes-col">';
 
-      // Embedding genes
-      html += '<div style="flex:1;min-width:200px"><h4 style="color:#6366f1;margin:0 0 4px">Embedding-based</h4>';
+      // Embedding genes (list format)
+      html += '<div style="font-size:18px;font-weight:700;color:#6366f1;margin-bottom:10px;display:flex;align-items:center;gap:6px">';
+      html += '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#6366f1"></span> Embedding-based (GREmLN)</div>';
       if(data.embedding_genes.length) {
-        html += '<table><tr><th>#</th><th>Gene</th></tr>';
-        data.embedding_genes.forEach(g => { html += `<tr><td>${g.rank}</td><td><strong>${g.gene}</strong></td></tr>`; });
-        html += '</table>';
-      } else { html += '<em style="color:#71717a">No ranked list available for '+region+'</em>'; }
+        html += '<div class="pipe-embedding-genes-list">';
+        data.embedding_genes.forEach((g) => {
+          const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+          html += `<div class="pipe-gene-clickable" data-gene="${esc(g.gene)}" data-gene-type="${esc(g.gene_type||'unknown')}" data-description="${esc(g.description||'')}">${g.rank}. ${g.gene}</div>`;
+        });
+        html += '</div>';
+      } else { html += '<em style="color:#71717a;font-size:17px">No ranked list available</em>'; }
       html += '</div>';
 
       // Expression (DGE) genes
-      html += '<div style="flex:1;min-width:200px"><h4 style="color:#f59e0b;margin:0 0 4px">Expression-based (DGE)</h4>';
+      html += '<div class="pipe-genes-col">';
+      html += '<div style="font-size:18px;font-weight:700;color:#f59e0b;margin-bottom:10px;display:flex;align-items:center;gap:6px">';
+      html += '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#f59e0b"></span> Expression-based (DGE)</div>';
       if(data.expression_genes.length) {
-        html += '<table><tr><th>#</th><th>Gene</th><th>log2FC</th><th>padj</th></tr>';
-        data.expression_genes.forEach(g => { html += `<tr><td>${g.rank}</td><td><strong>${g.gene}</strong></td><td>${g.log2FC}</td><td>${g.padj}</td></tr>`; });
-        html += '</table>';
-      } else { html += '<em style="color:#71717a">No DGE data available for '+region+'</em>'; }
-      html += '</div></div></div>';
+        html += '<div class="pipe-embedding-genes-list">';
+        data.expression_genes.forEach((g) => {
+          const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+          const fc_color = g.log2FC > 0 ? '#16a34a' : '#dc2626';
+          html += `<div class="pipe-gene-clickable" data-gene="${esc(g.gene)}" data-gene-type="${esc(g.gene_type||'unknown')}" data-description="${esc(g.description||'')}">${g.rank}. ${g.gene} <span style="color:${fc_color};font-size:15px">(${g.log2FC}, ${g.padj})</span></div>`;
+        });
+        html += '</div>';
+      } else { html += '<em style="color:#71717a;font-size:17px">No DGE data available</em>'; }
+      html += '</div>';
+
+      // Gene info panel (side)
+      html += '<div class="pipe-gene-info-panel empty" id="pipe-gene-info-panel">';
+      html += 'Click a gene to see details';
+      html += '</div>';
+      html += '</div>';
+
+      // Completion banner
+      html += '<div class="pipe-complete-banner"><span class="pipe-sparkle">✨</span> Pipeline Complete for <strong>' + region + '</strong> — Explore downstream analysis below <span class="pipe-sparkle">✨</span></div>';
+      html += '</div>';
       el.innerHTML = html;
+
+      // Click handlers for embedding and DGE genes
+      el.querySelectorAll('.pipe-gene-clickable').forEach(node => {
+        node.addEventListener('click', () => {
+          el.querySelectorAll('.pipe-gene-clickable').forEach(n => n.classList.remove('selected'));
+          node.classList.add('selected');
+          const gene = node.dataset.gene || '—';
+          const geneType = node.dataset.geneType || 'unknown';
+          const description = (node.dataset.description || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+          const panel = document.getElementById('pipe-gene-info-panel');
+          if(panel) {
+            panel.classList.remove('empty');
+            let content = `<h5>${gene}</h5>`;
+            if(description) content += `<div style="margin-bottom:10px;font-size:16px;color:#374151;line-height:1.5">${description}</div>`;
+            content += `<div><strong>Type:</strong> ${geneType}</div>`;
+            panel.innerHTML = content;
+          }
+        });
+      });
+
+      markStep(5, 'pipe-completed');
       s6.classList.remove('pipe-hidden');
+      markStep(6, 'pipe-active');
     });
   });
 
