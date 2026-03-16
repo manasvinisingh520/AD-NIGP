@@ -19,7 +19,7 @@ import os
 from tqdm import tqdm
 
 from baseline_model import BaselineRankingModel
-from gene_encoder_model import GeneEncoderModel, gene_entropy_loss
+from gene_encoder_model import GeneEncoderModel, gene_entropy_loss, make_ordinal_targets, ordinal_logits_to_class
 
 
 class EmbeddingDataset(Dataset):
@@ -55,12 +55,13 @@ def apply_pooling(embeddings, method='mean'):
 
 
 
-def train_epoch(model, dataloader, criterion_ptau, criterion_thal, optimizer, device, lambda_entropy=0.0):
+def train_epoch(model, dataloader, criterion_ptau, criterion_thal, optimizer, device, lambda_entropy=0.0, thal_ordinal=False, n_thal_classes=None):
     """Train for one epoch."""
     model.train()
     total_loss = 0
     ptau_losses = []
     thal_losses = []
+    criterion_ordinal = nn.BCEWithLogitsLoss() if thal_ordinal else None
 
     for embeddings, ptau, thal in dataloader:
         embeddings = embeddings.to(device)
@@ -72,7 +73,11 @@ def train_epoch(model, dataloader, criterion_ptau, criterion_thal, optimizer, de
         ptau_pred, thal_pred = out[0], out[1]
         w = out[2] if len(out) == 3 else None
 
-        loss_thal = criterion_thal(thal_pred, thal)
+        if thal_ordinal and n_thal_classes is not None:
+            ordinal_targets = make_ordinal_targets(thal, n_thal_classes)
+            loss_thal = criterion_ordinal(thal_pred, ordinal_targets)
+        else:
+            loss_thal = criterion_thal(thal_pred, thal)
         loss = loss_thal
         if criterion_ptau is not None:
             loss_ptau = criterion_ptau(ptau_pred, ptau)
@@ -91,7 +96,7 @@ def train_epoch(model, dataloader, criterion_ptau, criterion_thal, optimizer, de
     return total_loss / len(dataloader), np.mean(ptau_losses), np.mean(thal_losses)
 
 
-def evaluate(model, dataloader, criterion_ptau, criterion_thal, device, idx_to_thal):
+def evaluate(model, dataloader, criterion_ptau, criterion_thal, device, idx_to_thal, thal_ordinal=False, n_thal_classes=None):
     """Evaluate model on validation set."""
     model.eval()
     total_loss = 0
@@ -99,6 +104,7 @@ def evaluate(model, dataloader, criterion_ptau, criterion_thal, device, idx_to_t
     ptau_targets = []
     thal_preds = []
     thal_targets = []
+    criterion_ordinal = nn.BCEWithLogitsLoss() if thal_ordinal else None
 
     with torch.no_grad():
         for embeddings, ptau, thal in dataloader:
@@ -108,9 +114,16 @@ def evaluate(model, dataloader, criterion_ptau, criterion_thal, device, idx_to_t
 
             out = model(embeddings)
             ptau_pred, thal_pred = out[0], out[1]
-            thal_class_preds = torch.argmax(thal_pred, dim=1)
+            if thal_ordinal and n_thal_classes is not None:
+                thal_class_preds = ordinal_logits_to_class(thal_pred)
+            else:
+                thal_class_preds = torch.argmax(thal_pred, dim=1)
 
-            loss_thal = criterion_thal(thal_pred, thal)
+            if thal_ordinal and n_thal_classes is not None:
+                ordinal_targets = make_ordinal_targets(thal, n_thal_classes)
+                loss_thal = criterion_ordinal(thal_pred, ordinal_targets)
+            else:
+                loss_thal = criterion_thal(thal_pred, thal)
             loss = loss_thal
             if criterion_ptau is not None:
                 loss_ptau = criterion_ptau(ptau_pred, ptau)
@@ -324,6 +337,7 @@ def main(args):
                 n_thal_classes=n_thal_classes,
                 dropout=args.dropout,
                 n_genes=n_genes,
+                thal_ordinal=getattr(args, 'thal_ordinal', False),
             ).to(device)
         else:
             if len(train_embeddings.shape) == 3:
@@ -342,6 +356,7 @@ def main(args):
                 dropout=args.dropout,
                 n_hidden_layers=args.n_hidden_layers,
                 hidden_dim_3layer=args.hidden_dim_3layer,
+                thal_ordinal=getattr(args, 'thal_ordinal', False),
             ).to(device)
 
         optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
@@ -374,13 +389,16 @@ def main(args):
             patience = None
         epochs_without_improvement = 0
 
+        thal_ordinal = getattr(args, 'thal_ordinal', False)
         for epoch in range(args.epochs):
             train_loss, train_ptau_loss, train_thal_loss = train_epoch(
                 model, train_loader, criterion_ptau, criterion_thal, optimizer, device,
-                lambda_entropy=args.lambda_entropy if args.gene_encoder else 0.0
+                lambda_entropy=args.lambda_entropy if args.gene_encoder else 0.0,
+                thal_ordinal=thal_ordinal, n_thal_classes=n_thal_classes,
             )
             test_loss, test_mse, test_mae, test_f1 = evaluate(
-                model, test_loader, criterion_ptau, criterion_thal, device, idx_to_thal
+                model, test_loader, criterion_ptau, criterion_thal, device, idx_to_thal,
+                thal_ordinal=thal_ordinal, n_thal_classes=n_thal_classes,
             )
 
             writer.add_scalar('Loss/Train', train_loss, epoch)
@@ -452,7 +470,8 @@ def main(args):
             model.eval()
             with torch.no_grad():
                 test_loss, test_mse, test_mae, test_f1 = evaluate(
-                    model, test_loader, criterion_ptau, criterion_thal, device, idx_to_thal
+                    model, test_loader, criterion_ptau, criterion_thal, device, idx_to_thal,
+                    thal_ordinal=thal_ordinal, n_thal_classes=n_thal_classes,
                 )
             report_f1 = test_f1
             report_mse = test_mse
@@ -522,6 +541,8 @@ if __name__ == "__main__":
                        help='Use GeneEncoderModel (gene encoder + attention pooling); requires pooling=None')
     parser.add_argument('--lambda_entropy', type=float, default=1e-3,
                        help='Gene entropy regularization weight (default: 1e-3, gene_encoder only)')
+    parser.add_argument('--thal_ordinal', action='store_true',
+                       help='Treat Thal as ordinal: use K-1 cumulative logits and BCE loss (default: nominal K-way CrossEntropy)')
     parser.add_argument('--recompute', action='store_true',
                        help='Force recompute patient-level data and overwrite cache (default: use cache if present and newer than data)')
     parser.add_argument('--verbose', action='store_true', default=True,

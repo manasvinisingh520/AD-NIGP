@@ -17,11 +17,14 @@ class BaselineRankingModel(nn.Module):
         dropout=0.2,
         n_hidden_layers=1,
         hidden_dim_3layer=32,
+        thal_ordinal=False,
     ):
         super(BaselineRankingModel, self).__init__()
 
         self.use_attention = use_attention
         self.n_hidden_layers = n_hidden_layers
+        self.thal_ordinal = bool(thal_ordinal)
+        self.n_thal_classes = n_thal_classes
 
         # Handle 2D input (n_genes, n_dims) or 1D input (flattened)
         if input_shape is not None and len(input_shape) == 2:
@@ -50,8 +53,8 @@ class BaselineRankingModel(nn.Module):
             first_layer_input = input_dim
 
         if n_hidden_layers == 1:
-            # Minimal: single hidden layer for low sample count (~20 samples)
-            hidden_dim = 1
+            # Single hidden layer; size from hidden_dim_3layer (e.g. 32)
+            hidden_dim = hidden_dim_3layer
             self.shared = nn.Sequential(
                 nn.Linear(first_layer_input, hidden_dim),
                 nn.ReLU(),
@@ -82,8 +85,9 @@ class BaselineRankingModel(nn.Module):
 
         if n_thal_classes is None:
             raise ValueError("n_thal_classes must be specified")
-        # do NOT apply softmax here, it will be applied in the loss function
-        self.thal_head = nn.Linear(self._hidden_dim, n_thal_classes)
+        # Ordinal: K-1 cumulative logits (P(Y>=k)); else K-way classification
+        thal_out = (n_thal_classes - 1) if self.thal_ordinal else n_thal_classes
+        self.thal_head = nn.Linear(self._hidden_dim, thal_out)
 
     def forward(self, x):
         # Apply attention only for 2D input (batch, n_genes, n_dims)

@@ -37,11 +37,12 @@ class GeneEncoderModel(nn.Module):
     Shared trunk, ptau (Huber), thal (multiclass K logits, CrossEntropy).
     """
 
-    def __init__(self, n_dims, n_thal_classes, dropout=0.2, n_genes=None):
+    def __init__(self, n_dims, n_thal_classes, dropout=0.2, n_genes=None, thal_ordinal=False):
         super().__init__()
         # n_genes unused, kept for API compatibility
         self.n_dims = n_dims
         self.n_thal_classes = n_thal_classes
+        self.thal_ordinal = bool(thal_ordinal)
 
         # MLP for attention weights: gene_dim → gene_dim/2 → 1
         hidden = max(1, n_dims // 2)
@@ -62,8 +63,9 @@ class GeneEncoderModel(nn.Module):
         # ptau head (regression, ReLU for log1p non-negative)
         self.ptau_head = nn.Linear(trunk_hidden, 1)
 
-        # thal head: K class logits (CrossEntropy, same as baseline)
-        self.thal_head = nn.Linear(trunk_hidden, n_thal_classes)
+        # thal head: ordinal -> K-1 cumulative logits; else K class logits
+        thal_out = (n_thal_classes - 1) if self.thal_ordinal else n_thal_classes
+        self.thal_head = nn.Linear(trunk_hidden, thal_out)
 
     def forward(self, x):
         """
