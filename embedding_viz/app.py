@@ -28,6 +28,7 @@ from embedding_viz.load_data import (
     load_pipeline_model_results,
     load_pipeline_top_genes,
     get_pipeline_analysis_images,
+    VIZ_RESULTS_DIR,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -212,7 +213,7 @@ def api_pipeline_images():
 
 @app.route("/visualizer_results/<path:filename>")
 def serve_viz_results(filename):
-    return send_from_directory(str(PROJECT_ROOT / "visualizer_results"), filename)
+    return send_from_directory(str(VIZ_RESULTS_DIR), filename)
 
 
 def main():

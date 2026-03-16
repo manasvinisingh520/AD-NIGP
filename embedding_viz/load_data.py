@@ -6,15 +6,19 @@ import os, re, pickle, numpy as np, pandas as pd
 from pathlib import Path
 from sklearn.decomposition import PCA
 SUPPORTED_METHODS = ('pca', 'umap')
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-EMBEDDINGS_DIR = PROJECT_ROOT / "GREmLN" / "embeddings"
-METADATA_PATH = PROJECT_ROOT / "data" / "AtlasData" / "2025-11-16_Astrocytes_metadata.xlsx"
+# All app data lives under embedding_viz/data (populate via python -m embedding_viz.copy_data_to_app_data)
+_DATA_DIR = Path(__file__).resolve().parent / "data"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent  # kept for any legacy/cache under project root
+EMBEDDINGS_DIR = _DATA_DIR / "embeddings"
+METADATA_PATH = _DATA_DIR / "AtlasData" / "2025-11-16_Astrocytes_metadata.xlsx"
 CACHE_DIR = PROJECT_ROOT / ".cache" / "embedding_viz"
-DGE_DIR = PROJECT_ROOT / "results" / "dge_final"
-RANKED_LISTS_DIR = PROJECT_ROOT / "ranked_lists"
-MODEL_RUNS_DIR = PROJECT_ROOT / "ranking_model_runs"
-GENE_ANNOTATIONS_PATH = PROJECT_ROOT / "data" / "gene_annotations.pkl"
-GENE_TO_ENSEMBL_PATH = PROJECT_ROOT / "data" / "genes_2_ensembl_ids.pkl"
+DGE_DIR = _DATA_DIR / "dge_final"
+RANKED_LISTS_DIR = _DATA_DIR / "ranked_lists"
+MODEL_RUNS_DIR = _DATA_DIR / "ranking_model_runs"
+GENE_ANNOTATIONS_PATH = _DATA_DIR / "gene_annotations.pkl"
+GENE_TO_ENSEMBL_PATH = _DATA_DIR / "genes_2_ensembl_ids.pkl"
+GRN_BASE_DIR = _DATA_DIR / "GRN"
+VIZ_RESULTS_DIR = _DATA_DIR / "visualizer_results"
 CELL_ID_COL = "cell_annotation"
 ASTROCYTE_REGIONS = [
  "V1","V2","PFC","EC","ITG"]
@@ -617,11 +621,13 @@ def load_pathology_overview():
     return result
 
 
-ATLAS_DGE_DIR = Path("e:/sf2026/dge_results/dge_final")
-GRN_BASE_DIR = PROJECT_ROOT / "data" / "GRN"
-VIZ_RESULTS_DIR = PROJECT_ROOT / "visualizer_results"
+def _dge_dir_and_glob(dataset: str, region: str):
+    if dataset == "seaad":
+        return (DGE_DIR, "dge_results_SEA_AD_MTG_pseudobulk100_seed100_*.csv")
+    return (DGE_DIR, f"dge_results_{region}_bins100_seed2129664_*.csv")
+
 _PIPELINE_REGIONS = {'atlas':[
-  "EC","ITG","PFC","V1","V2"], 
+  "EC","ITG","PFC","V1","V2"],
  'seaad':[
   "MTG"]}
 
@@ -638,7 +644,7 @@ def _grn_paths(dataset: str, region: str):
 def _dge_dir_and_glob(dataset: str, region: str):
     if dataset == "seaad":
         return (DGE_DIR, "dge_results_SEA_AD_MTG_pseudobulk100_seed100_*.csv")
-    return (ATLAS_DGE_DIR, f"dge_results_{region}_bins100_seed2129664_*.csv")
+    return (DGE_DIR, f"dge_results_{region}_bins100_seed2129664_*.csv")
 
 
 def _model_dirs(dataset: str, region: str):
@@ -861,8 +867,8 @@ def load_pipeline_top_genes(dataset: str, region: str):
 def get_pipeline_analysis_images():
     images = []
     if VIZ_RESULTS_DIR.exists():
-        for ext in ('*.png', '*.jpg', '*.jpeg', '*.svg', '*.gif'):
-            for p in VIZ_RESULTS_DIR.glob(ext):
+        exts = ('.png', '.jpg', '.jpeg', '.svg', '.gif')
+        for p in VIZ_RESULTS_DIR.iterdir():
+            if p.is_file() and p.suffix.lower() in exts:
                 images.append(p.name)
-
     return sorted(images)
