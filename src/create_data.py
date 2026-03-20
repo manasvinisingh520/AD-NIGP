@@ -1,5 +1,8 @@
 """Scale all gene embeddings according to cell expression and save in pickle file.
 Supports Astrocytes, Microglia, and MTG (SEA AD). 8-fold cross-validation split with target variables.
+Optional --augment_scaling (not MTG): create 3 separate samples per patient by
+applying three scale factors (plus optional Gaussian noise) to the base scaled tensor.
+Output suffix is always _augScaling.
 For MTG, targets are Thal and Braak (both categorical).
 """
 
@@ -50,6 +53,14 @@ def load_gene_embeddings(embeddings_path, gene_list: list[str]):
                 embedding_data[ensembl_id] = vector
 
     return embedding_data
+
+
+def _parse_three_floats(s: str, arg_name: str) -> list[float]:
+    parts = [p.strip() for p in str(s).split(",") if p.strip()]
+    if len(parts) != 3:
+        raise ValueError(f"{arg_name} must be exactly 3 comma-separated floats, got {len(parts)}: {s!r}")
+    return [float(x) for x in parts]
+
 
 def find_anndata_file(region, cell_type='Astrocytes'):
     """Find AnnData file for a given region and cell type (perCell only, or MTG)."""
@@ -202,6 +213,24 @@ def main(args=None):
     cell_type = args.cell_type
     n_folds = 8
     target_dims = 16
+    # Optional data augmentation: multiple expression-scaling methods per patient.
+    # Kept grouped by base patient for fold split (no leakage across folds).
+    augment_scaling = bool(getattr(args, "augment_scaling", False))
+    scale_factors_str = getattr(args, "scale_factors", "1.0,0.85,1.15")
+    embedding_noise_std = float(getattr(args, "embedding_noise_std", 0.02) or 0.0)
+    embedding_noise_seed = int(getattr(args, "embedding_noise_seed", 42))
+
+    if augment_scaling and cell_type != "MTG":
+        scale_factors = _parse_three_floats(scale_factors_str, "--scale_factors")
+        variant_names = ["sf0", "sf1", "sf2"]
+        print(
+            f"Augment scaling: 3 views = linear base × scale_factors {scale_factors} "
+            f"+ N(0,{embedding_noise_std}) noise (seed={embedding_noise_seed})"
+        )
+    else:
+        scale_factors = None
+        variant_names = ["linear"]
+        print("Scaling: single linear view (expr × PCA-reduced embedding).")
 
     if cell_type == "Astrocytes":
         all_regions = ["EC", "ITG", "PFC", "V2", "V1"]
@@ -260,52 +289,73 @@ def main(args=None):
             braak_info = None  # unused for Astrocytes/Microglia
         
         # expression_matrix = d, embedding = A
-        region_scaled_embeddings = scale_embeddings(embeddings_matrix, expression_matrix, n_components=target_dims)
+        if augment_scaling and cell_type != "MTG":
+            base_scaled = scale_embeddings(
+                embeddings_matrix, expression_matrix, n_components=target_dims, method="linear"
+            )
+            rng = np.random.default_rng(embedding_noise_seed)
+            scaled_by_variant = {}
+            for name, fac in zip(variant_names, scale_factors):
+                x = base_scaled.astype(np.float32) * float(fac)
+                if embedding_noise_std > 0:
+                    x = x + rng.normal(0.0, 1.0, size=x.shape).astype(np.float32) * float(
+                        embedding_noise_std
+                    )
+                scaled_by_variant[name] = x.astype(np.float16)
+            del base_scaled
+        else:
+            scaled_by_variant = {
+                "linear": scale_embeddings(
+                    embeddings_matrix, expression_matrix, n_components=target_dims, method="linear"
+                )
+            }
         del embeddings_matrix, expression_matrix
-        print(f"Size of embeddings after scaling: {region_scaled_embeddings.shape}")
+        first_key = variant_names[0]
+        print(f"Per-cell embedding tensor shape (variant={first_key}): {scaled_by_variant[first_key].shape}")
 
         # Collect all patient embeddings into lists for KFold splitting
-        all_patient_embeddings = []
-        all_cell_names = []
-        all_ptau = []
-        all_thal = []
-        all_braak = []
         unique_patients = adata.obs['SampleName'].unique()
+        base_patient_cell_idx = []
+        base_patient_cell_names = []
+        base_ptau = []
+        base_thal = []
+        base_braak = []
 
         # verify that the number of cells in the embeddings is the same as the number of cells in the adata.obs
-        if region_scaled_embeddings.shape[0] != len(adata.obs):
-            print(f"ERROR: Mismatch! Embeddings: {region_scaled_embeddings.shape[0]} cells, AnnData obs: {len(adata.obs)} cells")
+        n_cells_scaled = scaled_by_variant[first_key].shape[0]
+        if n_cells_scaled != len(adata.obs):
+            print(f"ERROR: Mismatch! Embeddings: {n_cells_scaled} cells, AnnData obs: {len(adata.obs)} cells")
             quit()
 
         for patient_name in unique_patients:
             patient_mask = adata.obs['SampleName'] == patient_name
-            patient_embeddings = region_scaled_embeddings[patient_mask].astype(np.float16)
+            cell_idx = np.where(patient_mask.values if hasattr(patient_mask, "values") else patient_mask)[0]
             patient_cell_names = adata.obs.index[patient_mask].tolist()
-            all_patient_embeddings.append(patient_embeddings)
-            all_cell_names.append(patient_cell_names)
+            base_patient_cell_idx.append(cell_idx)
+            base_patient_cell_names.append(patient_cell_names)
             if cell_type == "MTG":
-                all_thal.append(thal_info[patient_mask].iloc[0])
-                all_braak.append(braak_info[patient_mask].iloc[0])
-                all_ptau.append(None)
+                base_thal.append(thal_info[patient_mask].iloc[0])
+                base_braak.append(braak_info[patient_mask].iloc[0])
+                base_ptau.append(None)
             else:
-                all_ptau.append(ptau_info[patient_mask].iloc[0])
-                all_thal.append(thal_info[patient_mask].iloc[0])
-                all_braak.append(None)
+                base_ptau.append(ptau_info[patient_mask].iloc[0])
+                base_thal.append(thal_info[patient_mask].iloc[0])
+                base_braak.append(None)
 
         # MTG: drop any patient with Thal or Braak "Reference" so model_data has no reference
         if cell_type == "MTG":
             ref_val = "Reference"
             valid_idx = [
                 i for i in range(len(unique_patients))
-                if (str(all_thal[i]).strip() != ref_val and str(all_braak[i]).strip() != ref_val)
+                if (str(base_thal[i]).strip() != ref_val and str(base_braak[i]).strip() != ref_val)
             ]
             n_dropped = len(unique_patients) - len(valid_idx)
             unique_patients = np.asarray(unique_patients)[valid_idx]
-            all_patient_embeddings = [all_patient_embeddings[i] for i in valid_idx]
-            all_cell_names = [all_cell_names[i] for i in valid_idx]
-            all_ptau = [all_ptau[i] for i in valid_idx]
-            all_thal = [all_thal[i] for i in valid_idx]
-            all_braak = [all_braak[i] for i in valid_idx]
+            base_patient_cell_idx = [base_patient_cell_idx[i] for i in valid_idx]
+            base_patient_cell_names = [base_patient_cell_names[i] for i in valid_idx]
+            base_ptau = [base_ptau[i] for i in valid_idx]
+            base_thal = [base_thal[i] for i in valid_idx]
+            base_braak = [base_braak[i] for i in valid_idx]
 
         # Microglia: drop patients with NaN or invalid Braak/CERAD so downstream code never sees them
         if cell_type == "Microglia":
@@ -322,21 +372,52 @@ def main(args=None):
                     return cerad in CERAD_VALID
                 except (ValueError, TypeError):
                     return False
-            valid_idx = [i for i in range(len(unique_patients)) if valid_microglia(all_ptau[i], all_thal[i])]
+            valid_idx = [i for i in range(len(unique_patients)) if valid_microglia(base_ptau[i], base_thal[i])]
             unique_patients = np.asarray(unique_patients)[valid_idx]
-            all_patient_embeddings = [all_patient_embeddings[i] for i in valid_idx]
-            all_cell_names = [all_cell_names[i] for i in valid_idx]
-            all_ptau = [all_ptau[i] for i in valid_idx]
-            all_thal = [all_thal[i] for i in valid_idx]
-            all_braak = [all_braak[i] for i in valid_idx]
+            base_patient_cell_idx = [base_patient_cell_idx[i] for i in valid_idx]
+            base_patient_cell_names = [base_patient_cell_names[i] for i in valid_idx]
+            base_ptau = [base_ptau[i] for i in valid_idx]
+            base_thal = [base_thal[i] for i in valid_idx]
+            base_braak = [base_braak[i] for i in valid_idx]
+
+        # Build augmented patient samples (3 separate samples/patient when augment_scaling is enabled)
+        all_patient_embeddings = []
+        all_cell_names = []
+        all_ptau = []
+        all_thal = []
+        all_braak = []
+        all_patient_names = []
+        aug_indices_by_base = []
+        for base_i, patient_name in enumerate(list(unique_patients)):
+            aug_indices = []
+            cell_idx = base_patient_cell_idx[base_i]
+            cell_names = base_patient_cell_names[base_i]
+            for name in variant_names:
+                patient_embeddings = scaled_by_variant[name][cell_idx].astype(np.float16)
+                all_patient_embeddings.append(patient_embeddings)
+                all_cell_names.append(cell_names)
+                if cell_type == "MTG":
+                    all_thal.append(base_thal[base_i])
+                    all_braak.append(base_braak[base_i])
+                    all_ptau.append(None)
+                else:
+                    all_ptau.append(base_ptau[base_i])
+                    all_thal.append(base_thal[base_i])
+                    all_braak.append(None)
+                # Keep base patient_id for all augmented samples.
+                # (We will store patient_info as an ordered list in fold outputs, so duplicate IDs are allowed.)
+                all_patient_names.append(str(patient_name))
+                aug_indices.append(len(all_patient_embeddings) - 1)
+            aug_indices_by_base.append(aug_indices)
+        del scaled_by_variant
 
         # Split patients into 8 folds (not cells, but patients)
         n_patients = len(unique_patients)
         # MTG: stratify by (Thal, Braak) so each test fold has multiple CERAD/Braak classes (avoids trivial F1=1.0)
         if cell_type == "MTG":
-            strat_labels_full = [f"{str(all_thal[i]).strip()}_{str(all_braak[i]).strip()}" for i in range(n_patients)]
-            strat_labels_thal = [str(all_thal[i]).strip() for i in range(n_patients)]
-            strat_labels_braak = [str(all_braak[i]).strip() for i in range(n_patients)]
+            strat_labels_full = [f"{str(base_thal[i]).strip()}_{str(base_braak[i]).strip()}" for i in range(n_patients)]
+            strat_labels_thal = [str(base_thal[i]).strip() for i in range(n_patients)]
+            strat_labels_braak = [str(base_braak[i]).strip() for i in range(n_patients)]
             fold_splits = None
             # Prefer Thal-only then Braak-only so each test fold has multiple classes (Thal+Braak often has too many rare combos)
             for label_name, strat_labels in [("Thal only", strat_labels_thal), ("Braak only", strat_labels_braak), ("Thal+Braak", strat_labels_full)]:
@@ -364,20 +445,21 @@ def main(args=None):
         braak_folds = []
         
         for fold_idx, (_, fold_patient_indices) in enumerate(fold_splits):
-            # Concatenate embeddings from patients in this fold
-            fold_embeddings_list = [all_patient_embeddings[i] for i in fold_patient_indices]
+            fold_aug_indices = [j for i in fold_patient_indices for j in aug_indices_by_base[i]]
+            fold_embeddings_list = [all_patient_embeddings[i] for i in fold_aug_indices]
             fold_embeddings = np.concatenate(fold_embeddings_list, axis=0).astype(np.float16)
             
             if cell_type == "MTG":
-                fold_thal = [all_thal[i] for i in fold_patient_indices]
-                fold_braak = [all_braak[i] for i in fold_patient_indices]
+                fold_thal = [all_thal[i] for i in fold_aug_indices]
+                fold_braak = [all_braak[i] for i in fold_aug_indices]
                 fold_ptau = []
             else:
-                fold_ptau = [all_ptau[i] for i in fold_patient_indices]
-                fold_thal = [all_thal[i] for i in fold_patient_indices]
+                fold_ptau = [all_ptau[i] for i in fold_aug_indices]
+                fold_thal = [all_thal[i] for i in fold_aug_indices]
                 fold_braak = []
             
-            fold_patient_info = {unique_patients[i]: all_cell_names[i] for i in fold_patient_indices}
+            # Ordered list so train_model can handle duplicate patient IDs.
+            fold_patient_info = [(all_patient_names[i], all_cell_names[i]) for i in fold_aug_indices]
             
             embeddings_folds.append(fold_embeddings)
             patient_info_folds.append(fold_patient_info)
@@ -386,7 +468,22 @@ def main(args=None):
             braak_folds.append(fold_braak)
             
             n_fold_cells = fold_embeddings.shape[0]
-            n_fold_patients = len(fold_patient_indices)
+            n_fold_patients_base = len(fold_patient_indices)
+            n_fold_patients_aug = len(fold_aug_indices)
+            if len(patient_info_folds[-1]) != n_fold_patients_aug:
+                raise RuntimeError(
+                    f"Augmentation mismatch in fold {fold_idx+1}: "
+                    f"patient_info={len(patient_info_folds[-1])}, aug_indices={n_fold_patients_aug}"
+                )
+            if len(variant_names) > 1 and n_fold_patients_aug != n_fold_patients_base * len(variant_names):
+                raise RuntimeError(
+                    f"Expected {n_fold_patients_base * len(variant_names)} augmented patients in fold {fold_idx+1}, "
+                    f"got {n_fold_patients_aug}."
+                )
+            print(
+                f"  Fold {fold_idx+1}: base_patients={n_fold_patients_base}, "
+                f"augmented_patients={n_fold_patients_aug}, cells={n_fold_cells}"
+            )
 
         # Size of all model inputs and outputs before dumping
         for i in range(n_folds):
@@ -397,22 +494,24 @@ def main(args=None):
             if cell_type == "MTG":
                 print(f"Size of model inputs/outputs (fold {i+1}): embeddings {ef.shape}, patient_info {len(pf)} patients, thal {len(tf)}, braak {len(bf)}")
             else:
-                print(f"Size of model inputs/outputs (fold {i+1}): embeddings {ef.shape}, patient_info {len(pf)} patients, thal {len(tf)}")
+                print(f"Size of model inputs/outputs (fold {i+1}): embeddings {ef.shape}, patient_info {len(pf)} patients, ptau {len(ptau_folds[i])}, thal {len(tf)}")
 
         # Save folds
+        out_suffix = "_augScaling" if augment_scaling and cell_type != "MTG" else ""
         if cell_type == "Microglia":
-            out_name = f"{region}_Microglia_data_for_model_training.pkl"
+            out_name = f"{region}_Microglia_data_for_model_training{out_suffix}.pkl"
         elif cell_type == "MTG":
             out_name = "MTG_data_for_model_training.pkl"
         else:
-            out_name = f"{region}_data_for_model_training.pkl"
+            out_name = f"{region}_data_for_model_training{out_suffix}.pkl"
         emb_output_dir = os.path.join("data", "model_data", out_name)
         with open(emb_output_dir, "wb") as f:
             if cell_type == "MTG":
                 pickle.dump((embeddings_folds, patient_info_folds, thal_folds, braak_folds), f, protocol=pickle.HIGHEST_PROTOCOL)
             else:
                 pickle.dump((embeddings_folds, patient_info_folds, ptau_folds, thal_folds), f, protocol=pickle.HIGHEST_PROTOCOL)
-        del embeddings_folds, patient_info_folds, ptau_folds, thal_folds, braak_folds, region_scaled_embeddings
+        print(f"Saved: {emb_output_dir}")
+        del embeddings_folds, patient_info_folds, ptau_folds, thal_folds, braak_folds
         del adata, fold_embeddings, fold_patient_info, fold_ptau, fold_thal, fold_braak
         del all_patient_embeddings, all_cell_names, all_ptau, all_thal, all_braak
         del unique_patients
@@ -424,5 +523,27 @@ if __name__ == "__main__":
                         help="Cell type (default: Astrocytes). MTG uses Thal and Braak as categorical targets.")
     parser.add_argument("--region", type=str, default=None,
                         help="Process only this region (e.g., EC). If omitted, process all regions for the cell type.")
+    parser.add_argument("--augment_scaling", action="store_true",
+                        help="Augment (not MTG): 3 separate samples per patient = "
+                             "(linear expr×emb) × each scale factor + optional Gaussian noise. "
+                             "Output suffix _augScaling.")
+    parser.add_argument(
+        "--scale_factors",
+        type=str,
+        default="1.0,0.85,1.15",
+        help="With --augment_scaling: exactly 3 comma-separated multipliers applied to the base scaled tensor.",
+    )
+    parser.add_argument(
+        "--embedding_noise_std",
+        type=float,
+        default=0.02,
+        help="With --augment_scaling: std of Gaussian noise added per cell×gene×dim (0 disables).",
+    )
+    parser.add_argument(
+        "--embedding_noise_seed",
+        type=int,
+        default=42,
+        help="RNG seed for embedding noise (reproducible across runs).",
+    )
     args = parser.parse_args()
     main(args)

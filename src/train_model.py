@@ -22,6 +22,52 @@ from baseline_model import BaselineRankingModel
 from gene_encoder_model import GeneEncoderModel, gene_entropy_loss, make_ordinal_targets, ordinal_logits_to_class
 
 
+def _parse_mlp_hidden_sizes(s):
+    """Parse comma-separated positive ints, e.g. '64,32,16,8,4'. Empty/whitespace -> None."""
+    if s is None or not str(s).strip():
+        return None
+    parts = [p.strip() for p in str(s).split(",") if p.strip()]
+    if not parts:
+        return None
+    out = []
+    for p in parts:
+        try:
+            v = int(p)
+        except ValueError as e:
+            raise ValueError(f"Invalid mlp_hidden_sizes token {p!r} (expected int)") from e
+        if v < 1:
+            raise ValueError(f"mlp_hidden_sizes must be positive ints, got {v}")
+        out.append(v)
+    return out
+
+
+def _get_gene_order_for_region(region, cell_type="Astrocytes"):
+    """Return list of gene names in the same order as the pickle embedding dimensions (axis=1).
+    Uses create_data's AnnData + embedding load so no need to re-run create_data."""
+    from create_data import create_anndata, load_gene_embeddings
+    embeddings_dir = os.path.join("GREmLN", "embeddings")
+    if cell_type == "Astrocytes":
+        emb_path = os.path.join(embeddings_dir, f"{region}_gene_embeddings.tsv")
+    elif cell_type == "Microglia":
+        emb_path = os.path.join(embeddings_dir, f"{region}_Microglia_gene_embeddings.tsv")
+    else:
+        emb_path = os.path.join(embeddings_dir, "MTG_gene_embeddings.tsv")
+    if not os.path.isfile(emb_path):
+        emb_path = os.path.join(embeddings_dir, "EC_gene_embeddings.tsv")
+    adata = create_anndata(region, cell_type)
+    embeddings_dict = load_gene_embeddings(emb_path, gene_list=adata.var_names.tolist())
+    adata = adata[:, adata.var_names.isin(embeddings_dict.keys())].copy()
+    return adata.var_names.tolist()
+
+
+def _load_ranked_top_genes(ranked_genes_path, top_n):
+    """Load top N gene names from ranked_genes.csv (column 'gene', rows in rank order)."""
+    df = pd.read_csv(ranked_genes_path)
+    if 'gene' not in df.columns:
+        raise ValueError(f"ranked_genes CSV must have a 'gene' column. Found: {list(df.columns)}")
+    return df['gene'].astype(str).head(top_n).tolist()
+
+
 class EmbeddingDataset(Dataset):
     """Dataset for embeddings with ptau and thal targets."""
     def __init__(self, embeddings, ptau, thal):
@@ -148,13 +194,46 @@ def evaluate(model, dataloader, criterion_ptau, criterion_thal, device, idx_to_t
 
 
 def main(args):
-    data_path = os.path.join('data', 'model_data', f'{args.region}_data_for_model_training.pkl')
+    mlp_hidden_list = _parse_mlp_hidden_sizes(getattr(args, "mlp_hidden_sizes", ""))
+
+    data_suffix = getattr(args, "data_suffix", "")
+    data_path = os.path.join('data', 'model_data', f'{args.region}_data_for_model_training{data_suffix}.pkl')
     print(f"Loading data from {data_path}")
 
     with open(data_path, 'rb') as f:
-        embeddings_folds, patient_info_folds, ptau_folds, thal_folds = pickle.load(f)
+        loaded = pickle.load(f)
+    if len(loaded) == 5:
+        embeddings_folds, patient_info_folds, ptau_folds, thal_folds, gene_names = loaded
+    else:
+        embeddings_folds, patient_info_folds, ptau_folds, thal_folds = loaded
+        gene_names = None
 
     print(f"Loaded {len(embeddings_folds)} folds")
+
+    top_genes = getattr(args, 'top_genes', None)
+    ranked_genes_path = getattr(args, 'ranked_genes_path', None)
+    if top_genes is not None:
+        if gene_names is None:
+            cell_type = getattr(args, 'cell_type', 'Astrocytes')
+            print(f"Resolving gene order for region={args.region}, cell_type={cell_type} (for top_genes filter)...")
+            gene_names = _get_gene_order_for_region(args.region, cell_type=cell_type)
+        if not ranked_genes_path:
+            ranked_genes_path = os.path.join(
+                "ranked_lists", "EC_Astrocytes_embedding_highest_lambda_entropy", "ranked_genes.csv"
+            )
+        if not os.path.isfile(ranked_genes_path):
+            raise FileNotFoundError(f"ranked_genes_path not found: {ranked_genes_path}")
+        top_gene_names = _load_ranked_top_genes(ranked_genes_path, top_genes)
+        gene_to_idx = {str(g): i for i, g in enumerate(gene_names)}
+        indices = [gene_to_idx[g] for g in top_gene_names if g in gene_to_idx]
+        missing = [g for g in top_gene_names if g not in gene_to_idx]
+        if missing:
+            print(f"  Warning: {len(missing)} of top {top_genes} ranked genes not in data; {len(indices)} kept.")
+        if not indices:
+            raise ValueError("No ranked genes found in data gene list. Check ranked_genes_path and data region/cell_type.")
+        for i in range(len(embeddings_folds)):
+            embeddings_folds[i] = embeddings_folds[i][:, indices, :]
+        print(f"  Filtered to top {len(indices)} genes from {ranked_genes_path}")
 
     if args.gene_encoder and args.pooling is not None:
         raise ValueError("--gene_encoder requires pooling=None (no gene pooling); omit --pooling")
@@ -174,7 +253,9 @@ def main(args):
         criterion_ptau = nn.HuberLoss()
 
     pool_str = args.pooling if args.pooling is not None else "None"
-    cache_path = os.path.join("data", "model_data", f"{args.region}_patient_level_pooling_{pool_str}.pkl")
+    top_suffix = f"_top{top_genes}" if top_genes is not None else ""
+    data_cache_suffix = data_suffix if data_suffix else ""
+    cache_path = os.path.join("data", "model_data", f"{args.region}_patient_level_pooling_{pool_str}{top_suffix}{data_cache_suffix}.pkl")
     use_cache = os.path.exists(cache_path) and (not getattr(args, "recompute", False))
     if use_cache and os.path.getmtime(cache_path) >= os.path.getmtime(data_path):
         print(f"Loading precomputed patient-level data from cache: {cache_path}")
@@ -223,7 +304,11 @@ def main(args):
             patient_ptau = []
             patient_thal = []
             cell_idx = 0
-            for patient_idx, (patient_name, cell_names) in enumerate(fold_patient_info.items()):
+            # `patient_info` is either a dict (patient_id -> cell_names) or an
+            # ordered list of (patient_id, cell_names) tuples (allows duplicate IDs
+            # when augmentations create multiple samples per patient).
+            patient_iter = fold_patient_info.items() if hasattr(fold_patient_info, "items") else fold_patient_info
+            for patient_idx, (patient_name, cell_names) in enumerate(patient_iter):
                 n_cells_patient = len(cell_names)
                 patient_cell_embeddings = pooled_embeddings[cell_idx : cell_idx + n_cells_patient]
                 patient_emb = np.mean(patient_cell_embeddings, axis=0)
@@ -356,6 +441,7 @@ def main(args):
                 dropout=args.dropout,
                 n_hidden_layers=args.n_hidden_layers,
                 hidden_dim_3layer=args.hidden_dim_3layer,
+                mlp_hidden_sizes=mlp_hidden_list,
                 thal_ordinal=getattr(args, 'thal_ordinal', False),
             ).to(device)
 
@@ -365,7 +451,12 @@ def main(args):
         attention_suffix = '_attn' if args.attention else ''
         dropout_str = f'_drop{args.dropout}'
         wd_str = f'_wd{args.weight_decay}'
-        layers_str = f'_L{args.n_hidden_layers}' if args.n_hidden_layers == 3 else ''
+        if mlp_hidden_list:
+            layers_str = '_MLP' + '_'.join(str(h) for h in mlp_hidden_list)
+        elif args.n_hidden_layers == 3:
+            layers_str = f'_L{args.n_hidden_layers}'
+        else:
+            layers_str = ''
         exp_id_str = f"_{args.exp_id}" if getattr(args, 'exp_id', None) else ''
         log_base = getattr(args, 'log_base', 'runs')
         log_dir = os.path.join(log_base, f'{args.region}_{args.pooling}_{args.loss_ptau}{model_suffix}{attention_suffix}{dropout_str}{wd_str}{layers_str}{exp_id_str}_testfold{test_fold_idx+1}')
@@ -457,6 +548,14 @@ def main(args):
         if use_best_f1 and best_state is not None:
             model.load_state_dict(best_state)
         writer.close()
+
+        if best_state is not None and getattr(args, 'save_best_model', False):
+            save_dir = getattr(args, 'save_dir', 'models')
+            os.makedirs(save_dir, exist_ok=True)
+            save_name = f'{args.region}_testfold{test_fold_idx+1}{model_suffix}{attention_suffix}{exp_id_str}.pt'
+            save_path = os.path.join(save_dir, save_name)
+            torch.save(best_state, save_path)
+            print(f"  Saved best model to {save_path}")
 
         if use_best_f1 and best_state is not None:
             report_f1 = best_test_f1
@@ -552,11 +651,29 @@ if __name__ == "__main__":
     parser.add_argument('--patience', type=int, default=20,
                        help='Early stopping: stop if test loss does not improve for this many epochs (default: 20). Set to 0 to disable.')
     parser.add_argument('--n_hidden_layers', type=int, default=1, choices=[1, 3],
-                       help='Baseline MLP: 1 (minimal) or 3 (original) hidden layers (default: 1).')
+                       help='Baseline MLP: 1 (minimal) or 3 (original) when --mlp_hidden_sizes not set (default: 1).')
     parser.add_argument('--hidden_dim_3layer', type=int, default=32,
                        help='Hidden size when n_hidden_layers=3 (default: 32).')
+    parser.add_argument(
+        '--mlp_hidden_sizes',
+        type=str,
+        default='',
+        help='Comma-separated baseline MLP widths, e.g. 64,32,16,8,4. When set, overrides --n_hidden_layers layout.',
+    )
     parser.add_argument('--best_f1', action='store_true',
                        help='Use best F1 across epochs and restore best model; default is last-epoch F1.')
+    parser.add_argument('--top_genes', type=int, default=None,
+                       help='Use only top N genes from ranked_genes.csv; filters at train time (default: all genes).')
+    parser.add_argument('--ranked_genes_path', type=str, default=None,
+                       help='Path to ranked_genes.csv. Default when --top_genes set: ranked_lists/EC_Astrocytes_embedding_highest_lambda_entropy/ranked_genes.csv')
+    parser.add_argument('--cell_type', type=str, default='Astrocytes',
+                       help='Cell type for resolving gene order when --top_genes is used (default: Astrocytes).')
+    parser.add_argument('--save_best_model', action='store_true',
+                       help='Save best model state_dict to --save_dir (default: models/) per test fold.')
+    parser.add_argument('--save_dir', type=str, default='models',
+                       help='Directory to save best model when --save_best_model (default: models).')
+    parser.add_argument('--data_suffix', type=str, default='',
+                       help='Suffix for model-data filename, e.g. _augScaling to load {region}_data_for_model_training_augScaling.pkl')
     args = parser.parse_args()
 
     main(args)

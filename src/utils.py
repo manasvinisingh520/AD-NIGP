@@ -972,7 +972,7 @@ def tensorboard_dir_for_row(row, log_base=None, microglia=False):
         return os.path.join(log_base, exp_id)
 
 
-def scale_embeddings(embeddings_matrix, expression_matrix, n_components=None):
+def scale_embeddings(embeddings_matrix, expression_matrix, n_components=None, method: str = "linear"):
     # expression_matrix: (n_cells, n_genes) - no need to transpose
     # embedding_matrix: (n_genes, n_dims)
     # scaled_embeddings_matrix: (n_cells, n_genes, n_dims)
@@ -980,8 +980,19 @@ def scale_embeddings(embeddings_matrix, expression_matrix, n_components=None):
     # PCA reduction on embeddings matrix
     pca = PCA(n_components=n_components, random_state=42)
     embeddings_matrix = pca.fit_transform(embeddings_matrix)
+
+    m = (method or "linear").strip().lower()
+    if m == "linear":
+        expr = expression_matrix
+    elif m in ("sqrt", "sqrt1p"):
+        expr = np.sqrt(expression_matrix + 1e-8)
+    elif m in ("log", "log1p"):
+        expr = np.log1p(expression_matrix)
+    else:
+        raise ValueError(f"Unknown scaling method: {method}. Use linear, sqrt, or log1p.")
+
     # Using similar function to example (expression = d, embedding = A)
-    scaled_embeddings_matrix = expression_matrix[:, :, None] * embeddings_matrix[None, :, :]
+    scaled_embeddings_matrix = expr[:, :, None] * embeddings_matrix[None, :, :]
     scaled_embeddings_matrix = scaled_embeddings_matrix.astype('float16')
     return scaled_embeddings_matrix
 

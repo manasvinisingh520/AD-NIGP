@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from train_model import main as train_main
 
 
-"""EXPERIMENTS = [
+EXPERIMENTS = [
     {"name": "baseline", "dropout": 0.2, "weight_decay": 0.1, "lr": 0.001, "lambda_entropy": 1e-3},
     {"name": "higher_dropout", "dropout": 0.4, "weight_decay": 0.1, "lr": 0.001, "lambda_entropy": 1e-3},
     {"name": "highest_dropout", "dropout": 0.5, "weight_decay": 0.1, "lr": 0.001, "lambda_entropy": 1e-3},
@@ -27,13 +27,13 @@ from train_model import main as train_main
     {"name": "wd_lr", "dropout": 0.2, "weight_decay": 0.5, "lr": 5e-4, "lambda_entropy": 1e-3},
     {"name": "all_moderate", "dropout": 0.4, "weight_decay": 0.5, "lr": 5e-4, "lambda_entropy": 1e-2},
     {"name": "all_strong", "dropout": 0.5, "weight_decay": 1.0, "lr": 1e-4, "lambda_entropy": 1e-1},
-]"""
+]
 
-EXPERIMENTS = [
+"""EXPERIMENTS = [
     {"name": "baseline", "dropout": 0.2, "weight_decay": 0.1, "lr": 0.001, "lambda_entropy": 1e-3},
     {"name": "higher_weight_decay", "dropout": 0.2, "weight_decay": 0.5, "lr": 0.001, "lambda_entropy": 1e-3},
     {"name": "all_moderate", "dropout": 0.4, "weight_decay": 0.5, "lr": 5e-4, "lambda_entropy": 1e-2}
-]
+]"""
 
 GENE_ENCODER_OPTS = [False, True]
 ATTENTION_OPTS = [True, False]
@@ -48,7 +48,11 @@ def build_args(region, cell_type, exp, gene_encoder, attention, loss_ptau, pca_c
     else:
         pooling_opt = getattr(base_args, "pooling", None)
         pooling = None if (pooling_opt and str(pooling_opt).lower() == "none") else (pooling_opt or "mean")
-    exp_id = f"ge{gene_encoder}_attn{attention}_{loss_ptau}_pca{pca_components}_{exp['name']}"
+    mlp_raw = getattr(base_args, "mlp_hidden_sizes", "") or ""
+    mlp_tag = ""
+    if str(mlp_raw).strip():
+        mlp_tag = "_mlp" + "_".join(p.strip() for p in str(mlp_raw).split(",") if p.strip())
+    exp_id = f"ge{gene_encoder}_attn{attention}_{loss_ptau}_pca{pca_components}{mlp_tag}_{exp['name']}"
     log_base = getattr(base_args, "log_base", None) or f"{cell_type}_{region}"
     return SimpleNamespace(
         region=region,
@@ -71,9 +75,15 @@ def build_args(region, cell_type, exp, gene_encoder, attention, loss_ptau, pca_c
         verbose=False,
         n_hidden_layers=getattr(base_args, "n_hidden_layers", 1),
         hidden_dim_3layer=getattr(base_args, "hidden_dim_3layer", 32),
+        mlp_hidden_sizes=getattr(base_args, "mlp_hidden_sizes", ""),
         patience=getattr(base_args, "patience", 20),
         best_f1=getattr(base_args, "best_f1", False),
         thal_ordinal=getattr(base_args, "thal_ordinal", False),
+        top_genes=getattr(base_args, "top_genes", None),
+        ranked_genes_path=getattr(base_args, "ranked_genes_path", None),
+        save_best_model=getattr(base_args, "save_best_model", False),
+        save_dir=getattr(base_args, "save_dir", "models"),
+        data_suffix=getattr(base_args, "data_suffix", ""),
     )
 
 
@@ -218,11 +228,32 @@ if __name__ == "__main__":
                         help="Number of hidden layers in baseline MLP: 1 (minimal) or 3 (original). Default: 1.")
     parser.add_argument("--hidden_dim_3layer", type=int, default=32,
                         help="Hidden size when n_hidden_layers=3 (default: 32).")
+    parser.add_argument(
+        "--mlp_hidden_sizes",
+        type=str,
+        default="",
+        help="Baseline MLP widths, comma-separated, e.g. 64,32,16,8,4. Overrides --n_hidden_layers when set.",
+    )
     parser.add_argument("--patience", type=int, default=20, help="Early stopping patience (default: 20).")
     parser.add_argument("--best_f1", action="store_true", help="Use best F1 across epochs; default is last-epoch F1.")
     parser.add_argument("--pooling", type=str, default=None,
                         help="Pooling when not using gene_encoder: mean, max, or none (no pooling, 3D input). Default: mean. Ignored when gene_encoder=True.")
     parser.add_argument("--thal_ordinal", action="store_true",
                         help="Treat Thal as ordinal (K-1 cumulative logits + BCE loss).")
+    parser.add_argument("--top_genes", type=int, default=None,
+                        help="Use only top N genes from ranked_genes.csv (filter at train time; default: all genes).")
+    parser.add_argument("--ranked_genes_path", type=str, default=None,
+                        help="Path to ranked_genes.csv. Default when --top_genes set: ranked_lists/EC_Astrocytes_embedding_highest_lambda_entropy/ranked_genes.csv")
+    parser.add_argument("--save_best_model", action="store_true",
+                        help="Save best model to --save_dir per test fold (default: models/).")
+    parser.add_argument("--save_dir", type=str, default="models",
+                        help="Directory for saved best models when --save_best_model (default: models).")
+    parser.add_argument("--data_suffix", type=str, default="",
+                        help="Suffix for model-data filename, e.g. _augScaling to use {region}_data_for_model_training_augScaling.pkl")
+    parser.add_argument("--use_augScaling", action="store_true",
+                        help="Force --data_suffix to exactly '_augScaling' (augmented scaling pickles).")
     args = parser.parse_args()
+    if getattr(args, "use_augScaling", False):
+        # Keep behavior consistent: fixed suffix only.
+        args.data_suffix = "_augScaling"
     run_experiments(args)

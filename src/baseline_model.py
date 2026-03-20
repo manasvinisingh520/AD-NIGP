@@ -1,7 +1,33 @@
 """Baseline ranking model: ptau regression + thal classification."""
 
+from typing import List, Optional, Tuple
+
 import torch
 import torch.nn as nn
+
+
+def build_mlp_trunk(
+    first_layer_input: int,
+    hidden_sizes: List[int],
+    dropout: float,
+) -> Tuple[nn.Sequential, int]:
+    """Linear stack: in -> h0 -> h1 -> ... with ReLU + dropout after each hidden layer."""
+    if not hidden_sizes:
+        raise ValueError("hidden_sizes must be non-empty for custom MLP")
+    layers: List[nn.Module] = []
+    prev = first_layer_input
+    for h in hidden_sizes:
+        if h < 1:
+            raise ValueError(f"hidden_sizes must be positive ints, got {h}")
+        layers.extend(
+            [
+                nn.Linear(prev, h),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+            ]
+        )
+        prev = h
+    return nn.Sequential(*layers), prev
 
 
 class BaselineRankingModel(nn.Module):
@@ -17,6 +43,7 @@ class BaselineRankingModel(nn.Module):
         dropout=0.2,
         n_hidden_layers=1,
         hidden_dim_3layer=32,
+        mlp_hidden_sizes: Optional[List[int]] = None,
         thal_ordinal=False,
     ):
         super(BaselineRankingModel, self).__init__()
@@ -52,7 +79,11 @@ class BaselineRankingModel(nn.Module):
             self.attention = None
             first_layer_input = input_dim
 
-        if n_hidden_layers == 1:
+        if mlp_hidden_sizes is not None and len(mlp_hidden_sizes) > 0:
+            self.shared, hidden_dim = build_mlp_trunk(
+                first_layer_input, mlp_hidden_sizes, dropout
+            )
+        elif n_hidden_layers == 1:
             # Single hidden layer; size from hidden_dim_3layer (e.g. 32)
             hidden_dim = hidden_dim_3layer
             self.shared = nn.Sequential(
