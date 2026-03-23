@@ -1,0 +1,2 @@
+# Optional: EC hyperparameter search (src/autosearch_ec.py)
+optuna>=3.0.0

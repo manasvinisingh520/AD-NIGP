@@ -76,3 +76,6 @@ train_model.py online augmentation (replaces deprecated create_data --augment_sc
   --aug_per_gene_scale_jitter, --aug_gene_dropout, --aug_emb_dim_dropout, --aug_feature_dropout,
   --aug_gene_block_cutout_max, --aug_noise_std; batch-level --mixup_alpha, --gene_cutmix_prob;
   --label_smoothing for Thal. --no_online_augment disables dataset aug. Offline _augScaling is deprecated.
+
+autosearch_ec.py: Optuna or random hyperparameter search for EC, loss_ptau=none, maximize mean LOFO F1.
+  See ../program_ec_autosearch.md and ../requirements-autosearch.txt (pip install optuna for --sampler optuna).
