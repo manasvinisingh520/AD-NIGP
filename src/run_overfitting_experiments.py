@@ -35,6 +35,10 @@ EXPERIMENTS = [
     {"name": "all_moderate", "dropout": 0.4, "weight_decay": 0.5, "lr": 5e-4, "lambda_entropy": 1e-2}
 ]"""
 
+"""EXPERIMENTS = [
+        {"name": "highest_weight_decay", "dropout": 0.2, "weight_decay": 1.0, "lr": 0.001, "lambda_entropy": 1e-3},
+]"""
+
 GENE_ENCODER_OPTS = [False, True]
 ATTENTION_OPTS = [True, False]
 LOSS_PTAU_OPTS = ["huber", "mse", "mae", "none"]

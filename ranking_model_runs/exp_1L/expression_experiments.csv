@@ -1,3 +1,0 @@
-run,experiment,attention,loss_ptau,pca_components,dropout,weight_decay,lr,lambda_entropy,avg_f1,avg_mse,avg_mae,error
-baseline_attnTrue_lossnone_pcaNone,baseline,True,none,,0.2,0.1,0.001,0.001,0.29166666666666663,1.773363794550995,0.923264641004304,
-baseline_attnFalse_lossnone_pcaNone,baseline,False,none,,0.2,0.1,0.001,0.001,0.17777777777777776,1.3279159452963905,0.7613305541065831,

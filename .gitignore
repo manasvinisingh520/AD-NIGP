@@ -64,3 +64,12 @@ Thumbs.db
 cache/*
 runs/*
 events.out.tfevents*
+
+# models dir
+models/*
+
+# runs directory
+ranking_model_runs/*
+ranking_model_runs_combined/*
+ranking_model_runs_combined_microglia/*
+ranking_model_runs.1/*
