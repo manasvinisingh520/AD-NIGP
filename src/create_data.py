@@ -7,6 +7,7 @@ For MTG, targets are Thal and Braak (both categorical).
 """
 
 import argparse
+import warnings
 from collections import defaultdict
 import pandas as pd
 import numpy as np
@@ -221,6 +222,13 @@ def main(args=None):
     embedding_noise_seed = int(getattr(args, "embedding_noise_seed", 42))
 
     if augment_scaling and cell_type != "MTG":
+        warnings.warn(
+            "create_data --augment_scaling (offline _augScaling pickles) is deprecated. "
+            "Prefer base {region}_data_for_model_training.pkl and online augmentation in "
+            "train_model.py (EmbeddingDataset / --aug_* flags).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         scale_factors = _parse_three_floats(scale_factors_str, "--scale_factors")
         variant_names = ["sf0", "sf1", "sf2"]
         print(
@@ -524,9 +532,10 @@ if __name__ == "__main__":
     parser.add_argument("--region", type=str, default=None,
                         help="Process only this region (e.g., EC). If omitted, process all regions for the cell type.")
     parser.add_argument("--augment_scaling", action="store_true",
-                        help="Augment (not MTG): 3 separate samples per patient = "
-                             "(linear expr×emb) × each scale factor + optional Gaussian noise. "
-                             "Output suffix _augScaling.")
+                        help="DEPRECATED: offline 3× patients + _augScaling pickle. "
+                             "Use train_model online --aug_* instead. "
+                             "Augment (not MTG): 3 separate samples per patient = "
+                             "(linear expr×emb) × each scale factor + optional Gaussian noise.")
     parser.add_argument(
         "--scale_factors",
         type=str,

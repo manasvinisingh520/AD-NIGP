@@ -70,3 +70,9 @@ test_binning.py: extracts top k genes per condition comparison for given region
 test_motifs_dataset.py: test overlap between motif file and TF file (NOT USED)
 
 test_TF_dataset.py: test overlap between TF file and Astrocytes genes (USED)
+
+train_model.py online augmentation (replaces deprecated create_data --augment_scaling / _augScaling pickles):
+  Use base data/model_data/{region}_data_for_model_training.pkl. Train-time: --aug_scale_jitter,
+  --aug_per_gene_scale_jitter, --aug_gene_dropout, --aug_emb_dim_dropout, --aug_feature_dropout,
+  --aug_gene_block_cutout_max, --aug_noise_std; batch-level --mixup_alpha, --gene_cutmix_prob;
+  --label_smoothing for Thal. --no_online_augment disables dataset aug. Offline _augScaling is deprecated.

@@ -5,6 +5,10 @@ Uses BaselineRankingModel or GeneEncoderModel.
 
 import argparse
 import pickle
+import warnings
+from dataclasses import dataclass
+from typing import Optional
+
 import numpy as np
 import pandas as pd
 import torch
@@ -68,18 +72,126 @@ def _load_ranked_top_genes(ranked_genes_path, top_n):
     return df['gene'].astype(str).head(top_n).tolist()
 
 
+@dataclass
+class EmbeddingAugmentConfig:
+    """Train-time embedding augmentation (applied in __getitem__ when train=True)."""
+    scale_jitter_half_width: float = 0.0  # multiply by U(1-a, 1+a); 0 = off
+    per_gene_scale_jitter_half_width: float = 0.0  # 3D only: per-gene U(1-b, 1+b)
+    gene_dropout_p: float = 0.0  # 3D: drop whole gene rows
+    emb_dim_dropout_p: float = 0.0  # 3D: drop embedding dims (all genes); 2D: same on feature axis
+    feature_dropout_p: float = 0.0  # 2D only: Bernoulli on flat features
+    gene_block_cutout_max: int = 0  # 3D: max genes in contiguous zero block; 0 = off
+    gene_block_cutout_prob: float = 0.5  # prob to apply block cutout when max > 0
+    noise_std: float = 0.0  # additive N(0, noise_std^2)
+
+    def any_enabled(self) -> bool:
+        return (
+            self.scale_jitter_half_width > 0
+            or self.per_gene_scale_jitter_half_width > 0
+            or self.gene_dropout_p > 0
+            or self.emb_dim_dropout_p > 0
+            or self.feature_dropout_p > 0
+            or self.gene_block_cutout_max > 0
+            or self.noise_std > 0
+        )
+
+
+def _embedding_augment_config_from_args(args) -> EmbeddingAugmentConfig:
+    """Build config from argparse / SimpleNamespace."""
+    return EmbeddingAugmentConfig(
+        scale_jitter_half_width=float(getattr(args, "aug_scale_jitter", 0.0) or 0.0),
+        per_gene_scale_jitter_half_width=float(getattr(args, "aug_per_gene_scale_jitter", 0.0) or 0.0),
+        gene_dropout_p=float(getattr(args, "aug_gene_dropout", 0.0) or 0.0),
+        emb_dim_dropout_p=float(getattr(args, "aug_emb_dim_dropout", 0.0) or 0.0),
+        feature_dropout_p=float(getattr(args, "aug_feature_dropout", 0.0) or 0.0),
+        gene_block_cutout_max=int(getattr(args, "aug_gene_block_cutout_max", 0) or 0),
+        gene_block_cutout_prob=float(getattr(args, "aug_gene_block_cutout_prob", 0.5) or 0.5),
+        noise_std=float(getattr(args, "aug_noise_std", 0.0) or 0.0),
+    )
+
+
+def augment_embedding_tensor(x: torch.Tensor, cfg: EmbeddingAugmentConfig) -> torch.Tensor:
+    """Apply augmentation in order: multiplicative scales → masks → additive noise.
+    x is a single sample: (n_genes, n_dims) or (n_features,).
+    """
+    if not cfg.any_enabled():
+        return x
+    x = x.clone()
+    dev, dt = x.device, x.dtype
+
+    # Global scale jitter: U(1-a, 1+a)
+    if cfg.scale_jitter_half_width > 0:
+        a = cfg.scale_jitter_half_width
+        u = 1.0 + (torch.rand(1, device=dev, dtype=dt) * (2 * a) - a)
+        x.mul_(u)
+
+    if x.dim() == 3:
+        raise ValueError("augment_embedding_tensor expects 2D (G,D) or 1D (F,) per sample, got 3D")
+
+    if x.dim() == 2:
+        g, d = x.shape[0], x.shape[1]
+        if cfg.per_gene_scale_jitter_half_width > 0:
+            b = cfg.per_gene_scale_jitter_half_width
+            u = 1.0 + (torch.rand(g, 1, device=dev, dtype=dt) * (2 * b) - b)
+            x.mul_(u)
+        if cfg.gene_dropout_p > 0:
+            mask = (torch.rand(g, 1, device=dev, dtype=dt) > cfg.gene_dropout_p).to(dt)
+            x.mul_(mask)
+        if cfg.emb_dim_dropout_p > 0:
+            mask = (torch.rand(1, d, device=dev, dtype=dt) > cfg.emb_dim_dropout_p).to(dt)
+            x.mul_(mask)
+        if (
+            cfg.gene_block_cutout_max > 0
+            and g > 0
+            and torch.rand(1, device=dev).item() < cfg.gene_block_cutout_prob
+        ):
+            cut_max = min(cfg.gene_block_cutout_max, g)
+            if cut_max >= 1:
+                cut_len = int(torch.randint(1, cut_max + 1, (1,), device=dev).item())
+                start_max = max(0, g - cut_len)
+                start = int(torch.randint(0, start_max + 1, (1,), device=dev).item())
+                x[start : start + cut_len, :].zero_()
+    elif x.dim() == 1:
+        f = x.shape[0]
+        if cfg.emb_dim_dropout_p > 0:
+            mask = (torch.rand(f, device=dev, dtype=dt) > cfg.emb_dim_dropout_p).to(dt)
+            x.mul_(mask)
+        if cfg.feature_dropout_p > 0:
+            mask = (torch.rand(f, device=dev, dtype=dt) > cfg.feature_dropout_p).to(dt)
+            x.mul_(mask)
+    else:
+        raise ValueError(f"Unexpected embedding rank {x.dim()} for augmentation")
+
+    if cfg.noise_std > 0:
+        x.add_(torch.randn_like(x) * cfg.noise_std)
+    return x
+
+
 class EmbeddingDataset(Dataset):
-    """Dataset for embeddings with ptau and thal targets."""
-    def __init__(self, embeddings, ptau, thal):
+    """Dataset for embeddings with ptau and thal targets; optional train-time augmentation."""
+
+    def __init__(
+        self,
+        embeddings,
+        ptau,
+        thal,
+        train: bool = False,
+        augment_config: Optional[EmbeddingAugmentConfig] = None,
+    ):
         self.embeddings = torch.FloatTensor(embeddings)
         self.ptau = torch.FloatTensor(ptau)
         self.thal = torch.LongTensor(thal)
+        self.train = bool(train)
+        self.augment_config = augment_config or EmbeddingAugmentConfig()
 
     def __len__(self):
         return len(self.embeddings)
 
     def __getitem__(self, idx):
-        return self.embeddings[idx], self.ptau[idx], self.thal[idx]
+        x = self.embeddings[idx]
+        if self.train and self.augment_config.any_enabled():
+            x = augment_embedding_tensor(x, self.augment_config)
+        return x, self.ptau[idx], self.thal[idx]
 
 
 def apply_pooling(embeddings, method='mean'):
@@ -101,8 +213,21 @@ def apply_pooling(embeddings, method='mean'):
 
 
 
-def train_epoch(model, dataloader, criterion_ptau, criterion_thal, optimizer, device, lambda_entropy=0.0, thal_ordinal=False, n_thal_classes=None):
-    """Train for one epoch."""
+def train_epoch(
+    model,
+    dataloader,
+    criterion_ptau,
+    criterion_thal,
+    optimizer,
+    device,
+    lambda_entropy=0.0,
+    thal_ordinal=False,
+    n_thal_classes=None,
+    mixup_alpha=0.0,
+    gene_cutmix_prob=0.0,
+    gene_cutmix_alpha=1.0,
+):
+    """Train for one epoch. Optional batch-level mixup or gene-axis CutMix (3D only); disabled if thal_ordinal."""
     model.train()
     total_loss = 0
     ptau_losses = []
@@ -113,6 +238,41 @@ def train_epoch(model, dataloader, criterion_ptau, criterion_thal, optimizer, de
         embeddings = embeddings.to(device)
         ptau = ptau.to(device)
         thal = thal.to(device)
+        B = embeddings.size(0)
+
+        batch_mix = None  # None | {"type": "mixup"|"cutmix", "lam": float, "partner": LongTensor}
+        if (not thal_ordinal) and B > 1:
+            if (
+                gene_cutmix_prob > 0
+                and embeddings.dim() == 3
+                and float(torch.rand(1, device=device).item()) < gene_cutmix_prob
+            ):
+                G = embeddings.size(1)
+                partner = torch.randperm(B, device=device)
+                dist = torch.distributions.Beta(
+                    torch.tensor(gene_cutmix_alpha, device=device),
+                    torch.tensor(gene_cutmix_alpha, device=device),
+                )
+                r = float(dist.sample().item())
+                cut_len = max(1, min(G, int(round(r * G))))
+                start_max = G - cut_len
+                start = int(torch.randint(0, start_max + 1, (1,), device=device).item())
+                lam = cut_len / float(G)
+                x_new = embeddings.clone()
+                x_new[:, start : start + cut_len, :] = embeddings[partner, start : start + cut_len, :]
+                embeddings = x_new
+                ptau = (1.0 - lam) * ptau + lam * ptau[partner]
+                batch_mix = {"type": "cutmix", "lam": lam, "partner": partner}
+            elif mixup_alpha > 0:
+                dist = torch.distributions.Beta(
+                    torch.tensor(mixup_alpha, device=device),
+                    torch.tensor(mixup_alpha, device=device),
+                )
+                lam = float(dist.sample().item())
+                idx = torch.randperm(B, device=device)
+                embeddings = lam * embeddings + (1.0 - lam) * embeddings[idx]
+                ptau = lam * ptau + (1.0 - lam) * ptau[idx]
+                batch_mix = {"type": "mixup", "lam": lam, "partner": idx}
 
         optimizer.zero_grad()
         out = model(embeddings)
@@ -122,8 +282,20 @@ def train_epoch(model, dataloader, criterion_ptau, criterion_thal, optimizer, de
         if thal_ordinal and n_thal_classes is not None:
             ordinal_targets = make_ordinal_targets(thal, n_thal_classes)
             loss_thal = criterion_ordinal(thal_pred, ordinal_targets)
+        elif batch_mix is not None:
+            partner = batch_mix["partner"]
+            lam = batch_mix["lam"]
+            if batch_mix["type"] == "mixup":
+                loss_thal = lam * criterion_thal(thal_pred, thal) + (1.0 - lam) * criterion_thal(
+                    thal_pred, thal[partner]
+                )
+            else:
+                loss_thal = (1.0 - lam) * criterion_thal(thal_pred, thal) + lam * criterion_thal(
+                    thal_pred, thal[partner]
+                )
         else:
             loss_thal = criterion_thal(thal_pred, thal)
+
         loss = loss_thal
         if criterion_ptau is not None:
             loss_ptau = criterion_ptau(ptau_pred, ptau)
@@ -199,6 +371,14 @@ def main(args):
     data_suffix = getattr(args, "data_suffix", "")
     data_path = os.path.join('data', 'model_data', f'{args.region}_data_for_model_training{data_suffix}.pkl')
     print(f"Loading data from {data_path}")
+    if data_suffix and "augscaling" in str(data_suffix).lower():
+        warnings.warn(
+            f"Loading augmented pickle ({data_suffix!r}). Offline _augScaling is deprecated; "
+            "use base .pkl and train_model --aug_* online augmentation. "
+            "Delete stale *_patient_level_pooling_*_augScaling.pkl or use --recompute.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     with open(data_path, 'rb') as f:
         loaded = pickle.load(f)
@@ -342,7 +522,35 @@ def main(args):
             }, f, protocol=pickle.HIGHEST_PROTOCOL)
         print(f"\nSaved patient-level cache to {cache_path} (reuse in next runs).")
 
-    criterion_thal = nn.CrossEntropyLoss()
+    label_smoothing = float(getattr(args, "label_smoothing", 0.0) or 0.0)
+    if label_smoothing > 0:
+        criterion_thal = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
+    else:
+        criterion_thal = nn.CrossEntropyLoss()
+
+    if getattr(args, "no_online_augment", False):
+        train_augment_cfg = EmbeddingAugmentConfig()
+    else:
+        train_augment_cfg = _embedding_augment_config_from_args(args)
+    if train_augment_cfg.any_enabled():
+        print(
+            "Online embedding augmentation (train only): "
+            f"scale_jitter={train_augment_cfg.scale_jitter_half_width}, "
+            f"per_gene_scale={train_augment_cfg.per_gene_scale_jitter_half_width}, "
+            f"gene_dropout={train_augment_cfg.gene_dropout_p}, "
+            f"emb_dim_dropout={train_augment_cfg.emb_dim_dropout_p}, "
+            f"feature_dropout={train_augment_cfg.feature_dropout_p}, "
+            f"gene_block_cutout_max={train_augment_cfg.gene_block_cutout_max}, "
+            f"noise_std={train_augment_cfg.noise_std}"
+        )
+    mixup_alpha = float(getattr(args, "mixup_alpha", 0.0) or 0.0)
+    gene_cutmix_prob = float(getattr(args, "gene_cutmix_prob", 0.0) or 0.0)
+    gene_cutmix_alpha = float(getattr(args, "gene_cutmix_alpha", 1.0) or 1.0)
+    if mixup_alpha > 0 or gene_cutmix_prob > 0:
+        print(
+            f"Batch aug: mixup_alpha={mixup_alpha}, gene_cutmix_prob={gene_cutmix_prob}, "
+            f"gene_cutmix_alpha={gene_cutmix_alpha} (off when --thal_ordinal)"
+        )
 
     # Leave-one-fold-out cross-validation
     fold_results = []
@@ -407,8 +615,10 @@ def main(args):
 
         print(f"Train: {len(train_embeddings)} patients, Test: {len(test_embeddings)} patients")
 
-        train_dataset = EmbeddingDataset(train_embeddings, train_ptau, train_thal)
-        test_dataset = EmbeddingDataset(test_embeddings, test_ptau, test_thal)
+        train_dataset = EmbeddingDataset(
+            train_embeddings, train_ptau, train_thal, train=True, augment_config=train_augment_cfg
+        )
+        test_dataset = EmbeddingDataset(test_embeddings, test_ptau, test_thal, train=False)
 
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
         test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
@@ -486,6 +696,9 @@ def main(args):
                 model, train_loader, criterion_ptau, criterion_thal, optimizer, device,
                 lambda_entropy=args.lambda_entropy if args.gene_encoder else 0.0,
                 thal_ordinal=thal_ordinal, n_thal_classes=n_thal_classes,
+                mixup_alpha=mixup_alpha,
+                gene_cutmix_prob=gene_cutmix_prob,
+                gene_cutmix_alpha=gene_cutmix_alpha,
             )
             test_loss, test_mse, test_mae, test_f1 = evaluate(
                 model, test_loader, criterion_ptau, criterion_thal, device, idx_to_thal,
@@ -673,7 +886,33 @@ if __name__ == "__main__":
     parser.add_argument('--save_dir', type=str, default='models',
                        help='Directory to save best model when --save_best_model (default: models).')
     parser.add_argument('--data_suffix', type=str, default='',
-                       help='Suffix for model-data filename, e.g. _augScaling to load {region}_data_for_model_training_augScaling.pkl')
+                       help='Suffix for model-data .pkl (avoid _augScaling; use online --aug_* instead).')
+    parser.add_argument('--no_online_augment', action='store_true',
+                       help='Disable all EmbeddingDataset online augmentations (--aug_* ignored).')
+    parser.add_argument('--aug_scale_jitter', type=float, default=0.0,
+                       help='Global multiplicative jitter U(1-a,1+a) on embeddings (train only). 0=off.')
+    parser.add_argument('--aug_per_gene_scale_jitter', type=float, default=0.0,
+                       help='Per-gene U(1-b,1+b) scale on 3D (genes,dims) input. 0=off.')
+    parser.add_argument('--aug_gene_dropout', type=float, default=0.0,
+                       help='Probability to zero each gene row (3D input). 0=off.')
+    parser.add_argument('--aug_emb_dim_dropout', type=float, default=0.0,
+                       help='Probability to zero each embedding dim (all genes). 0=off.')
+    parser.add_argument('--aug_feature_dropout', type=float, default=0.0,
+                       help='Probability to zero each flat feature (2D pooled input). 0=off.')
+    parser.add_argument('--aug_gene_block_cutout_max', type=int, default=0,
+                       help='Max length of contiguous gene zero block (3D). 0=off.')
+    parser.add_argument('--aug_gene_block_cutout_prob', type=float, default=0.5,
+                       help='Probability to apply gene block cutout when max>0.')
+    parser.add_argument('--aug_noise_std', type=float, default=0.0,
+                       help='Additive Gaussian noise std (train only). 0=off.')
+    parser.add_argument('--mixup_alpha', type=float, default=0.0,
+                       help='Beta(alpha,alpha) for batch mixup on embeddings; 0=off. Off if --thal_ordinal.')
+    parser.add_argument('--gene_cutmix_prob', type=float, default=0.0,
+                       help='Per-batch prob of gene-axis CutMix (3D only). 0=off. Off if --thal_ordinal.')
+    parser.add_argument('--gene_cutmix_alpha', type=float, default=1.0,
+                       help='Beta(alpha,alpha) for random cut length fraction (gene CutMix).')
+    parser.add_argument('--label_smoothing', type=float, default=0.0,
+                       help='CrossEntropy label smoothing for Thal (0=off).')
     args = parser.parse_args()
 
     main(args)

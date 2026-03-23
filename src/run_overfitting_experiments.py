@@ -3,6 +3,7 @@ Saves CSV to {cell_type}_{region}/overfitting_experiments.csv (or --log_base par
 When region is MTG, delegates to Microglia two-head model (CERAD + Braak) using MTG_data_for_model_training.pkl."""
 import os
 import sys
+import warnings
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import argparse
@@ -88,6 +89,19 @@ def build_args(region, cell_type, exp, gene_encoder, attention, loss_ptau, pca_c
         save_best_model=getattr(base_args, "save_best_model", False),
         save_dir=getattr(base_args, "save_dir", "models"),
         data_suffix=getattr(base_args, "data_suffix", ""),
+        no_online_augment=getattr(base_args, "no_online_augment", False),
+        aug_scale_jitter=getattr(base_args, "aug_scale_jitter", 0.0),
+        aug_per_gene_scale_jitter=getattr(base_args, "aug_per_gene_scale_jitter", 0.0),
+        aug_gene_dropout=getattr(base_args, "aug_gene_dropout", 0.0),
+        aug_emb_dim_dropout=getattr(base_args, "aug_emb_dim_dropout", 0.0),
+        aug_feature_dropout=getattr(base_args, "aug_feature_dropout", 0.0),
+        aug_gene_block_cutout_max=getattr(base_args, "aug_gene_block_cutout_max", 0),
+        aug_gene_block_cutout_prob=getattr(base_args, "aug_gene_block_cutout_prob", 0.5),
+        aug_noise_std=getattr(base_args, "aug_noise_std", 0.0),
+        mixup_alpha=getattr(base_args, "mixup_alpha", 0.0),
+        gene_cutmix_prob=getattr(base_args, "gene_cutmix_prob", 0.0),
+        gene_cutmix_alpha=getattr(base_args, "gene_cutmix_alpha", 1.0),
+        label_smoothing=getattr(base_args, "label_smoothing", 0.0),
     )
 
 
@@ -253,11 +267,30 @@ if __name__ == "__main__":
     parser.add_argument("--save_dir", type=str, default="models",
                         help="Directory for saved best models when --save_best_model (default: models).")
     parser.add_argument("--data_suffix", type=str, default="",
-                        help="Suffix for model-data filename, e.g. _augScaling to use {region}_data_for_model_training_augScaling.pkl")
+                        help="Suffix for model-data .pkl (avoid _augScaling; use --aug_* online augmentation).")
     parser.add_argument("--use_augScaling", action="store_true",
-                        help="Force --data_suffix to exactly '_augScaling' (augmented scaling pickles).")
+                        help="DEPRECATED: sets --data_suffix _augScaling. Prefer base .pkl + --aug_* flags.")
+    parser.add_argument("--no_online_augment", action="store_true",
+                        help="Disable EmbeddingDataset online augmentation.")
+    parser.add_argument("--aug_scale_jitter", type=float, default=0.0, help="Train-only global scale U(1-a,1+a).")
+    parser.add_argument("--aug_per_gene_scale_jitter", type=float, default=0.0, help="Train-only per-gene scale (3D).")
+    parser.add_argument("--aug_gene_dropout", type=float, default=0.0, help="Gene-row dropout prob (3D).")
+    parser.add_argument("--aug_emb_dim_dropout", type=float, default=0.0, help="Embedding-dim dropout (3D or 2D).")
+    parser.add_argument("--aug_feature_dropout", type=float, default=0.0, help="Feature dropout (2D pooled).")
+    parser.add_argument("--aug_gene_block_cutout_max", type=int, default=0, help="Max genes in contiguous cutout (3D).")
+    parser.add_argument("--aug_gene_block_cutout_prob", type=float, default=0.5, help="Apply cutout prob when max>0.")
+    parser.add_argument("--aug_noise_std", type=float, default=0.0, help="Additive Gaussian noise std (train).")
+    parser.add_argument("--mixup_alpha", type=float, default=0.0, help="Mixup Beta(alpha,alpha); 0=off.")
+    parser.add_argument("--gene_cutmix_prob", type=float, default=0.0, help="Per-batch gene CutMix prob (3D).")
+    parser.add_argument("--gene_cutmix_alpha", type=float, default=1.0, help="Beta for CutMix cut length.")
+    parser.add_argument("--label_smoothing", type=float, default=0.0, help="Thal CrossEntropy label smoothing.")
     args = parser.parse_args()
     if getattr(args, "use_augScaling", False):
-        # Keep behavior consistent: fixed suffix only.
         args.data_suffix = "_augScaling"
+        warnings.warn(
+            "--use_augScaling loads offline 3× augmented pickles; deprecated. "
+            "Use base data_for_model_training.pkl with --aug_scale_jitter / --aug_noise_std / etc.",
+            UserWarning,
+            stacklevel=2,
+        )
     run_experiments(args)
