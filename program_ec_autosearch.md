@@ -8,6 +8,7 @@ Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch): a
 - **Cell type:** `Astrocytes`
 - **`loss_ptau`:** `none` (Thal classification drives training loss for this study)
 - **Metric:** `train_model.main` → **average F1** across test folds (same as your experiment CSVs). Training always runs with `best_f1=True` inside the driver so the saved checkpoint aligns with the F1 objective.
+- **TensorBoard:** Autosearch sets `no_tensorboard=True` on each trial so no `SummaryWriter` event files are created (faster, less disk I/O). Normal `python src/train_model.py` still logs to TensorBoard unless you pass `--no_tensorboard`.
 
 ## Setup
 
@@ -30,11 +31,78 @@ Artifacts under `--log_base`:
 - `{study_name}_trials.csv` — flat table for spreadsheets
 - `{study_name}_best_params.json` — best value + `trial_params` dict
 
+## Optuna Dashboard
+
+Install the web UI, then point it at the **correct** SQLite file (use a **forward-slash** URL; three slashes after `sqlite:` for an absolute path).
+
+```bash
+pip install optuna-dashboard
+```
+
+On **Windows**, if `gunicorn` is installed the dashboard may default to it and crash with `No module named 'fcntl'` (Unix-only). Pass **`--server wsgiref`** so it uses the stdlib server (fine for local use). The commands below include that flag so they work on Windows and Linux.
+
+**Pick the right database**
+
+| How you ran autosearch | File to open in the dashboard |
+|------------------------|-------------------------------|
+| `--llm` (LLM proposals) | `{log_base}/{study_name}_llm_optuna.db` |
+| Default `--sampler optuna` (no `--llm`) | `{log_base}/{study_name}_optuna.db` |
+
+If you **only** used `--llm`, trials are in `*_llm_optuna.db`. Opening `*_optuna.db` in that case often points at an empty or non-Optuna file and the dashboard will crash (see troubleshooting below).
+
+**LLM study** example:
+
+```bash
+optuna-dashboard --server wsgiref sqlite:///I:/sf2026/ranking_model_runs/autosearch_ec/ec_f1_none_llm_optuna.db
+```
+
+**Sampler study** example (after you have run at least one `autosearch_ec.py` **without** `--llm` and with default sampler):
+
+```bash
+optuna-dashboard --server wsgiref sqlite:///I:/sf2026/ranking_model_runs/autosearch_ec/ec_f1_none_optuna.db
+```
+
+Replace with your `--log_base`, `{study_name}`, and drive letter. If you passed `--storage` / `--optuna_storage`, use that URL instead.
+
+Open the URL printed in the terminal (default **http://127.0.0.1:8080**). LLM trials skip the DB when you pass `--no_optuna`.
+
+### Troubleshooting (`no such table: version_info`)
+
+That error means SQLite opened the file, but it is **not** a valid Optuna RDB (missing Optuna schema). Typical causes:
+
+1. **Wrong file** — e.g. dashboard on `*_optuna.db` while you only ever ran `--llm` → use `*_llm_optuna.db`.
+2. **Empty or corrupt DB** — delete the broken `.db` and run autosearch again so `optuna.create_study` recreates it (you will lose that study’s history in that file).
+3. **Not an Optuna database** — another program created a `.db` with the same name; rename/delete and recreate via autosearch.
+
+### Troubleshooting (`No module named 'fcntl'` on Windows)
+
+`optuna-dashboard` may pick **gunicorn** when it is installed; gunicorn does not run on Windows. Use:
+
+```bash
+optuna-dashboard --server wsgiref sqlite:///I:/path/to/your_study.db
+```
+
 ## Run (random search, no Optuna)
 
 ```bash
 python src/autosearch_ec.py --sampler random --n_trials 50 --seed 1 --log_base ranking_model_runs/autosearch_ec_rand
 ```
+
+## LLM-in-the-loop (`--llm`)
+
+An OpenAI-compatible API proposes **batches** of trials; each JSON object is validated by `trial_params_from_llm_dict` in `autosearch_ec.py`, then `train_model.main` runs like the Optuna path (EC, `loss_ptau=none`, mean LOFO F1, TensorBoard off).
+
+1. **Install:** `pip install -r requirements-autosearch-llm.txt` (adds `openai`, `python-dotenv`, etc.).
+2. **API key:** put `OPENAI_API_KEY=...` in project-root `.env`, or export it. For **Ollama:** `--base_url http://localhost:11434/v1` and `--api_key ollama` (or any non-empty string).
+3. **Example:**
+
+```bash
+python src/autosearch_ec.py --llm --n_trials 24 --proposals_per_round 3 --study_name ec_llm --log_base ranking_model_runs/autosearch_ec_llm --epochs 150 --patience 25 --model gpt-4o-mini
+```
+
+**LLM artifacts:** `{study_name}_trials.jsonl` (append; use `--resume_jsonl` to continue), `{study_name}_llm_rounds.jsonl` (raw replies), `{study_name}_llm_optuna.db` (optional; `--no_optuna` to disable). Override DB with `--optuna_storage` / `--optuna_study_name`.
+
+**Prompts:** `--system_prompt_file` replaces the built-in system prompt. The model must return a **single JSON array** of flat objects (trial configs). Main fields: `gene_encoder`, `attention`, `pooling`, `pca_components`, `mlp_hidden_sizes` (comma-separated widths for baseline; clamped), `n_hidden_layers`, `hidden_dim_3layer`, `dropout`, `weight_decay`, `lr`, `batch_size`, `lambda_entropy` (gene encoder only), aug / mixup / cutmix / `label_smoothing` / `thal_ordinal` — same semantics as `suggest_trial_optuna` (see source for allowed values).
 
 ## Useful flags
 
@@ -44,6 +112,7 @@ python src/autosearch_ec.py --sampler random --n_trials 50 --seed 1 --log_base r
 | `--data_suffix` | Same as `train_model` (avoid `_augScaling`; prefer online aug) |
 | `--device cuda` | Override auto device |
 | `--study_name` | Optuna study name + file prefix |
+| `--q` | Hides `train_model` LOFO / fold stdout; autosearch still prints each trial line (and LLM round lines when using `--llm`) |
 
 ## Search space (edit in code)
 

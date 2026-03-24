@@ -26,6 +26,16 @@ from baseline_model import BaselineRankingModel
 from gene_encoder_model import GeneEncoderModel, gene_entropy_loss, make_ordinal_targets, ordinal_logits_to_class
 
 
+class _NullSummaryWriter:
+    """No-op stand-in for SummaryWriter when TensorBoard is disabled (e.g. autosearch)."""
+
+    def add_scalar(self, *args, **kwargs):
+        pass
+
+    def close(self):
+        pass
+
+
 def _parse_mlp_hidden_sizes(s):
     """Parse comma-separated positive ints, e.g. '64,32,16,8,4'. Empty/whitespace -> None."""
     if s is None or not str(s).strip():
@@ -366,11 +376,17 @@ def evaluate(model, dataloader, criterion_ptau, criterion_thal, device, idx_to_t
 
 
 def main(args):
+    quiet = getattr(args, "q", False)
+
+    def out(*a, **kw):
+        if not quiet:
+            print(*a, **kw)
+
     mlp_hidden_list = _parse_mlp_hidden_sizes(getattr(args, "mlp_hidden_sizes", ""))
 
     data_suffix = getattr(args, "data_suffix", "")
     data_path = os.path.join('data', 'model_data', f'{args.region}_data_for_model_training{data_suffix}.pkl')
-    print(f"Loading data from {data_path}")
+    out(f"Loading data from {data_path}")
     if data_suffix and "augscaling" in str(data_suffix).lower():
         warnings.warn(
             f"Loading augmented pickle ({data_suffix!r}). Offline _augScaling is deprecated; "
@@ -388,14 +404,14 @@ def main(args):
         embeddings_folds, patient_info_folds, ptau_folds, thal_folds = loaded
         gene_names = None
 
-    print(f"Loaded {len(embeddings_folds)} folds")
+    out(f"Loaded {len(embeddings_folds)} folds")
 
     top_genes = getattr(args, 'top_genes', None)
     ranked_genes_path = getattr(args, 'ranked_genes_path', None)
     if top_genes is not None:
         if gene_names is None:
             cell_type = getattr(args, 'cell_type', 'Astrocytes')
-            print(f"Resolving gene order for region={args.region}, cell_type={cell_type} (for top_genes filter)...")
+            out(f"Resolving gene order for region={args.region}, cell_type={cell_type} (for top_genes filter)...")
             gene_names = _get_gene_order_for_region(args.region, cell_type=cell_type)
         if not ranked_genes_path:
             ranked_genes_path = os.path.join(
@@ -408,18 +424,18 @@ def main(args):
         indices = [gene_to_idx[g] for g in top_gene_names if g in gene_to_idx]
         missing = [g for g in top_gene_names if g not in gene_to_idx]
         if missing:
-            print(f"  Warning: {len(missing)} of top {top_genes} ranked genes not in data; {len(indices)} kept.")
+            out(f"  Warning: {len(missing)} of top {top_genes} ranked genes not in data; {len(indices)} kept.")
         if not indices:
             raise ValueError("No ranked genes found in data gene list. Check ranked_genes_path and data region/cell_type.")
         for i in range(len(embeddings_folds)):
             embeddings_folds[i] = embeddings_folds[i][:, indices, :]
-        print(f"  Filtered to top {len(indices)} genes from {ranked_genes_path}")
+        out(f"  Filtered to top {len(indices)} genes from {ranked_genes_path}")
 
     if args.gene_encoder and args.pooling is not None:
         raise ValueError("--gene_encoder requires pooling=None (no gene pooling); omit --pooling")
 
     device = torch.device(args.device)
-    print(f"Using device: {device}")
+    out(f"Using device: {device}")
 
     if args.loss_ptau is None or (isinstance(args.loss_ptau, str) and args.loss_ptau.lower() == 'none'):
         criterion_ptau = None
@@ -446,7 +462,7 @@ def main(args):
         idx_to_thal = cache["idx_to_thal"]
         n_thal_classes = cache["n_thal_classes"]
         n_folds = len(all_fold_patient_data)
-        print(f"  {n_folds} folds loaded. Skip preparation.")
+        out(f"  {n_folds} folds loaded. Skip preparation.")
     else:
         all_thal_labels = []
         for thal_fold in thal_folds:
@@ -478,7 +494,7 @@ def main(args):
                 pooled_embeddings = fold_embeddings
             else:
                 pooled_embeddings = apply_pooling(fold_embeddings, method=args.pooling)
-            print(f"  Pooled embeddings shape: {pooled_embeddings.shape}")
+            out(f"  Pooled embeddings shape: {pooled_embeddings.shape}")
 
             patient_embeddings = []
             patient_ptau = []
@@ -510,7 +526,7 @@ def main(args):
                 "ptau": patient_ptau_log,
                 "thal": patient_thal_encoded,
             })
-            print(f"  Number of patients: {len(patient_ptau)}")
+            out(f"  Number of patients: {len(patient_ptau)}")
 
         os.makedirs(os.path.dirname(cache_path), exist_ok=True)
         with open(cache_path, "wb") as f:
@@ -533,7 +549,7 @@ def main(args):
     else:
         train_augment_cfg = _embedding_augment_config_from_args(args)
     if train_augment_cfg.any_enabled():
-        print(
+        out(
             "Online embedding augmentation (train only): "
             f"scale_jitter={train_augment_cfg.scale_jitter_half_width}, "
             f"per_gene_scale={train_augment_cfg.per_gene_scale_jitter_half_width}, "
@@ -547,7 +563,7 @@ def main(args):
     gene_cutmix_prob = float(getattr(args, "gene_cutmix_prob", 0.0) or 0.0)
     gene_cutmix_alpha = float(getattr(args, "gene_cutmix_alpha", 1.0) or 1.0)
     if mixup_alpha > 0 or gene_cutmix_prob > 0:
-        print(
+        out(
             f"Batch aug: mixup_alpha={mixup_alpha}, gene_cutmix_prob={gene_cutmix_prob}, "
             f"gene_cutmix_alpha={gene_cutmix_alpha} (off when --thal_ordinal)"
         )
@@ -593,11 +609,11 @@ def main(args):
                 test_pca = pca.transform(test_for_pca)
                 train_embeddings = train_pca.reshape(n_train, n_genes, args.pca_components)
                 test_embeddings = test_pca.reshape(n_test, n_genes, args.pca_components)
-                print(f"Applied StandardScaler (fit on train) + PCA 16->{args.pca_components} (fit on scaled train), transform train+test")
+                out(f"Applied StandardScaler (fit on train) + PCA 16->{args.pca_components} (fit on scaled train), transform train+test")
             else:
                 train_embeddings = train_scaled
                 test_embeddings = test_scaled
-                print(f"Applied StandardScaler (fit on train), transform train+test (no PCA, keeping {n_dims} dims)")
+                out(f"Applied StandardScaler (fit on train), transform train+test (no PCA, keeping {n_dims} dims)")
         else:
             scaler = StandardScaler()
             train_scaled = scaler.fit_transform(train_embeddings)
@@ -607,13 +623,13 @@ def main(args):
                 pca = PCA(n_components=args.pca_components)
                 train_embeddings = pca.fit_transform(train_scaled)
                 test_embeddings = pca.transform(test_scaled)
-                print(f"Applied StandardScaler (fit on train) + PCA 16->{args.pca_components} (fit on scaled train), transform train+test")
+                out(f"Applied StandardScaler (fit on train) + PCA 16->{args.pca_components} (fit on scaled train), transform train+test")
             else:
                 train_embeddings = train_scaled
                 test_embeddings = test_scaled
-                print(f"Applied StandardScaler (fit on train), transform train+test (no PCA, keeping 16 dims)")
+                out(f"Applied StandardScaler (fit on train), transform train+test (no PCA, keeping 16 dims)")
 
-        print(f"Train: {len(train_embeddings)} patients, Test: {len(test_embeddings)} patients")
+        out(f"Train: {len(train_embeddings)} patients, Test: {len(test_embeddings)} patients")
 
         train_dataset = EmbeddingDataset(
             train_embeddings, train_ptau, train_thal, train=True, augment_config=train_augment_cfg
@@ -669,14 +685,22 @@ def main(args):
             layers_str = ''
         exp_id_str = f"_{args.exp_id}" if getattr(args, 'exp_id', None) else ''
         log_base = getattr(args, 'log_base', 'runs')
-        log_dir = os.path.join(log_base, f'{args.region}_{args.pooling}_{args.loss_ptau}{model_suffix}{attention_suffix}{dropout_str}{wd_str}{layers_str}{exp_id_str}_testfold{test_fold_idx+1}')
-        if os.path.exists(log_dir):
-            try:
-                import shutil
-                shutil.rmtree(log_dir)
-            except (PermissionError, OSError) as e:
-                print(f"  Warning: Could not delete {log_dir}: {e}. TensorBoard may have it open. Continuing anyway.")
-        writer = SummaryWriter(log_dir)
+        no_tensorboard = getattr(args, "no_tensorboard", False)
+        if no_tensorboard:
+            writer = _NullSummaryWriter()
+        else:
+            log_dir = os.path.join(
+                log_base,
+                f"{args.region}_{args.pooling}_{args.loss_ptau}{model_suffix}{attention_suffix}"
+                f"{dropout_str}{wd_str}{layers_str}{exp_id_str}_testfold{test_fold_idx + 1}",
+            )
+            if os.path.exists(log_dir):
+                try:
+                    import shutil
+                    shutil.rmtree(log_dir)
+                except (PermissionError, OSError) as e:
+                    print(f"  Warning: Could not delete {log_dir}: {e}. TensorBoard may have it open. Continuing anyway.")
+            writer = SummaryWriter(log_dir)
 
         best_test_loss = float('inf')
         best_test_f1 = float('-inf')
@@ -745,13 +769,13 @@ def main(args):
             else:
                 epochs_without_improvement += 1
             """
-            if (epoch + 1) % 10 == 0 and getattr(args, "verbose", True):
-                print(f"Epoch {epoch+1}/{args.epochs} - Train Loss: {train_loss:.4f}, "
-                      f"Test Loss: {test_loss:.4f}, Test F1: {test_f1:.4f}, Test MAE: {test_mae:.4f}")
+            if (epoch + 1) % 10 == 0 and getattr(args, "verbose", True) and not quiet:
+                out(f"Epoch {epoch+1}/{args.epochs} - Train Loss: {train_loss:.4f}, "
+                    f"Test Loss: {test_loss:.4f}, Test F1: {test_f1:.4f}, Test MAE: {test_mae:.4f}")
 
             if patience is not None and epochs_without_improvement >= patience:
-                if getattr(args, "verbose", True):
-                    print(f"  Early stopping at epoch {epoch+1} (no test loss improvement for {patience} epochs).")
+                if getattr(args, "verbose", True) and not quiet:
+                    out(f"  Early stopping at epoch {epoch+1} (no test loss improvement for {patience} epochs).")
                 break
 
         """
@@ -768,7 +792,7 @@ def main(args):
             save_name = f'{args.region}_testfold{test_fold_idx+1}{model_suffix}{attention_suffix}{exp_id_str}.pt'
             save_path = os.path.join(save_dir, save_name)
             torch.save(best_state, save_path)
-            print(f"  Saved best model to {save_path}")
+            out(f"  Saved best model to {save_path}")
 
         if use_best_f1 and best_state is not None:
             report_f1 = best_test_f1
@@ -789,12 +813,12 @@ def main(args):
             report_mse = test_mse
             report_mae = test_mae
             report_epoch = epoch + 1
-            print(f"\nTest Fold {test_fold_idx + 1} Final F1: {report_f1:.4f} (last epoch)")
+            out(f"\nTest Fold {test_fold_idx + 1} Final F1: {report_f1:.4f} (last epoch)")
             if use_best_f1:
-                print(f"  (no improvement in any epoch; reporting last epoch)")
+                out(f"  (no improvement in any epoch; reporting last epoch)")
             elif best_test_f1 != report_f1:
-                print(f"  (best F1 during training was {best_test_f1:.4f})")
-            print(f"  MSE: {report_mse:.4f}, MAE: {report_mae:.4f}")
+                out(f"  (best F1 during training was {best_test_f1:.4f})")
+            out(f"  MSE: {report_mse:.4f}, MAE: {report_mae:.4f}")
 
         fold_results.append({
             'test_fold': test_fold_idx + 1,
@@ -805,23 +829,23 @@ def main(args):
             'best_test_mae': report_mae
         })
 
-    print(f"\n{'='*60}")
-    print("Leave-One-Fold-Out Cross-Validation Summary")
-    print(f"{'='*60}")
+    out(f"\n{'='*60}")
+    out("Leave-One-Fold-Out Cross-Validation Summary")
+    out(f"{'='*60}")
     fold_f1s = [r['final_f1'] for r in fold_results]
     label = "best" if getattr(args, 'best_f1', False) else "final (last-epoch)"
-    print(f"Per-fold {label} F1: {[f'{f:.4f}' for f in fold_f1s]}")
+    out(f"Per-fold {label} F1: {[f'{f:.4f}' for f in fold_f1s]}")
     for result in fold_results:
-        print(f"\033[92mTest Fold {result['test_fold']}: F1={result['best_f1']:.4f}, "
-              f"MSE={result['best_test_mse']:.4f}, MAE={result['best_test_mae']:.4f}\033[0m")
+        out(f"\033[92mTest Fold {result['test_fold']}: F1={result['best_f1']:.4f}, "
+            f"MSE={result['best_test_mse']:.4f}, MAE={result['best_test_mae']:.4f}\033[0m")
 
     avg_f1 = np.mean(fold_f1s)
     avg_mse = np.mean([r['best_test_mse'] for r in fold_results])
     avg_mae = np.mean([r['best_test_mae'] for r in fold_results])
 
-    print(f"\nAverage F1: {avg_f1:.4f}")
-    print(f"Average MSE: {avg_mse:.4f}")
-    print(f"Average MAE: {avg_mae:.4f}")
+    out(f"\nAverage F1: {avg_f1:.4f}")
+    out(f"Average MSE: {avg_mse:.4f}")
+    out(f"Average MAE: {avg_mae:.4f}")
 
     return avg_f1, avg_mse, avg_mae, fold_results
 
@@ -861,6 +885,12 @@ if __name__ == "__main__":
                        help='Print per-epoch progress (default: True). Set to False when running many experiments.')
     parser.add_argument('--no_verbose', action='store_false', dest='verbose',
                        help='Disable per-epoch printing (quiet mode for batch runs)')
+    parser.add_argument(
+        '--q',
+        action='store_true',
+        dest='q',
+        help='Suppress LOFO / fold / data-load stdout (useful with autosearch). Implies less noise than --no_verbose.',
+    )
     parser.add_argument('--patience', type=int, default=20,
                        help='Early stopping: stop if test loss does not improve for this many epochs (default: 20). Set to 0 to disable.')
     parser.add_argument('--n_hidden_layers', type=int, default=1, choices=[1, 3],
@@ -913,6 +943,8 @@ if __name__ == "__main__":
                        help='Beta(alpha,alpha) for random cut length fraction (gene CutMix).')
     parser.add_argument('--label_smoothing', type=float, default=0.0,
                        help='CrossEntropy label smoothing for Thal (0=off).')
+    parser.add_argument('--no_tensorboard', action='store_true',
+                       help='Disable TensorBoard logging (no SummaryWriter / event files).')
     args = parser.parse_args()
 
     main(args)
