@@ -376,7 +376,11 @@ def evaluate(model, dataloader, criterion_ptau, criterion_thal, device, idx_to_t
 
 
 def main(args):
-    quiet = getattr(args, "q", False)
+    # Autosearch passes q=True (quiet) or q=False (verbose); CLI uses --verbose-cv for LOFO logs.
+    if hasattr(args, "q"):
+        quiet = bool(args.q)
+    else:
+        quiet = not getattr(args, "verbose_cv", False)
 
     def out(*a, **kw):
         if not quiet:
@@ -454,7 +458,7 @@ def main(args):
     cache_path = os.path.join("data", "model_data", f"{args.region}_patient_level_pooling_{pool_str}{top_suffix}{data_cache_suffix}.pkl")
     use_cache = os.path.exists(cache_path) and (not getattr(args, "recompute", False))
     if use_cache and os.path.getmtime(cache_path) >= os.path.getmtime(data_path):
-        print(f"Loading precomputed patient-level data from cache: {cache_path}")
+        out(f"Loading precomputed patient-level data from cache: {cache_path}")
         with open(cache_path, "rb") as f:
             cache = pickle.load(f)
         all_fold_patient_data = cache["all_fold_patient_data"]
@@ -478,12 +482,12 @@ def main(args):
         n_folds = len(embeddings_folds)
         all_fold_patient_data = []
 
-        print(f"\n{'='*60}")
-        print("Pipeline: cells -> genes -> patient embedding (StandardScaler+PCA in CV)")
-        print(f"{'='*60}")
+        out(f"\n{'='*60}")
+        out("Pipeline: cells -> genes -> patient embedding (StandardScaler+PCA in CV)")
+        out(f"{'='*60}")
 
         for fold_idx in range(n_folds):
-            print(f"\nPreparing fold {fold_idx + 1}/{n_folds}...")
+            out(f"\nPreparing fold {fold_idx + 1}/{n_folds}...")
 
             fold_embeddings = embeddings_folds[fold_idx]
             fold_ptau = ptau_folds[fold_idx]
@@ -516,7 +520,7 @@ def main(args):
             patient_embeddings = np.array(patient_embeddings)
             patient_ptau = np.array(patient_ptau)
             patient_thal = np.array(patient_thal)
-            print(f"  Patient embeddings shape: {patient_embeddings.shape}")
+            out(f"  Patient embeddings shape: {patient_embeddings.shape}")
 
             patient_ptau_log = np.log1p(patient_ptau)
             patient_thal_int = [int(t) for t in patient_thal]
@@ -536,7 +540,7 @@ def main(args):
                 "idx_to_thal": idx_to_thal,
                 "n_thal_classes": n_thal_classes,
             }, f, protocol=pickle.HIGHEST_PROTOCOL)
-        print(f"\nSaved patient-level cache to {cache_path} (reuse in next runs).")
+        out(f"\nSaved patient-level cache to {cache_path} (reuse in next runs).")
 
     label_smoothing = float(getattr(args, "label_smoothing", 0.0) or 0.0)
     if label_smoothing > 0:
@@ -572,11 +576,11 @@ def main(args):
     fold_results = []
 
     for test_fold_idx in range(n_folds):
-        print(f"\n{'='*60}")
-        print(f"Test Fold {test_fold_idx + 1}/{n_folds}")
-        print(f"Training on folds: {[i+1 for i in range(n_folds) if i != test_fold_idx]}")
-        print(f"Testing on fold: {test_fold_idx + 1}")
-        print(f"{'='*60}")
+        out(f"\n{'='*60}")
+        out(f"Test Fold {test_fold_idx + 1}/{n_folds}")
+        out(f"Training on folds: {[i+1 for i in range(n_folds) if i != test_fold_idx]}")
+        out(f"Testing on fold: {test_fold_idx + 1}")
+        out(f"{'='*60}")
 
         train_fold_indices = [i for i in range(n_folds) if i != test_fold_idx]
         train_embeddings = np.concatenate([all_fold_patient_data[i]['embeddings'] for i in train_fold_indices], axis=0)
@@ -799,8 +803,8 @@ def main(args):
             report_mse = best_test_mse
             report_mae = best_test_mae
             report_epoch = best_epoch + 1
-            print(f"\nTest Fold {test_fold_idx + 1} Best F1: {report_f1:.4f} (epoch {report_epoch})")
-            print(f"  MSE: {report_mse:.4f}, MAE: {report_mae:.4f}")
+            out(f"\nTest Fold {test_fold_idx + 1} Best F1: {report_f1:.4f} (epoch {report_epoch})")
+            out(f"  MSE: {report_mse:.4f}, MAE: {report_mae:.4f}")
         else:
             # Final-epoch metrics (or fallback when --best_f1 but no improvement)
             model.eval()
@@ -886,10 +890,10 @@ if __name__ == "__main__":
     parser.add_argument('--no_verbose', action='store_false', dest='verbose',
                        help='Disable per-epoch printing (quiet mode for batch runs)')
     parser.add_argument(
-        '--q',
+        '--verbose-cv',
         action='store_true',
-        dest='q',
-        help='Suppress LOFO / fold / data-load stdout (useful with autosearch). Implies less noise than --no_verbose.',
+        dest='verbose_cv',
+        help='Print LOFO fold / data-load / summary stdout (default: quiet for less noise)',
     )
     parser.add_argument('--patience', type=int, default=20,
                        help='Early stopping: stop if test loss does not improve for this many epochs (default: 20). Set to 0 to disable.')

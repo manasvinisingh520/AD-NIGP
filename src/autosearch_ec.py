@@ -2,15 +2,14 @@
 Autoresearch-style hyperparameter search for EC, loss_ptau=none, objective mean LOFO F1.
 
 Calls train_model.main (fixed entrypoint); does not edit model code.
-- Default: Optuna suggests trials (or --sampler random).
-- --llm: OpenAI-compatible API proposes trial batches; same JSONL / optional Optuna append as before.
+- Default: Optuna suggests trials; or --sampler random / --sampler llm (OpenAI-compatible batches).
 
 Usage:
   pip install -r requirements-autosearch.txt
   python src/autosearch_ec.py --n_trials 20 --log_base ranking_model_runs/autosearch_ec --epochs 150 --patience 25
 
   pip install -r requirements-autosearch-llm.txt
-  python src/autosearch_ec.py --llm --n_trials 12 --proposals_per_round 3 --model gpt-4o-mini
+  python src/autosearch_ec.py --sampler llm --n_trials 12 --proposals_per_round 3 --model gpt-4o-mini
 """
 from __future__ import annotations
 
@@ -404,7 +403,7 @@ def params_to_namespace(
     data_suffix: str,
     no_online_augment: bool,
     attention_heads: int,
-    quiet: bool = False,
+    quiet: bool = True,
 ) -> SimpleNamespace:
     """Build train_model args. Always best_f1=True; no_tensorboard=True (no event files under log_base)."""
     return SimpleNamespace(
@@ -464,6 +463,12 @@ def _run_one_trial(ns: SimpleNamespace) -> Tuple[float, Optional[str]]:
         return float(avg_f1), None
     except Exception as e:
         return float("-inf"), f"{type(e).__name__}: {e}\n{traceback.format_exc()}"
+
+
+def _default_optuna_storage_url(log_base: str) -> str:
+    """Default SQLite URL for `ec_optuna.db` under absolute log_base (forward slashes)."""
+    db_path = os.path.join(os.path.abspath(log_base), "ec_optuna.db")
+    return "sqlite:///" + db_path.replace("\\", "/")
 
 
 def _best_f1_from_trial_rows(
@@ -713,7 +718,7 @@ def _optuna_params_and_distributions_from_trial_params(
     return params, distributions
 
 
-def _append_llm_trial_to_optuna(
+def _append_manual_trial_to_optuna(
     study: Any,
     p: TrialParams,
     *,
@@ -721,17 +726,18 @@ def _append_llm_trial_to_optuna(
     err: Optional[str],
     trial_id: int,
     exp_id: str,
+    source: str,
 ) -> None:
     from optuna.trial import TrialState, create_trial
 
     params, distributions = _optuna_params_and_distributions_from_trial_params(p)
     user_attrs: Dict[str, Any] = {
-        "source": "llm",
+        "source": source,
         "jsonl_trial": trial_id,
         "exp_id": exp_id,
         "trial_params": asdict(p),
     }
-    if not p.gene_encoder and p.mlp_hidden_sizes:
+    if source == "llm" and not p.gene_encoder and p.mlp_hidden_sizes:
         dash_mlp = str(params.get("mlp_hidden_sizes", ""))
         if p.mlp_hidden_sizes != dash_mlp:
             user_attrs["mlp_hidden_sizes_llm"] = p.mlp_hidden_sizes
@@ -792,16 +798,16 @@ def run_llm_autosearch(args: argparse.Namespace) -> None:
                 "Optuna is required for LLM runs unless you pass --no_optuna. "
                 "Install: pip install -r requirements-autosearch.txt"
             ) from e
-        db_path = os.path.join(os.path.abspath(args.log_base), f"{args.study_name}_llm_optuna.db")
-        optuna_storage = args.optuna_storage or ("sqlite:///" + db_path.replace("\\", "/"))
-        oname = args.optuna_study_name if args.optuna_study_name is not None else args.study_name
+        optuna_storage = args.storage or args.optuna_storage or _default_optuna_storage_url(args.log_base)
         optuna_study = optuna.create_study(
-            study_name=oname,
+            study_name=args.study_name,
             storage=optuna_storage,
             direction="maximize",
             load_if_exists=True,
         )
-        print(f"LLM Optuna logging: storage={optuna_storage!r}, study_name={oname!r} (e.g. optuna-dashboard)")
+        print(
+            f"Optuna logging: storage={optuna_storage!r}, study_name={args.study_name!r} (e.g. optuna-dashboard)"
+        )
 
     if args.system_prompt_file:
         system_prompt = Path(args.system_prompt_file).read_text(encoding="utf-8")
@@ -885,7 +891,7 @@ def run_llm_autosearch(args: argparse.Namespace) -> None:
                 data_suffix=args.data_suffix,
                 no_online_augment=args.no_online_augment,
                 attention_heads=args.attention_heads,
-                quiet=args.q,
+                quiet=not args.verbose,
             )
             f1, err = _run_one_trial(ns)
             row = {
@@ -901,13 +907,14 @@ def run_llm_autosearch(args: argparse.Namespace) -> None:
             print(f"  Trial {trial_id} F1={f1:.4f}" + (f" ERR={str(err)[:80]}" if err else ""))
             if optuna_study is not None:
                 try:
-                    _append_llm_trial_to_optuna(
+                    _append_manual_trial_to_optuna(
                         optuna_study,
                         p,
                         f1=f1,
                         err=err,
                         trial_id=trial_id,
                         exp_id=exp_id,
+                        source="llm",
                     )
                 except Exception as e:
                     print(f"  Optuna append failed (trial {trial_id}): {type(e).__name__}: {e}")
@@ -916,7 +923,7 @@ def run_llm_autosearch(args: argparse.Namespace) -> None:
 
     tail = f"\nFinished {done} LLM trials. Log: {jsonl_path}"
     if optuna_storage is not None:
-        tail += f"\nLLM Optuna DB: {optuna_storage}"
+        tail += f"\nOptuna DB: {optuna_storage}"
     print(tail)
     _print_best_f1_run_footer(trial_rows)
 
@@ -935,13 +942,14 @@ def main() -> None:
         "--storage",
         type=str,
         default=None,
-        help="Optuna storage URL (sampler=optuna); default sqlite under --log_base",
+        help="Optuna storage URL; default sqlite:///<abs log_base>/ec_optuna.db (also checked before --optuna_storage)",
     )
-    parser.add_argument("--sampler", type=str, choices=["optuna", "random"], default="optuna")
     parser.add_argument(
-        "--llm",
-        action="store_true",
-        help="Propose trials via OpenAI-compatible API instead of Optuna/random sampler",
+        "--sampler",
+        type=str,
+        choices=["optuna", "random", "llm"],
+        default="optuna",
+        help="optuna: TPE/CMA sampler; random: stdlib random; llm: OpenAI-compatible trial batches",
     )
     parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--patience", type=int, default=30)
@@ -952,12 +960,23 @@ def main() -> None:
     parser.add_argument("--no_online_augment", action="store_true")
     parser.add_argument("--attention_heads", type=int, default=1)
     parser.add_argument(
-        "--q",
+        "-v",
+        "--verbose",
         action="store_true",
-        dest="q",
-        help="Suppress train_model LOFO/data-load stdout (trial / LLM lines from this script still print)",
+        help="Print full train_model LOFO/data-load logs (default: quiet; autosearch trial lines still print)",
     )
-    llm = parser.add_argument_group("LLM (--llm only)")
+    parser.add_argument(
+        "--no_optuna",
+        action="store_true",
+        help="Skip SQLite Optuna logging for --sampler random and --sampler llm (no optuna package needed)",
+    )
+    parser.add_argument(
+        "--optuna_storage",
+        type=str,
+        default=None,
+        help="Optuna storage URL if not using --storage; default <log_base>/ec_optuna.db",
+    )
+    llm = parser.add_argument_group("LLM (--sampler llm only)")
     llm.add_argument("--proposals_per_round", type=int, default=3)
     llm.add_argument(
         "--resume_jsonl",
@@ -979,31 +998,11 @@ def main() -> None:
     llm.add_argument("--system_prompt_file", type=str, default=None)
     llm.add_argument("--llm_retries", type=int, default=3)
     llm.add_argument("--llm_timeout", type=float, default=120.0)
-    llm.add_argument(
-        "--no_optuna",
-        action="store_true",
-        help="With --llm: do not append trials to SQLite *_llm_optuna.db",
-    )
-    llm.add_argument(
-        "--optuna_storage",
-        type=str,
-        default=None,
-        help="With --llm: Optuna storage URL; default sqlite .../<study_name>_llm_optuna.db",
-    )
-    llm.add_argument(
-        "--optuna_study_name",
-        type=str,
-        default=None,
-        help="With --llm: study name in RDB (default: same as --study_name)",
-    )
     args = parser.parse_args()
     if args.total_trials is not None:
         args.n_trials = args.total_trials
 
-    if args.llm and args.sampler == "random":
-        raise SystemExit("--llm cannot be used with --sampler random.")
-
-    if args.llm:
+    if args.sampler == "llm":
         run_llm_autosearch(args)
         return
 
@@ -1032,7 +1031,7 @@ def main() -> None:
                 "Optuna is required for --sampler optuna. Install: pip install -r requirements-autosearch.txt"
             ) from e
 
-        storage = args.storage or f"sqlite:///{os.path.join(args.log_base, args.study_name + '_optuna.db')}"
+        storage = args.storage or args.optuna_storage or _default_optuna_storage_url(args.log_base)
         study = optuna.create_study(
             study_name=args.study_name,
             storage=storage,
@@ -1045,6 +1044,7 @@ def main() -> None:
         def objective(trial: optuna.Trial) -> float:
             p = suggest_trial_optuna(trial)
             trial.set_user_attr("trial_params", asdict(p))
+            trial.set_user_attr("source", "optuna")
             exp_id = f"autosearch_{args.study_name}_t{trial.number}"
             ns = params_to_namespace(
                 p,
@@ -1056,7 +1056,7 @@ def main() -> None:
                 data_suffix=args.data_suffix,
                 no_online_augment=args.no_online_augment,
                 attention_heads=args.attention_heads,
-                quiet=args.q,
+                quiet=not args.verbose,
             )
             f1, err = _run_one_trial(ns)
             row = {
@@ -1104,6 +1104,28 @@ def main() -> None:
         _print_best_f1_run_footer(trial_rows)
 
     else:
+        optuna_study = None
+        optuna_storage_url: Optional[str] = None
+        if not args.no_optuna:
+            try:
+                import optuna
+            except ImportError as e:
+                raise SystemExit(
+                    "Optuna is required for --sampler random unless you pass --no_optuna. "
+                    "Install: pip install -r requirements-autosearch.txt"
+                ) from e
+            optuna_storage_url = args.storage or args.optuna_storage or _default_optuna_storage_url(args.log_base)
+            optuna_study = optuna.create_study(
+                study_name=args.study_name,
+                storage=optuna_storage_url,
+                direction="maximize",
+                load_if_exists=True,
+            )
+            print(
+                f"Optuna logging (random): storage={optuna_storage_url!r}, study_name={args.study_name!r} "
+                "(e.g. optuna-dashboard)"
+            )
+
         trial_rows = []
         best_f1 = float("-inf")
         best_payload = None
@@ -1120,7 +1142,7 @@ def main() -> None:
                 data_suffix=args.data_suffix,
                 no_online_augment=args.no_online_augment,
                 attention_heads=args.attention_heads,
-                quiet=args.q,
+                quiet=not args.verbose,
             )
             f1, err = _run_one_trial(ns)
             row = {
@@ -1137,6 +1159,19 @@ def main() -> None:
                 best_f1 = f1
                 best_payload = {"best_value": f1, "trial": i, "params": asdict(p), "exp_id": exp_id}
             print(f"  Random trial {i} F1={f1:.4f}" + (f" err={err[:80]}" if err else ""))
+            if optuna_study is not None:
+                try:
+                    _append_manual_trial_to_optuna(
+                        optuna_study,
+                        p,
+                        f1=f1,
+                        err=err,
+                        trial_id=i,
+                        exp_id=exp_id,
+                        source="random",
+                    )
+                except Exception as e:
+                    print(f"  Optuna append failed (trial {i}): {type(e).__name__}: {e}")
 
         export_trials_csv(csv_path, trial_rows)
         if best_payload:
@@ -1153,6 +1188,8 @@ def main() -> None:
                     default=str,
                 )
         print(f"\nWrote {best_json_path}, {csv_path}, {jsonl_path}")
+        if optuna_storage_url is not None:
+            print(f"Optuna DB: {optuna_storage_url}")
         _print_best_f1_run_footer(trial_rows)
 
 

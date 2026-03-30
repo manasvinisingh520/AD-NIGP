@@ -78,4 +78,5 @@ train_model.py online augmentation (replaces deprecated create_data --augment_sc
   --label_smoothing for Thal. --no_online_augment disables dataset aug. Offline _augScaling is deprecated.
 
 autosearch_ec.py: Optuna or random hyperparameter search for EC, loss_ptau=none, maximize mean LOFO F1.
-  Pass --llm for OpenAI-compatible trial proposals. See ../program_ec_autosearch.md; LLM deps: ../requirements-autosearch-llm.txt.
+  Use --sampler llm for OpenAI-compatible trial proposals. Random/LLM append to ec_optuna.db under --log_base unless --no_optuna.
+  See ../program_ec_autosearch.md; LLM deps: ../requirements-autosearch-llm.txt.

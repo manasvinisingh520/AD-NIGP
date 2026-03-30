@@ -16,7 +16,8 @@ Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch): a
 pip install -r requirements-autosearch.txt
 ```
 
-(`optuna` is only needed for `--sampler optuna`. For zero extra deps use `--sampler random`.)
+- **`--sampler optuna`** (default), **`--sampler random`**, and **`--sampler llm`** all log trials to the same SQLite file by default: `{log_base}/ec_optuna.db` (unless you pass **`--no_optuna`**, which skips Optuna entirely for random and LLM—no `optuna` package needed). The **Optuna study name** inside that file is **`--study_name`** (use different study names to keep sampler runs separate in one DB).
+- For **`--sampler random`** or **`--sampler llm`** with SQLite logging, `optuna` is required (same install as above).
 
 ## Run (Optuna, recommended)
 
@@ -26,53 +27,39 @@ python src/autosearch_ec.py --n_trials 30 --log_base ranking_model_runs/autosear
 
 Artifacts under `--log_base`:
 
-- `{study_name}_optuna.db` — SQLite study (resume with same `--study_name` + path)
+- `ec_optuna.db` — shared SQLite storage (default path under `--log_base`; override with `--storage` / `--optuna_storage`). Each **`--study_name`** is a separate Optuna study in that file when not `--no_optuna`.
 - `{study_name}_trials.jsonl` — one JSON object per trial (this run only)
 - `{study_name}_trials.csv` — flat table for spreadsheets
 - `{study_name}_best_params.json` — best value + `trial_params` dict
 
 ## Optuna Dashboard
 
-Install the web UI, then point it at the **correct** SQLite file (use a **forward-slash** URL; three slashes after `sqlite:` for an absolute path).
+Install the web UI, then point it at **`{log_base}/ec_optuna.db`** by default (use a **forward-slash** URL; three slashes after `sqlite:` for an absolute path).
 
 ```bash
 pip install optuna-dashboard
 ```
 
-On **Windows**, if `gunicorn` is installed the dashboard may default to it and crash with `No module named 'fcntl'` (Unix-only). Pass **`--server wsgiref`** so it uses the stdlib server (fine for local use). The commands below include that flag so they work on Windows and Linux.
+On **Windows**, if `gunicorn` is installed the dashboard may default to it and crash with `No module named 'fcntl'` (Unix-only). Pass **`--server wsgiref`** so it uses the stdlib server (fine for local use). The command below includes that flag.
 
-**Pick the right database**
-
-| How you ran autosearch | File to open in the dashboard |
-|------------------------|-------------------------------|
-| `--llm` (LLM proposals) | `{log_base}/{study_name}_llm_optuna.db` |
-| Default `--sampler optuna` (no `--llm`) | `{log_base}/{study_name}_optuna.db` |
-
-If you **only** used `--llm`, trials are in `*_llm_optuna.db`. Opening `*_optuna.db` in that case often points at an empty or non-Optuna file and the dashboard will crash (see troubleshooting below).
-
-**LLM study** example:
+**One database** holds sampler-driven trials, random-search appends, and LLM appends (when SQLite logging is enabled). In the dashboard, trial **`user_attrs`** include **`source`**: `optuna` (native sampler), `random`, or `llm`.
 
 ```bash
-optuna-dashboard --server wsgiref sqlite:///I:/sf2026/ranking_model_runs/autosearch_ec/ec_f1_none_llm_optuna.db
+optuna-dashboard --server wsgiref sqlite:///I:/sf2026/ranking_model_runs/autosearch_ec/ec_optuna.db
 ```
 
-**Sampler study** example (after you have run at least one `autosearch_ec.py` **without** `--llm` and with default sampler):
+Replace with your `--log_base` path and drive letter. Override the file with **`--storage`** or **`--optuna_storage`** (see Useful flags).
 
-```bash
-optuna-dashboard --server wsgiref sqlite:///I:/sf2026/ranking_model_runs/autosearch_ec/ec_f1_none_optuna.db
-```
+**Multiple studies in one file:** the default DB is always **`ec_optuna.db`**. If you use different `--study_name` values across runs (e.g. `rando`, `optuna`, `llm`), each name is a separate study **inside that same file**. In Optuna Dashboard, use the **study selector / dropdown** to switch—do not expect a single merged list unless you reused one study name. If you only see one study, you are likely opening an **old** database (for example a legacy `*_optuna.db` path) instead of **`{log_base}/ec_optuna.db`**.
 
-Replace with your `--log_base`, `{study_name}`, and drive letter. If you passed `--storage` / `--optuna_storage`, use that URL instead.
-
-Open the URL printed in the terminal (default **http://127.0.0.1:8080**). LLM trials skip the DB when you pass `--no_optuna`.
+Open the URL printed in the terminal (default **http://127.0.0.1:8080**). Disable SQLite for **`--sampler llm`** or random with **`--no_optuna`**.
 
 ### Troubleshooting (`no such table: version_info`)
 
 That error means SQLite opened the file, but it is **not** a valid Optuna RDB (missing Optuna schema). Typical causes:
 
-1. **Wrong file** — e.g. dashboard on `*_optuna.db` while you only ever ran `--llm` → use `*_llm_optuna.db`.
-2. **Empty or corrupt DB** — delete the broken `.db` and run autosearch again so `optuna.create_study` recreates it (you will lose that study’s history in that file).
-3. **Not an Optuna database** — another program created a `.db` with the same name; rename/delete and recreate via autosearch.
+1. **Empty or corrupt DB** — delete the broken `.db` and run autosearch again so `optuna.create_study` recreates it (you will lose that study’s history in that file).
+2. **Not an Optuna database** — another program created a `.db` with the same name; rename/delete and recreate via autosearch.
 
 ### Troubleshooting (`No module named 'fcntl'` on Windows)
 
@@ -82,13 +69,15 @@ That error means SQLite opened the file, but it is **not** a valid Optuna RDB (m
 optuna-dashboard --server wsgiref sqlite:///I:/path/to/your_study.db
 ```
 
-## Run (random search, no Optuna)
+## Run (random search)
 
 ```bash
 python src/autosearch_ec.py --sampler random --n_trials 50 --seed 1 --log_base ranking_model_runs/autosearch_ec_rand
 ```
 
-## LLM-in-the-loop (`--llm`)
+By default this **also appends** each trial to `{log_base}/ec_optuna.db` (same as the Optuna sampler). Use **`--no_optuna`** to skip SQLite and avoid the `optuna` dependency.
+
+## LLM-in-the-loop (`--sampler llm`)
 
 An OpenAI-compatible API proposes **batches** of trials; each JSON object is validated by `trial_params_from_llm_dict` in `autosearch_ec.py`, then `train_model.main` runs like the Optuna path (EC, `loss_ptau=none`, mean LOFO F1, TensorBoard off).
 
@@ -97,10 +86,10 @@ An OpenAI-compatible API proposes **batches** of trials; each JSON object is val
 3. **Example:**
 
 ```bash
-python src/autosearch_ec.py --llm --n_trials 24 --proposals_per_round 3 --study_name ec_llm --log_base ranking_model_runs/autosearch_ec_llm --epochs 150 --patience 25 --model gpt-4o-mini
+python src/autosearch_ec.py --sampler llm --n_trials 24 --proposals_per_round 3 --study_name ec_llm --log_base ranking_model_runs/autosearch_ec_llm --epochs 150 --patience 25 --model gpt-4o-mini
 ```
 
-**LLM artifacts:** `{study_name}_trials.jsonl` (append; use `--resume_jsonl` to continue), `{study_name}_llm_rounds.jsonl` (raw replies), `{study_name}_llm_optuna.db` (optional; `--no_optuna` to disable). Override DB with `--optuna_storage` / `--optuna_study_name`.
+**LLM artifacts:** `{study_name}_trials.jsonl` (append; use `--resume_jsonl` to continue), `{study_name}_llm_rounds.jsonl` (raw replies), and the **same** `{log_base}/ec_optuna.db` as other modes (unless `--no_optuna`). Override storage with **`--storage`** / **`--optuna_storage`**.
 
 **Prompts:** `--system_prompt_file` replaces the built-in system prompt. The model must return a **single JSON array** of flat objects (trial configs). Main fields: `gene_encoder`, `attention`, `pooling`, `pca_components`, `mlp_hidden_sizes` (comma-separated widths for baseline; clamped), `n_hidden_layers`, `hidden_dim_3layer`, `dropout`, `weight_decay`, `lr`, `batch_size`, `lambda_entropy` (gene encoder only), aug / mixup / cutmix / `label_smoothing` / `thal_ordinal` — same semantics as `suggest_trial_optuna` (see source for allowed values).
 
@@ -111,8 +100,12 @@ python src/autosearch_ec.py --llm --n_trials 24 --proposals_per_round 3 --study_
 | `--no_online_augment` | Forces all `--aug_*` / mixup / cutmix strengths to 0 in the trial (still uses base pickle) |
 | `--data_suffix` | Same as `train_model` (avoid `_augScaling`; prefer online aug) |
 | `--device cuda` | Override auto device |
-| `--study_name` | Optuna study name + file prefix |
-| `--q` | Hides `train_model` LOFO / fold stdout; autosearch still prints each trial line (and LLM round lines when using `--llm`) |
+| `--study_name` | Optuna study name in the RDB + prefix for jsonl/csv/best_params artifacts |
+| `-v` / `--verbose` | Print full `train_model` LOFO / data-load logs (default is quiet; trial lines from autosearch still print) |
+| `--no_optuna` | Skip SQLite logging for `--sampler random` and `--sampler llm` |
+| `--sampler` | `optuna` (default), `random`, or `llm` |
+| `--storage` | Optuna storage URL (first choice; default `sqlite:///…/<log_base>/ec_optuna.db`) |
+| `--optuna_storage` | Alternative storage URL if `--storage` unset |
 
 ## Search space (edit in code)
 
