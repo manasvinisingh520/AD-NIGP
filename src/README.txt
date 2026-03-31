@@ -71,7 +71,8 @@ test_motifs_dataset.py: test overlap between motif file and TF file (NOT USED)
 
 test_TF_dataset.py: test overlap between TF file and Astrocytes genes (USED)
 
-train_model.py online augmentation (replaces deprecated create_data --augment_scaling / _augScaling pickles):
+train_model.py: --model baseline | gene_encoder | mil (MIL: --mil_cells_per_patient, --mil_hidden_dim, ...; default no PCA on bags, use --mil_use_pca with --pca_components to shrink).
+  Online augmentation (replaces deprecated create_data --augment_scaling / _augScaling pickles):
   Use base data/model_data/{region}_data_for_model_training.pkl. Train-time: --aug_scale_jitter,
   --aug_per_gene_scale_jitter, --aug_gene_dropout, --aug_emb_dim_dropout, --aug_feature_dropout,
   --aug_gene_block_cutout_max, --aug_noise_std; batch-level --mixup_alpha, --gene_cutmix_prob;
@@ -80,3 +81,11 @@ train_model.py online augmentation (replaces deprecated create_data --augment_sc
 autosearch_ec.py: Optuna or random hyperparameter search for EC, loss_ptau=none, maximize mean LOFO F1.
   Use --sampler llm for OpenAI-compatible trial proposals. Random/LLM append to ec_optuna.db under --log_base unless --no_optuna.
   See ../program_ec_autosearch.md; LLM deps: ../requirements-autosearch-llm.txt.
+
+
+  # 10 seeds (default), MIL, min 30 epochs before stopping, patience 40
+python src/train_model.py --region EC --loss_ptau none --model mil --verbose-cv --n_seeds 10
+# Single seed (fast test)
+python src/train_model.py --region EC --loss_ptau none --model mil --verbose-cv --n_seeds 1
+# Custom patience / min_epochs
+python src/train_model.py --region EC --loss_ptau none --model mil --verbose-cv --n_seeds 5 --patience 50 --min_epochs 40

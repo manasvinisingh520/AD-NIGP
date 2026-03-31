@@ -36,9 +36,15 @@ REGION = "EC"
 CELL_TYPE = "Astrocytes"
 LOSS_PTAU = "none"
 
+MODEL_CHOICES = ["baseline", "gene_encoder", "mil"]
 MLP_MENU = ["", "64,32,16", "128,64,32", "256,128,64,32"]
 PCA_CHOICES = [2, 4, 8, 16]
 POOLING_BASELINE = ["mean", "max", "none"]
+
+MIL_CELLS_CHOICES = [64, 128, 256, 512]
+MIL_HIDDEN_DIM_CHOICES = [64, 128, 256]
+MIL_ATTN_DIM_CHOICES = [32, 64, 128]
+MIL_ENCODER_LAYERS_CHOICES = [1, 2, 3]
 
 # LLM-proposed MLP: same syntax as train_model --mlp_hidden_sizes; clamped for safety.
 MLP_LLM_MAX_LAYERS = 24
@@ -49,10 +55,11 @@ MLP_LLM_MAX_WIDTH = 8192
 class TrialParams:
     """Serializable trial configuration (for JSON/CSV)."""
 
-    gene_encoder: bool
+    model: str  # "baseline", "gene_encoder", "mil"
+    gene_encoder: bool  # kept for backward compat; derived from model
     attention: bool
-    pooling: Optional[str]  # None for 3D / gene_encoder; "mean" or "max" for pooled baseline
-    pca_components: int
+    pooling: Optional[str]  # None for 3D / gene_encoder / mil; "mean" or "max" for pooled baseline
+    pca_components: Optional[int]
     mlp_hidden_sizes: str
     n_hidden_layers: int
     hidden_dim_3layer: int
@@ -73,6 +80,11 @@ class TrialParams:
     gene_cutmix_alpha: float
     label_smoothing: float
     thal_ordinal: bool
+    mil_cells_per_patient: int = 128
+    mil_hidden_dim: int = 128
+    mil_attn_dim: int = 64
+    mil_encoder_layers: int = 2
+    mil_use_pca: bool = False
 
 
 def _pooling_for_namespace(gene_encoder: bool, pooling_choice: str) -> Any:
@@ -139,7 +151,16 @@ def trial_params_from_llm_dict(raw: Dict[str, Any]) -> TrialParams:
             return default
         return str(v).strip()
 
+    model_str = s("model", "baseline")
+    if model_str not in MODEL_CHOICES:
+        model_str = "baseline"
     gene_encoder = b("gene_encoder", False)
+    if gene_encoder and model_str == "baseline":
+        model_str = "gene_encoder"
+    if model_str == "gene_encoder":
+        gene_encoder = True
+    use_mil = model_str == "mil"
+
     attention = b("attention", False)
     pooling_choice = s("pooling", "mean").lower()
     if pooling_choice not in POOLING_BASELINE:
@@ -148,14 +169,18 @@ def trial_params_from_llm_dict(raw: Dict[str, Any]) -> TrialParams:
     lambda_entropy = f("lambda_entropy", 1e-3)
     lambda_entropy = max(1e-4, min(0.2, lambda_entropy))
 
-    if gene_encoder:
+    if gene_encoder or use_mil:
         attention = False
         pooling_choice = "none"
+        if not gene_encoder:
+            lambda_entropy = 1e-3
     else:
         lambda_entropy = 1e-3
 
-    pca_components = i("pca_components", 8)
+    pca_components: Optional[int] = i("pca_components", 8)
     pca_components = _nearest_int(pca_components, PCA_CHOICES)
+    if use_mil:
+        pca_components = None
 
     mlp_val = g.get("mlp_hidden_sizes", "")
     if isinstance(mlp_val, list):
@@ -165,16 +190,16 @@ def trial_params_from_llm_dict(raw: Dict[str, Any]) -> TrialParams:
             mlp_raw = ""
     else:
         mlp_raw = raw_str("mlp_hidden_sizes", "") if mlp_val is not None else ""
-    if gene_encoder:
+    if gene_encoder or use_mil:
         mlp_hidden_sizes = ""
     else:
         mlp_hidden_sizes = _normalize_llm_mlp_string(mlp_raw)
 
     n_hidden_layers = i("n_hidden_layers", 1)
-    n_hidden_layers = 1 if gene_encoder else (n_hidden_layers if n_hidden_layers in (1, 3) else 1)
+    n_hidden_layers = 1 if (gene_encoder or use_mil) else (n_hidden_layers if n_hidden_layers in (1, 3) else 1)
 
     hidden_dim_3layer = i("hidden_dim_3layer", 32)
-    if gene_encoder:
+    if gene_encoder or use_mil:
         hidden_dim_3layer = 32
     else:
         hidden_dim_3layer = _nearest_int(hidden_dim_3layer, [32, 64, 128])
@@ -193,7 +218,7 @@ def trial_params_from_llm_dict(raw: Dict[str, Any]) -> TrialParams:
     aug_block = i("aug_gene_block_cutout_max", 0)
     aug_block = _nearest_int(aug_block, [0, 32, 128, 256])
 
-    is_3d = gene_encoder or (pooling_choice == "none")
+    is_3d = gene_encoder or (pooling_choice == "none") or use_mil
     if is_3d:
         aug_gene_dropout = _nearest_in_sorted(f("aug_gene_dropout", 0.0), [0.0, 0.05, 0.1, 0.15])
         aug_feature_dropout = 0.0
@@ -207,14 +232,20 @@ def trial_params_from_llm_dict(raw: Dict[str, Any]) -> TrialParams:
     gene_cutmix_alpha = max(0.5, min(2.0, f("gene_cutmix_alpha", 1.0)))
     label_smoothing = _nearest_in_sorted(f("label_smoothing", 0.0), [0.0, 0.05, 0.1])
     thal_ordinal = b("thal_ordinal", False)
-    if thal_ordinal:
+    if thal_ordinal or use_mil:
         mixup_alpha = 0.0
         gene_cutmix_prob = 0.0
 
+    mil_cells_per_patient = _nearest_int(i("mil_cells_per_patient", 128), MIL_CELLS_CHOICES) if use_mil else 128
+    mil_hidden_dim = _nearest_int(i("mil_hidden_dim", 128), MIL_HIDDEN_DIM_CHOICES) if use_mil else 128
+    mil_attn_dim = _nearest_int(i("mil_attn_dim", 64), MIL_ATTN_DIM_CHOICES) if use_mil else 64
+    mil_encoder_layers = _nearest_int(i("mil_encoder_layers", 2), MIL_ENCODER_LAYERS_CHOICES) if use_mil else 2
+
     return TrialParams(
+        model=model_str,
         gene_encoder=gene_encoder,
         attention=attention,
-        pooling=_pooling_for_namespace(gene_encoder, pooling_choice),
+        pooling=_pooling_for_namespace(gene_encoder or use_mil, pooling_choice),
         pca_components=pca_components,
         mlp_hidden_sizes=mlp_hidden_sizes,
         n_hidden_layers=n_hidden_layers,
@@ -236,20 +267,28 @@ def trial_params_from_llm_dict(raw: Dict[str, Any]) -> TrialParams:
         gene_cutmix_alpha=gene_cutmix_alpha,
         label_smoothing=label_smoothing,
         thal_ordinal=thal_ordinal,
+        mil_cells_per_patient=mil_cells_per_patient,
+        mil_hidden_dim=mil_hidden_dim,
+        mil_attn_dim=mil_attn_dim,
+        mil_encoder_layers=mil_encoder_layers,
+        mil_use_pca=False,
     )
 
 
 def suggest_trial_optuna(trial) -> TrialParams:
     """Sample one configuration (Optuna trial). Always suggest same param names for storage compatibility."""
-    gene_encoder = trial.suggest_categorical("gene_encoder", [False, True])
+    model = trial.suggest_categorical("model", MODEL_CHOICES)
+    gene_encoder = model == "gene_encoder"
+    use_mil = model == "mil"
+
     attention_s = trial.suggest_categorical("attention", [False, True])
     pooling_choice_s = trial.suggest_categorical("pooling", POOLING_BASELINE)
     lambda_entropy_s = trial.suggest_float("lambda_entropy", 1e-4, 0.2, log=True)
 
-    if gene_encoder:
+    if gene_encoder or use_mil:
         attention = False
         pooling_choice = "none"
-        lambda_entropy = float(lambda_entropy_s)
+        lambda_entropy = float(lambda_entropy_s) if gene_encoder else 1e-3
     else:
         attention = bool(attention_s)
         pooling_choice = str(pooling_choice_s)
@@ -271,7 +310,7 @@ def suggest_trial_optuna(trial) -> TrialParams:
     aug_noise_std = trial.suggest_categorical("aug_noise_std", [0.0, 0.01, 0.02, 0.03])
     aug_gene_block_cutout_max = trial.suggest_categorical("aug_gene_block_cutout_max", [0, 32, 128, 256])
 
-    is_3d = gene_encoder or (pooling_choice == "none")
+    is_3d = gene_encoder or (pooling_choice == "none") or use_mil
     if is_3d:
         aug_gene_dropout = trial.suggest_categorical("aug_gene_dropout", [0.0, 0.05, 0.1, 0.15])
         aug_feature_dropout = 0.0
@@ -286,18 +325,24 @@ def suggest_trial_optuna(trial) -> TrialParams:
     label_smoothing = trial.suggest_categorical("label_smoothing", [0.0, 0.05, 0.1])
     thal_ordinal = trial.suggest_categorical("thal_ordinal", [False, True])
 
-    if thal_ordinal:
+    if thal_ordinal or use_mil:
         mixup_alpha = 0.0
         gene_cutmix_prob = 0.0
 
+    mil_cells_per_patient = trial.suggest_categorical("mil_cells_per_patient", MIL_CELLS_CHOICES)
+    mil_hidden_dim = trial.suggest_categorical("mil_hidden_dim", MIL_HIDDEN_DIM_CHOICES)
+    mil_attn_dim = trial.suggest_categorical("mil_attn_dim", MIL_ATTN_DIM_CHOICES)
+    mil_encoder_layers = trial.suggest_categorical("mil_encoder_layers", MIL_ENCODER_LAYERS_CHOICES)
+
     return TrialParams(
+        model=model,
         gene_encoder=gene_encoder,
         attention=attention,
-        pooling=_pooling_for_namespace(gene_encoder, pooling_choice),
-        pca_components=pca_components,
-        mlp_hidden_sizes=mlp_hidden_sizes if not gene_encoder else "",
-        n_hidden_layers=n_hidden_layers if not gene_encoder else 1,
-        hidden_dim_3layer=hidden_dim_3layer if not gene_encoder else 32,
+        pooling=_pooling_for_namespace(gene_encoder or use_mil, pooling_choice),
+        pca_components=pca_components if not use_mil else None,
+        mlp_hidden_sizes=mlp_hidden_sizes if not (gene_encoder or use_mil) else "",
+        n_hidden_layers=n_hidden_layers if not (gene_encoder or use_mil) else 1,
+        hidden_dim_3layer=hidden_dim_3layer if not (gene_encoder or use_mil) else 32,
         dropout=dropout,
         weight_decay=weight_decay,
         lr=lr,
@@ -315,25 +360,33 @@ def suggest_trial_optuna(trial) -> TrialParams:
         gene_cutmix_alpha=gene_cutmix_alpha,
         label_smoothing=label_smoothing,
         thal_ordinal=thal_ordinal,
+        mil_cells_per_patient=mil_cells_per_patient if use_mil else 128,
+        mil_hidden_dim=mil_hidden_dim if use_mil else 128,
+        mil_attn_dim=mil_attn_dim if use_mil else 64,
+        mil_encoder_layers=mil_encoder_layers if use_mil else 2,
+        mil_use_pca=False,
     )
 
 
 def suggest_trial_random(rng) -> TrialParams:
     """Match Optuna search space approximately with stdlib random."""
-    gene_encoder = rng.random() < 0.5
-    if gene_encoder:
+    model = rng.choice(MODEL_CHOICES)
+    gene_encoder = model == "gene_encoder"
+    use_mil = model == "mil"
+
+    if gene_encoder or use_mil:
         attention = False
         pooling_choice = "none"
-        lambda_entropy = 10 ** rng.uniform(-4, math.log10(0.2))
+        lambda_entropy = 10 ** rng.uniform(-4, math.log10(0.2)) if gene_encoder else 1e-3
     else:
         attention = rng.random() < 0.5
         pooling_choice = rng.choice(POOLING_BASELINE)
         lambda_entropy = 1e-3
 
     pca_components = rng.choice(PCA_CHOICES)
-    mlp_hidden_sizes = "" if gene_encoder else rng.choice(MLP_MENU)
-    n_hidden_layers = 1 if gene_encoder else rng.choice([1, 3])
-    hidden_dim_3layer = 32 if gene_encoder else rng.choice([32, 64, 128])
+    mlp_hidden_sizes = "" if (gene_encoder or use_mil) else rng.choice(MLP_MENU)
+    n_hidden_layers = 1 if (gene_encoder or use_mil) else rng.choice([1, 3])
+    hidden_dim_3layer = 32 if (gene_encoder or use_mil) else rng.choice([32, 64, 128])
 
     dropout = rng.uniform(0.2, 0.55)
     weight_decay = rng.choice([0.1, 0.5, 1.0])
@@ -346,7 +399,7 @@ def suggest_trial_random(rng) -> TrialParams:
     aug_noise_std = rng.choice([0.0, 0.01, 0.02, 0.03])
     aug_gene_block_cutout_max = rng.choice([0, 32, 128, 256])
 
-    is_3d = gene_encoder or (pooling_choice == "none")
+    is_3d = gene_encoder or (pooling_choice == "none") or use_mil
     if is_3d:
         aug_gene_dropout = rng.choice([0.0, 0.05, 0.1, 0.15])
         aug_feature_dropout = 0.0
@@ -360,15 +413,21 @@ def suggest_trial_random(rng) -> TrialParams:
     gene_cutmix_alpha = rng.uniform(0.5, 2.0)
     label_smoothing = rng.choice([0.0, 0.05, 0.1])
     thal_ordinal = rng.random() < 0.25
-    if thal_ordinal:
+    if thal_ordinal or use_mil:
         mixup_alpha = 0.0
         gene_cutmix_prob = 0.0
 
+    mil_cells_per_patient = rng.choice(MIL_CELLS_CHOICES) if use_mil else 128
+    mil_hidden_dim = rng.choice(MIL_HIDDEN_DIM_CHOICES) if use_mil else 128
+    mil_attn_dim = rng.choice(MIL_ATTN_DIM_CHOICES) if use_mil else 64
+    mil_encoder_layers = rng.choice(MIL_ENCODER_LAYERS_CHOICES) if use_mil else 2
+
     return TrialParams(
+        model=model,
         gene_encoder=gene_encoder,
         attention=attention,
-        pooling=_pooling_for_namespace(gene_encoder, pooling_choice),
-        pca_components=pca_components,
+        pooling=_pooling_for_namespace(gene_encoder or use_mil, pooling_choice),
+        pca_components=pca_components if not use_mil else None,
         mlp_hidden_sizes=mlp_hidden_sizes,
         n_hidden_layers=n_hidden_layers,
         hidden_dim_3layer=hidden_dim_3layer,
@@ -389,6 +448,11 @@ def suggest_trial_random(rng) -> TrialParams:
         gene_cutmix_alpha=gene_cutmix_alpha,
         label_smoothing=label_smoothing,
         thal_ordinal=thal_ordinal,
+        mil_cells_per_patient=mil_cells_per_patient,
+        mil_hidden_dim=mil_hidden_dim,
+        mil_attn_dim=mil_attn_dim,
+        mil_encoder_layers=mil_encoder_layers,
+        mil_use_pca=False,
     )
 
 
@@ -403,12 +467,15 @@ def params_to_namespace(
     data_suffix: str,
     no_online_augment: bool,
     attention_heads: int,
+    seed: int = 0,
+    min_epochs: int = 30,
     quiet: bool = True,
 ) -> SimpleNamespace:
-    """Build train_model args. Always best_f1=True; no_tensorboard=True (no event files under log_base)."""
+    """Build train_model args. No event files (no_tensorboard=True). Single seed for autosearch."""
     return SimpleNamespace(
         region=REGION,
         cell_type=CELL_TYPE,
+        model=p.model,
         pooling=p.pooling,
         loss_ptau=LOSS_PTAU,
         batch_size=p.batch_size,
@@ -420,7 +487,7 @@ def params_to_namespace(
         attention=p.attention,
         attention_heads=attention_heads,
         pca_components=p.pca_components,
-        gene_encoder=p.gene_encoder,
+        gene_encoder=(p.model == "gene_encoder"),
         lambda_entropy=p.lambda_entropy,
         log_base=log_base,
         exp_id=exp_id,
@@ -429,7 +496,10 @@ def params_to_namespace(
         hidden_dim_3layer=p.hidden_dim_3layer,
         mlp_hidden_sizes=p.mlp_hidden_sizes,
         patience=patience,
+        min_epochs=min_epochs,
         best_f1=True,
+        seed=seed,
+        n_seeds=1,
         thal_ordinal=p.thal_ordinal,
         top_genes=None,
         ranked_genes_path=None,
@@ -452,6 +522,11 @@ def params_to_namespace(
         label_smoothing=p.label_smoothing,
         no_tensorboard=True,
         q=quiet,
+        mil_cells_per_patient=p.mil_cells_per_patient,
+        mil_hidden_dim=p.mil_hidden_dim,
+        mil_attn_dim=p.mil_attn_dim,
+        mil_encoder_layers=p.mil_encoder_layers,
+        mil_use_pca=p.mil_use_pca,
     )
 
 
@@ -523,14 +598,15 @@ Objective: maximize mean leave-one-fold-out F1 on Thal stage classification. Tra
 
 Output rules:
 - Reply with ONE JSON array only (no markdown fences required but allowed). Each element is one trial config (flat object).
-- Use only these pooling values for baseline (non gene_encoder): "mean", "max", "none".
-- If gene_encoder is true: set attention false and pooling "none"; lambda_entropy is used (1e-4 to 0.2).
-- If gene_encoder is false: lambda_entropy in JSON is ignored by the trainer; still you may omit it.
+- "model" must be one of: "baseline", "gene_encoder", "mil".
+  - "baseline": patient-level MLP. Supports pooling "mean"/"max"/"none", attention, mlp_hidden_sizes.
+  - "gene_encoder": learnable gene pooling. Set attention false, pooling "none"; lambda_entropy is used (1e-4 to 0.2).
+  - "mil": cell-level Multiple Instance Learning. Set attention false, pooling "none", mixup_alpha 0, gene_cutmix_prob 0. pca_components is ignored. Search mil_cells_per_patient (64/128/256/512), mil_hidden_dim (64/128/256), mil_attn_dim (32/64/128), mil_encoder_layers (1/2/3).
 - If thal_ordinal is true: mixup_alpha and gene_cutmix_prob must be 0.
-- For 3D input (gene_encoder true OR pooling "none"): use aug_gene_dropout / gene_cutmix_prob; set aug_feature_dropout 0.
+- For 3D input (gene_encoder, mil, or pooling "none"): use aug_gene_dropout / gene_cutmix_prob; set aug_feature_dropout 0.
 - For 2D pooled input (pooling mean or max): use aug_feature_dropout; set aug_gene_dropout and gene_cutmix_prob 0.
-- pca_components must be one of: 2, 4, 8, 16.
-- mlp_hidden_sizes (baseline only; omit or "" if gene_encoder): comma-separated positive integers, layer widths from input toward the heads, e.g. "512,256,128,64" or "8192,4096,2048,1024,512". You choose depth and widths; server clamps each width to [1, MAX_WIDTH] and at most MAX_LAYERS layers (see user message for numbers). Prefer tapering (wide to narrow) for large flattened inputs.
+- pca_components must be one of: 2, 4, 8, 16 (ignored for mil).
+- mlp_hidden_sizes (baseline only; omit or "" if gene_encoder or mil): comma-separated positive integers, layer widths from input toward the heads, e.g. "512,256,128,64". Server clamps each width to [1, MAX_WIDTH] and at most MAX_LAYERS layers.
 - batch_size one of 4, 8, 16. weight_decay one of 0.1, 0.5, 1.0.
 
 Be creative: explore near the best trials, try boundary settings, and diversify. Propose exactly N configs where N is given in the user message."""
@@ -577,6 +653,7 @@ def _format_llm_history(rows: List[Dict[str, Any]], max_rows: int) -> str:
             "trial": r.get("trial"),
             "value": v,
             "error": (err[:120] + "…") if len(str(err)) > 120 else err,
+            "model": r.get("model"),
             "gene_encoder": r.get("gene_encoder"),
             "attention": r.get("attention"),
             "pooling": r.get("pooling"),
@@ -587,6 +664,10 @@ def _format_llm_history(rows: List[Dict[str, Any]], max_rows: int) -> str:
             "weight_decay": r.get("weight_decay"),
             "batch_size": r.get("batch_size"),
             "thal_ordinal": r.get("thal_ordinal"),
+            "mil_cells_per_patient": r.get("mil_cells_per_patient"),
+            "mil_hidden_dim": r.get("mil_hidden_dim"),
+            "mil_attn_dim": r.get("mil_attn_dim"),
+            "mil_encoder_layers": r.get("mil_encoder_layers"),
         }
         lines.append(json.dumps(brief, default=str))
     return "\n".join(lines) if lines else "(no prior trials)"
@@ -656,14 +737,16 @@ def _optuna_params_and_distributions_from_trial_params(
     if pooling_choice not in POOLING_BASELINE:
         pooling_choice = "none"
 
-    mlp = "" if p.gene_encoder else (p.mlp_hidden_sizes if p.mlp_hidden_sizes in MLP_MENU else "")
+    use_mil = p.model == "mil"
+    mlp = "" if (p.gene_encoder or use_mil) else (p.mlp_hidden_sizes if p.mlp_hidden_sizes in MLP_MENU else "")
 
     params: Dict[str, Any] = {
+        "model": str(p.model),
         "gene_encoder": bool(p.gene_encoder),
         "attention": bool(p.attention),
         "pooling": pooling_choice,
         "lambda_entropy": float(p.lambda_entropy),
-        "pca_components": int(p.pca_components),
+        "pca_components": int(p.pca_components) if p.pca_components is not None else 8,
         "mlp_hidden_sizes": mlp,
         "n_hidden_layers": int(p.n_hidden_layers),
         "hidden_dim_3layer": int(p.hidden_dim_3layer),
@@ -680,8 +763,13 @@ def _optuna_params_and_distributions_from_trial_params(
         "gene_cutmix_alpha": float(p.gene_cutmix_alpha),
         "label_smoothing": float(p.label_smoothing),
         "thal_ordinal": bool(p.thal_ordinal),
+        "mil_cells_per_patient": int(p.mil_cells_per_patient),
+        "mil_hidden_dim": int(p.mil_hidden_dim),
+        "mil_attn_dim": int(p.mil_attn_dim),
+        "mil_encoder_layers": int(p.mil_encoder_layers),
     }
     distributions: Dict[str, Any] = {
+        "model": CategoricalDistribution(tuple(MODEL_CHOICES)),
         "gene_encoder": CategoricalDistribution((False, True)),
         "attention": CategoricalDistribution((False, True)),
         "pooling": CategoricalDistribution(tuple(POOLING_BASELINE)),
@@ -703,9 +791,13 @@ def _optuna_params_and_distributions_from_trial_params(
         "gene_cutmix_alpha": FloatDistribution(0.5, 2.0),
         "label_smoothing": CategoricalDistribution((0.0, 0.05, 0.1)),
         "thal_ordinal": CategoricalDistribution((False, True)),
+        "mil_cells_per_patient": CategoricalDistribution(tuple(MIL_CELLS_CHOICES)),
+        "mil_hidden_dim": CategoricalDistribution(tuple(MIL_HIDDEN_DIM_CHOICES)),
+        "mil_attn_dim": CategoricalDistribution(tuple(MIL_ATTN_DIM_CHOICES)),
+        "mil_encoder_layers": CategoricalDistribution(tuple(MIL_ENCODER_LAYERS_CHOICES)),
     }
 
-    is_3d = bool(p.gene_encoder) or pooling_choice == "none"
+    is_3d = bool(p.gene_encoder) or pooling_choice == "none" or use_mil
     if is_3d:
         params["aug_gene_dropout"] = float(p.aug_gene_dropout)
         params["gene_cutmix_prob"] = float(p.gene_cutmix_prob)
@@ -891,6 +983,7 @@ def run_llm_autosearch(args: argparse.Namespace) -> None:
                 data_suffix=args.data_suffix,
                 no_online_augment=args.no_online_augment,
                 attention_heads=args.attention_heads,
+                seed=args.seed,
                 quiet=not args.verbose,
             )
             f1, err = _run_one_trial(ns)
@@ -1056,6 +1149,7 @@ def main() -> None:
                 data_suffix=args.data_suffix,
                 no_online_augment=args.no_online_augment,
                 attention_heads=args.attention_heads,
+                seed=args.seed,
                 quiet=not args.verbose,
             )
             f1, err = _run_one_trial(ns)
@@ -1142,6 +1236,7 @@ def main() -> None:
                 data_suffix=args.data_suffix,
                 no_online_augment=args.no_online_augment,
                 attention_heads=args.attention_heads,
+                seed=args.seed,
                 quiet=not args.verbose,
             )
             f1, err = _run_one_trial(ns)

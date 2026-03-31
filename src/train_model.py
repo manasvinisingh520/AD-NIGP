@@ -1,13 +1,13 @@
 """Train model with k-fold cross-validation.
 Predicts p-tau (regression) and Thal category (classification).
-Uses BaselineRankingModel or GeneEncoderModel.
+Uses BaselineRankingModel, GeneEncoderModel, or cell-level MILModel (--model mil).
 """
 
 import argparse
 import pickle
 import warnings
 from dataclasses import dataclass
-from typing import Optional
+from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -24,6 +24,7 @@ from tqdm import tqdm
 
 from baseline_model import BaselineRankingModel
 from gene_encoder_model import GeneEncoderModel, gene_entropy_loss, make_ordinal_targets, ordinal_logits_to_class
+from mil_model import MILModel
 
 
 class _NullSummaryWriter:
@@ -204,6 +205,325 @@ class EmbeddingDataset(Dataset):
         return x, self.ptau[idx], self.thal[idx]
 
 
+class MILDataset(Dataset):
+    """One sample = one patient bag of cells. Train: sample K cells; eval: full bag (variable length, use collate_mil_eval)."""
+
+    def __init__(
+        self,
+        cell_bags: Sequence[np.ndarray],
+        ptau: np.ndarray,
+        thal: np.ndarray,
+        train: bool,
+        mil_cells_per_patient: int,
+        augment_config: Optional[EmbeddingAugmentConfig] = None,
+        seed: int = 0,
+    ):
+        self.cell_bags = [np.asarray(b, dtype=np.float32) for b in cell_bags]
+        self.ptau = np.asarray(ptau, dtype=np.float32)
+        self.thal = np.asarray(thal, dtype=np.int64)
+        self.train = bool(train)
+        self.K = int(mil_cells_per_patient)
+        self.augment_config = augment_config or EmbeddingAugmentConfig()
+        self._rng = np.random.RandomState(int(seed))
+
+    def __len__(self) -> int:
+        return len(self.cell_bags)
+
+    def __getitem__(self, idx):
+        bag = self.cell_bags[idx]
+        n = bag.shape[0]
+        if self.train:
+            if n >= self.K:
+                inds = self._rng.choice(n, size=self.K, replace=False)
+            else:
+                inds = self._rng.choice(n, size=self.K, replace=True)
+            sampled = bag[inds]
+            cells = [
+                augment_embedding_tensor(torch.from_numpy(sampled[i]).float(), self.augment_config)
+                for i in range(self.K)
+            ]
+            x = torch.stack(cells)
+        else:
+            x = torch.from_numpy(bag)
+        return x, self.ptau[idx], self.thal[idx]
+
+
+def collate_mil_eval_batch(
+    batch: List[Tuple[torch.Tensor, float, int]]
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.LongTensor]:
+    bags, ptaus, thals = zip(*batch)
+    max_l = max(b.shape[0] for b in bags)
+    bsz = len(bags)
+    feat_shape = bags[0].shape[1:]
+    out = torch.zeros(bsz, max_l, *feat_shape, dtype=torch.float32)
+    mask = torch.zeros(bsz, max_l, dtype=torch.bool)
+    for i, bag in enumerate(bags):
+        L = bag.shape[0]
+        out[i, :L] = bag
+        mask[i, :L] = True
+    ptau_t = torch.tensor(ptaus, dtype=torch.float32)
+    thal_t = torch.tensor(thals, dtype=torch.long)
+    return out, mask, ptau_t, thal_t
+
+
+def _fit_pca_mil_subsample(
+    train_bags_scaled: List[np.ndarray],
+    n_dims: int,
+    n_components: int,
+    max_fit_rows: int,
+    rng: np.random.Generator,
+) -> PCA:
+    """Fit PCA on up to max_fit_rows training rows (each row length n_dims) without full concat."""
+    n_comp = int(min(n_components, n_dims))
+    pool: list[np.ndarray] = []
+    n_pool = 0
+    for bag in train_bags_scaled:
+        flat = bag.reshape(-1, n_dims).astype(np.float32, copy=False)
+        pool.append(flat)
+        n_pool += flat.shape[0]
+        if n_pool >= max_fit_rows * 2:
+            break
+    if not pool:
+        raise ValueError("MIL PCA: no training rows")
+    big = np.concatenate(pool, axis=0)
+    if big.shape[0] > max_fit_rows:
+        idx = rng.choice(big.shape[0], size=max_fit_rows, replace=False)
+        big = big[idx]
+    pca = PCA(n_components=n_comp, svd_solver="randomized", random_state=int(rng.integers(0, 2**31 - 1)))
+    pca.fit(big)
+    return pca
+
+
+def _pca_transform_bag_3d(bag: np.ndarray, pca: PCA, pca_components: int, row_chunk: int) -> np.ndarray:
+    """Apply PCA along last dim; bag (n, G, D) -> (n, G, pca_components)."""
+    n, g, d = bag.shape
+    flat = bag.reshape(-1, d).astype(np.float32, copy=False)
+    outs: list[np.ndarray] = []
+    for i in range(0, flat.shape[0], row_chunk):
+        outs.append(pca.transform(flat[i : i + row_chunk]))
+    pc = np.concatenate(outs, axis=0).astype(np.float32)
+    return pc.reshape(n, g, pca_components)
+
+
+def _effective_row_chunk(row_chunk: int, n_features: int, max_chunk_bytes: int = 512 * 1024 * 1024) -> int:
+    """Cap row_chunk so that one chunk (with sklearn's internal copy) stays within memory budget."""
+    bytes_per_row = n_features * 4  # float32
+    safe = max(1, max_chunk_bytes // (bytes_per_row * 2))  # ×2 for sklearn internal copy
+    return min(row_chunk, safe)
+
+
+def _mil_scaler_partial_fit_bag(
+    scaler: StandardScaler,
+    bag: np.ndarray,
+    row_chunk: int,
+) -> None:
+    """partial_fit StandardScaler on one bag without allocating full (n_cells, n_feats) at once."""
+    n = bag.shape[0]
+    if bag.ndim == 3:
+        n_feat = bag.shape[1] * bag.shape[2]
+        rc = _effective_row_chunk(row_chunk, n_feat)
+        for i in range(0, n, rc):
+            slab = bag[i : i + rc]
+            X = np.asarray(slab, dtype=np.float32).reshape(slab.shape[0], -1)
+            scaler.partial_fit(X)
+    elif bag.ndim == 2:
+        rc = _effective_row_chunk(row_chunk, bag.shape[1])
+        for i in range(0, n, rc):
+            X = np.asarray(bag[i : i + rc], dtype=np.float32)
+            scaler.partial_fit(X)
+    else:
+        raise ValueError(f"MIL scaler partial_fit: expected 2D/3D bag, got ndim={bag.ndim}")
+
+
+def _mil_scaler_transform_bag(
+    scaler: StandardScaler,
+    bag: np.ndarray,
+    row_chunk: int,
+    *,
+    n_genes: Optional[int] = None,
+    n_dims: Optional[int] = None,
+) -> np.ndarray:
+    """Scale one bag **in-place** using scaler's mean_ / scale_, row-chunk at a time.
+
+    Works directly on the 3D (n,G,D) or 2D (n,F) array — never allocates a
+    second full-sized copy.  The bag is converted to float32 and returned.
+    """
+    if bag.dtype != np.float32:
+        bag = bag.astype(np.float32)
+
+    n = bag.shape[0]
+    if bag.ndim == 3:
+        if n_genes is None or n_dims is None:
+            raise ValueError("MIL scaler transform 3D bag requires n_genes and n_dims")
+        mean = scaler.mean_.astype(np.float32).reshape(1, n_genes, n_dims)
+        scale = scaler.scale_.astype(np.float32).reshape(1, n_genes, n_dims)
+        scale = np.where(scale == 0, 1.0, scale)
+        rc = _effective_row_chunk(row_chunk, n_genes * n_dims)
+        for i in range(0, n, rc):
+            end = min(i + rc, n)
+            bag[i:end] -= mean
+            bag[i:end] /= scale
+        return bag
+    if bag.ndim == 2:
+        feat = bag.shape[1]
+        mean = scaler.mean_.astype(np.float32).reshape(1, feat)
+        scale = scaler.scale_.astype(np.float32).reshape(1, feat)
+        scale = np.where(scale == 0, 1.0, scale)
+        rc = _effective_row_chunk(row_chunk, feat)
+        for i in range(0, n, rc):
+            end = min(i + rc, n)
+            bag[i:end] -= mean
+            bag[i:end] /= scale
+        return bag
+    raise ValueError(f"MIL scaler transform: expected 2D/3D bag, got ndim={bag.ndim}")
+
+
+def _transform_mil_cell_bags(
+    train_bags: List[np.ndarray],
+    test_bags: List[np.ndarray],
+    pca_components: Optional[int],
+    out,
+    mil_pca_max_fit_rows: int = 100_000,
+    transform_row_chunk: int = 8192,
+) -> Tuple[List[np.ndarray], List[np.ndarray], int]:
+    """Fit StandardScaler (+ optional PCA) on training cells without allocating full (N, F) float64 matrix."""
+    if not train_bags:
+        raise ValueError("MIL: empty train_bags")
+    ref = np.asarray(train_bags[0])
+    rng = np.random.default_rng(42)
+
+    if ref.ndim == 3:
+        n_genes, n_dims = ref.shape[1], ref.shape[2]
+        scaler = StandardScaler()
+        for b in train_bags:
+            _mil_scaler_partial_fit_bag(scaler, b, transform_row_chunk)
+        train_after_scale = [
+            _mil_scaler_transform_bag(
+                scaler, b, transform_row_chunk, n_genes=n_genes, n_dims=n_dims
+            )
+            for b in train_bags
+        ]
+        test_after_scale = [
+            _mil_scaler_transform_bag(
+                scaler, b, transform_row_chunk, n_genes=n_genes, n_dims=n_dims
+            )
+            for b in test_bags
+        ]
+        if pca_components is not None:
+            pca = _fit_pca_mil_subsample(
+                train_after_scale, n_dims, pca_components, mil_pca_max_fit_rows, rng
+            )
+            n_out = pca.n_components_
+            train_after_scale = [
+                _pca_transform_bag_3d(b, pca, n_out, transform_row_chunk) for b in train_after_scale
+            ]
+            test_after_scale = [
+                _pca_transform_bag_3d(b, pca, n_out, transform_row_chunk) for b in test_after_scale
+            ]
+            cell_in = n_genes * n_out
+            out(
+                f"Applied MIL: StandardScaler (streamed partial_fit) + PCA -> {n_out} dims/gene "
+                f"(PCA fit on <= {mil_pca_max_fit_rows} sampled train rows)"
+            )
+        else:
+            cell_in = n_genes * n_dims
+            out("Applied MIL: StandardScaler on flattened cells (streamed partial_fit, no PCA)")
+    elif ref.ndim == 2:
+        feat_dim = ref.shape[1]
+        scaler = StandardScaler()
+        for b in train_bags:
+            _mil_scaler_partial_fit_bag(scaler, b, transform_row_chunk)
+        train_after_scale = [_mil_scaler_transform_bag(scaler, b, transform_row_chunk) for b in train_bags]
+        test_after_scale = [_mil_scaler_transform_bag(scaler, b, transform_row_chunk) for b in test_bags]
+        if pca_components is not None:
+            pca_simple = _fit_pca_mil_subsample(
+                train_after_scale, feat_dim, pca_components, mil_pca_max_fit_rows, rng
+            )
+            n_out = pca_simple.n_components_
+
+            def _tf2(b: np.ndarray) -> np.ndarray:
+                b32 = np.asarray(b, dtype=np.float32)
+                o: list[np.ndarray] = []
+                for i in range(0, b32.shape[0], transform_row_chunk):
+                    o.append(pca_simple.transform(b32[i : i + transform_row_chunk]))
+                return np.concatenate(o, axis=0).astype(np.float32)
+
+            train_after_scale = [_tf2(b) for b in train_after_scale]
+            test_after_scale = [_tf2(b) for b in test_after_scale]
+            cell_in = n_out
+            out(
+                f"Applied MIL: StandardScaler (streamed) + PCA dim {cell_in} "
+                f"(PCA fit on <= {mil_pca_max_fit_rows} sampled train rows)"
+            )
+        else:
+            cell_in = feat_dim
+            train_after_scale = [b.astype(np.float32, copy=False) for b in train_after_scale]
+            test_after_scale = [b.astype(np.float32, copy=False) for b in test_after_scale]
+            out(f"Applied MIL: StandardScaler on pooled cell vectors (no PCA), dim {cell_in}")
+    else:
+        raise ValueError(f"Unexpected MIL bag ndim {ref.ndim}")
+    return train_after_scale, test_after_scale, cell_in
+
+
+def evaluate_mil(
+    model: nn.Module,
+    dataloader: DataLoader,
+    criterion_ptau,
+    criterion_thal,
+    device,
+    idx_to_thal,
+    thal_ordinal: bool = False,
+    n_thal_classes=None,
+    return_preds: bool = False,
+):
+    """Evaluate MIL model with padded cell bags and attention mask."""
+    model.eval()
+    total_loss = 0.0
+    ptau_preds: list[float] = []
+    ptau_targets: list[float] = []
+    thal_preds: list[int] = []
+    thal_targets: list[int] = []
+    criterion_ordinal = nn.BCEWithLogitsLoss() if thal_ordinal else None
+
+    with torch.no_grad():
+        for embeddings, mask, ptau, thal in dataloader:
+            embeddings = embeddings.to(device)
+            mask = mask.to(device)
+            ptau = ptau.to(device)
+            thal = thal.to(device)
+
+            ptau_pred, thal_pred = model(embeddings, mask=mask)
+            if thal_ordinal and n_thal_classes is not None:
+                thal_class_preds = ordinal_logits_to_class(thal_pred)
+            else:
+                thal_class_preds = torch.argmax(thal_pred, dim=1)
+
+            if thal_ordinal and n_thal_classes is not None:
+                ordinal_targets = make_ordinal_targets(thal, n_thal_classes)
+                loss_thal = criterion_ordinal(thal_pred, ordinal_targets)
+            else:
+                loss_thal = criterion_thal(thal_pred, thal)
+            loss = loss_thal
+            if criterion_ptau is not None:
+                loss_ptau = criterion_ptau(ptau_pred, ptau)
+                loss = loss + loss_ptau
+            total_loss += loss.item()
+
+            ptau_preds.extend(ptau_pred.cpu().numpy().tolist())
+            ptau_targets.extend(ptau.cpu().numpy().tolist())
+            thal_preds.extend(thal_class_preds.cpu().numpy().tolist())
+            thal_targets.extend(thal.cpu().numpy().tolist())
+
+    thal_preds_labels = [idx_to_thal[i] for i in thal_preds]
+    thal_targets_labels = [idx_to_thal[i] for i in thal_targets]
+    mse = mean_squared_error(ptau_targets, ptau_preds)
+    mae = mean_absolute_error(ptau_targets, ptau_preds)
+    f1 = f1_score(thal_targets_labels, thal_preds_labels, average="weighted")
+    if return_preds:
+        return total_loss / max(len(dataloader), 1), mse, mae, f1, thal_targets_labels, thal_preds_labels
+    return total_loss / max(len(dataloader), 1), mse, mae, f1
+
+
 def apply_pooling(embeddings, method='mean'):
     """Apply pooling across axis=1 (n_genes) to get (n_samples, n_dims) shape.
 
@@ -324,7 +644,17 @@ def train_epoch(
     return total_loss / len(dataloader), np.mean(ptau_losses), np.mean(thal_losses)
 
 
-def evaluate(model, dataloader, criterion_ptau, criterion_thal, device, idx_to_thal, thal_ordinal=False, n_thal_classes=None):
+def evaluate(
+    model,
+    dataloader,
+    criterion_ptau,
+    criterion_thal,
+    device,
+    idx_to_thal,
+    thal_ordinal: bool = False,
+    n_thal_classes=None,
+    return_preds: bool = False,
+):
     """Evaluate model on validation set."""
     model.eval()
     total_loss = 0
@@ -372,6 +702,8 @@ def evaluate(model, dataloader, criterion_ptau, criterion_thal, device, idx_to_t
     mae = mean_absolute_error(ptau_targets, ptau_preds)
     f1 = f1_score(thal_targets_labels, thal_preds_labels, average='weighted')
 
+    if return_preds:
+        return total_loss / len(dataloader), mse, mae, f1, thal_targets_labels, thal_preds_labels
     return total_loss / len(dataloader), mse, mae, f1
 
 
@@ -410,6 +742,39 @@ def main(args):
 
     out(f"Loaded {len(embeddings_folds)} folds")
 
+    # Optionally merge original folds into fewer evaluation folds (e.g., 4 instead of 8)
+    n_folds_eval = getattr(args, "n_folds_eval", len(embeddings_folds))
+    orig_n_folds = len(embeddings_folds)
+    if n_folds_eval <= 0:
+        raise ValueError("--n_folds_eval must be positive")
+    if orig_n_folds % n_folds_eval != 0:
+        raise ValueError(f"--n_folds_eval={n_folds_eval} must divide number of folds in data ({orig_n_folds})")
+    group_size = orig_n_folds // n_folds_eval
+    if n_folds_eval != orig_n_folds:
+        def _merge_array_folds(folds_seq: List[np.ndarray]) -> List[np.ndarray]:
+            merged: List[np.ndarray] = []
+            for i in range(0, len(folds_seq), group_size):
+                merged.append(np.concatenate(folds_seq[i : i + group_size], axis=0))
+            return merged
+
+        def _merge_patient_info_folds(folds_seq):
+            merged_pi = []
+            for i in range(0, len(folds_seq), group_size):
+                combined = {}
+                for sub in folds_seq[i : i + group_size]:
+                    if hasattr(sub, "items"):
+                        combined.update(dict(sub.items()))
+                    else:
+                        combined.update(dict(sub))
+                merged_pi.append(combined)
+            return merged_pi
+
+        embeddings_folds = _merge_array_folds(list(embeddings_folds))
+        ptau_folds = _merge_array_folds(list(ptau_folds))
+        thal_folds = _merge_array_folds(list(thal_folds))
+        patient_info_folds = _merge_patient_info_folds(list(patient_info_folds))
+        out(f"Using n_folds_eval={n_folds_eval} (merged original {orig_n_folds} folds into groups of {group_size})")
+
     top_genes = getattr(args, 'top_genes', None)
     ranked_genes_path = getattr(args, 'ranked_genes_path', None)
     if top_genes is not None:
@@ -435,15 +800,21 @@ def main(args):
             embeddings_folds[i] = embeddings_folds[i][:, indices, :]
         out(f"  Filtered to top {len(indices)} genes from {ranked_genes_path}")
 
-    if args.gene_encoder and args.pooling is not None:
-        raise ValueError("--gene_encoder requires pooling=None (no gene pooling); omit --pooling")
+    model_kind = getattr(args, "model", "baseline")
+    if getattr(args, "gene_encoder", False):
+        model_kind = "gene_encoder"
+    use_mil = model_kind == "mil"
+    use_gene_encoder = model_kind == "gene_encoder"
+
+    if use_gene_encoder and args.pooling is not None:
+        raise ValueError("--model gene_encoder (or --gene_encoder) requires pooling=None; omit --pooling")
 
     device = torch.device(args.device)
     out(f"Using device: {device}")
 
     if args.loss_ptau is None or (isinstance(args.loss_ptau, str) and args.loss_ptau.lower() == 'none'):
         criterion_ptau = None
-    elif args.gene_encoder:
+    elif use_gene_encoder:
         criterion_ptau = nn.HuberLoss()
     elif args.loss_ptau == 'mse':
         criterion_ptau = nn.MSELoss()
@@ -455,17 +826,31 @@ def main(args):
     pool_str = args.pooling if args.pooling is not None else "None"
     top_suffix = f"_top{top_genes}" if top_genes is not None else ""
     data_cache_suffix = data_suffix if data_suffix else ""
-    cache_path = os.path.join("data", "model_data", f"{args.region}_patient_level_pooling_{pool_str}{top_suffix}{data_cache_suffix}.pkl")
+    fold_suffix = f"_F{n_folds_eval}"
+    if use_mil:
+        cache_path = os.path.join(
+            "data", "model_data", f"{args.region}_mil_cell_bags_{pool_str}{top_suffix}{fold_suffix}{data_cache_suffix}.pkl"
+        )
+    else:
+        cache_path = os.path.join(
+            "data", "model_data", f"{args.region}_patient_level_pooling_{pool_str}{top_suffix}{fold_suffix}{data_cache_suffix}.pkl"
+        )
     use_cache = os.path.exists(cache_path) and (not getattr(args, "recompute", False))
     if use_cache and os.path.getmtime(cache_path) >= os.path.getmtime(data_path):
-        out(f"Loading precomputed patient-level data from cache: {cache_path}")
+        out(f"Loading precomputed data from cache: {cache_path}")
         with open(cache_path, "rb") as f:
             cache = pickle.load(f)
-        all_fold_patient_data = cache["all_fold_patient_data"]
         thal_to_idx = cache["thal_to_idx"]
         idx_to_thal = cache["idx_to_thal"]
         n_thal_classes = cache["n_thal_classes"]
-        n_folds = len(all_fold_patient_data)
+        if use_mil:
+            all_fold_mil_data = cache["all_fold_mil_data"]
+            n_folds = len(all_fold_mil_data)
+            all_fold_patient_data = None
+        else:
+            all_fold_patient_data = cache["all_fold_patient_data"]
+            n_folds = len(all_fold_patient_data)
+            all_fold_mil_data = None
         out(f"  {n_folds} folds loaded. Skip preparation.")
     else:
         all_thal_labels = []
@@ -481,9 +866,13 @@ def main(args):
         n_thal_classes = len(thal_classes)
         n_folds = len(embeddings_folds)
         all_fold_patient_data = []
+        all_fold_mil_data: List[dict] = []
 
         out(f"\n{'='*60}")
-        out("Pipeline: cells -> genes -> patient embedding (StandardScaler+PCA in CV)")
+        if use_mil:
+            out("Pipeline (MIL): cells -> per-patient cell bags (no mean pool)")
+        else:
+            out("Pipeline: cells -> genes -> patient embedding (mean pool; StandardScaler+PCA in CV)")
         out(f"{'='*60}")
 
         for fold_idx in range(n_folds):
@@ -500,47 +889,73 @@ def main(args):
                 pooled_embeddings = apply_pooling(fold_embeddings, method=args.pooling)
             out(f"  Pooled embeddings shape: {pooled_embeddings.shape}")
 
-            patient_embeddings = []
             patient_ptau = []
             patient_thal = []
             cell_idx = 0
-            # `patient_info` is either a dict (patient_id -> cell_names) or an
-            # ordered list of (patient_id, cell_names) tuples (allows duplicate IDs
-            # when augmentations create multiple samples per patient).
             patient_iter = fold_patient_info.items() if hasattr(fold_patient_info, "items") else fold_patient_info
-            for patient_idx, (patient_name, cell_names) in enumerate(patient_iter):
-                n_cells_patient = len(cell_names)
-                patient_cell_embeddings = pooled_embeddings[cell_idx : cell_idx + n_cells_patient]
-                patient_emb = np.mean(patient_cell_embeddings, axis=0)
-                patient_embeddings.append(patient_emb)
-                patient_ptau.append(fold_ptau[patient_idx])
-                patient_thal.append(fold_thal[patient_idx])
-                cell_idx += n_cells_patient
+            if use_mil:
+                patient_cell_bags: List[np.ndarray] = []
+                for patient_idx, (_, cell_names) in enumerate(patient_iter):
+                    n_cells_patient = len(cell_names)
+                    patient_cell_embeddings = pooled_embeddings[cell_idx : cell_idx + n_cells_patient]
+                    patient_cell_bags.append(np.array(patient_cell_embeddings, dtype=np.float32, copy=True))
+                    patient_ptau.append(fold_ptau[patient_idx])
+                    patient_thal.append(fold_thal[patient_idx])
+                    cell_idx += n_cells_patient
+                patient_ptau = np.array(patient_ptau)
+                patient_thal = np.array(patient_thal)
+                patient_ptau_log = np.log1p(patient_ptau)
+                patient_thal_int = [int(t) for t in patient_thal]
+                patient_thal_encoded = np.array([thal_to_idx[t] for t in patient_thal_int])
+                all_fold_mil_data.append({
+                    "cell_bags": patient_cell_bags,
+                    "ptau": patient_ptau_log,
+                    "thal": patient_thal_encoded,
+                })
+                out(f"  MIL: {len(patient_cell_bags)} patients, cell counts {[b.shape[0] for b in patient_cell_bags][:5]}...")
+            else:
+                patient_embeddings = []
+                for patient_idx, (_, cell_names) in enumerate(patient_iter):
+                    n_cells_patient = len(cell_names)
+                    patient_cell_embeddings = pooled_embeddings[cell_idx : cell_idx + n_cells_patient]
+                    patient_emb = np.mean(patient_cell_embeddings, axis=0)
+                    patient_embeddings.append(patient_emb)
+                    patient_ptau.append(fold_ptau[patient_idx])
+                    patient_thal.append(fold_thal[patient_idx])
+                    cell_idx += n_cells_patient
 
-            patient_embeddings = np.array(patient_embeddings)
-            patient_ptau = np.array(patient_ptau)
-            patient_thal = np.array(patient_thal)
-            out(f"  Patient embeddings shape: {patient_embeddings.shape}")
+                patient_embeddings = np.array(patient_embeddings)
+                patient_ptau = np.array(patient_ptau)
+                patient_thal = np.array(patient_thal)
+                out(f"  Patient embeddings shape: {patient_embeddings.shape}")
 
-            patient_ptau_log = np.log1p(patient_ptau)
-            patient_thal_int = [int(t) for t in patient_thal]
-            patient_thal_encoded = np.array([thal_to_idx[t] for t in patient_thal_int])
-            all_fold_patient_data.append({
-                "embeddings": patient_embeddings,
-                "ptau": patient_ptau_log,
-                "thal": patient_thal_encoded,
-            })
-            out(f"  Number of patients: {len(patient_ptau)}")
+                patient_ptau_log = np.log1p(patient_ptau)
+                patient_thal_int = [int(t) for t in patient_thal]
+                patient_thal_encoded = np.array([thal_to_idx[t] for t in patient_thal_int])
+                all_fold_patient_data.append({
+                    "embeddings": patient_embeddings,
+                    "ptau": patient_ptau_log,
+                    "thal": patient_thal_encoded,
+                })
+                out(f"  Number of patients: {len(patient_ptau)}")
 
         os.makedirs(os.path.dirname(cache_path), exist_ok=True)
         with open(cache_path, "wb") as f:
-            pickle.dump({
-                "all_fold_patient_data": all_fold_patient_data,
-                "thal_to_idx": thal_to_idx,
-                "idx_to_thal": idx_to_thal,
-                "n_thal_classes": n_thal_classes,
-            }, f, protocol=pickle.HIGHEST_PROTOCOL)
-        out(f"\nSaved patient-level cache to {cache_path} (reuse in next runs).")
+            if use_mil:
+                pickle.dump({
+                    "all_fold_mil_data": all_fold_mil_data,
+                    "thal_to_idx": thal_to_idx,
+                    "idx_to_thal": idx_to_thal,
+                    "n_thal_classes": n_thal_classes,
+                }, f, protocol=pickle.HIGHEST_PROTOCOL)
+            else:
+                pickle.dump({
+                    "all_fold_patient_data": all_fold_patient_data,
+                    "thal_to_idx": thal_to_idx,
+                    "idx_to_thal": idx_to_thal,
+                    "n_thal_classes": n_thal_classes,
+                }, f, protocol=pickle.HIGHEST_PROTOCOL)
+        out(f"\nSaved cache to {cache_path} (reuse in next runs).")
 
     label_smoothing = float(getattr(args, "label_smoothing", 0.0) or 0.0)
     if label_smoothing > 0:
@@ -566,297 +981,422 @@ def main(args):
     mixup_alpha = float(getattr(args, "mixup_alpha", 0.0) or 0.0)
     gene_cutmix_prob = float(getattr(args, "gene_cutmix_prob", 0.0) or 0.0)
     gene_cutmix_alpha = float(getattr(args, "gene_cutmix_alpha", 1.0) or 1.0)
-    if mixup_alpha > 0 or gene_cutmix_prob > 0:
+    if use_mil and (mixup_alpha > 0 or gene_cutmix_prob > 0):
+        out("MIL: batch mixup / gene CutMix disabled (use cell subsampling + augment instead).")
+    elif mixup_alpha > 0 or gene_cutmix_prob > 0:
         out(
             f"Batch aug: mixup_alpha={mixup_alpha}, gene_cutmix_prob={gene_cutmix_prob}, "
             f"gene_cutmix_alpha={gene_cutmix_alpha} (off when --thal_ordinal)"
         )
 
-    # Leave-one-fold-out cross-validation
-    fold_results = []
+    # Multi-seed + Leave-one-fold-out cross-validation
+    n_seeds = getattr(args, 'n_seeds', 1)
+    base_seed = int(getattr(args, 'seed', 0))
+    all_seed_results: List[dict] = []
+    all_true_labels: List[int] = []
+    all_pred_labels: List[int] = []
 
-    for test_fold_idx in range(n_folds):
-        out(f"\n{'='*60}")
-        out(f"Test Fold {test_fold_idx + 1}/{n_folds}")
-        out(f"Training on folds: {[i+1 for i in range(n_folds) if i != test_fold_idx]}")
-        out(f"Testing on fold: {test_fold_idx + 1}")
-        out(f"{'='*60}")
+    for seed_idx in range(n_seeds):
+        current_seed = base_seed + seed_idx
+        if n_seeds > 1:
+            out(f"\n{'#'*60}")
+            out(f"Seed {seed_idx + 1}/{n_seeds} (seed={current_seed})")
+            out(f"{'#'*60}")
 
-        train_fold_indices = [i for i in range(n_folds) if i != test_fold_idx]
-        train_embeddings = np.concatenate([all_fold_patient_data[i]['embeddings'] for i in train_fold_indices], axis=0)
-        train_ptau = np.concatenate([all_fold_patient_data[i]['ptau'] for i in train_fold_indices], axis=0)
-        train_thal = np.concatenate([all_fold_patient_data[i]['thal'] for i in train_fold_indices], axis=0)
-        test_embeddings = all_fold_patient_data[test_fold_idx]['embeddings']
-        test_ptau = all_fold_patient_data[test_fold_idx]['ptau']
-        test_thal = all_fold_patient_data[test_fold_idx]['thal']
+        import random as _seed_random
+        _seed_random.seed(current_seed)
+        np.random.seed(current_seed)
+        torch.manual_seed(current_seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(current_seed)
 
-        n_train, n_test = train_embeddings.shape[0], test_embeddings.shape[0]
+        fold_results: List[dict] = []
 
-        if len(train_embeddings.shape) == 3:
-            n_genes, n_dims = train_embeddings.shape[1], train_embeddings.shape[2]
+        for test_fold_idx in range(n_folds):
+            out(f"\n{'='*60}")
+            out(f"Test Fold {test_fold_idx + 1}/{n_folds}")
+            out(f"Training on folds: {[i+1 for i in range(n_folds) if i != test_fold_idx]}")
+            out(f"Testing on fold: {test_fold_idx + 1}")
+            out(f"{'='*60}")
 
-            train_2d = train_embeddings.reshape(n_train, -1)
-            test_2d = test_embeddings.reshape(n_test, -1)
-
-            scaler = StandardScaler()
-            train_scaled = scaler.fit_transform(train_2d)
-            test_scaled = scaler.transform(test_2d)
-
-            train_scaled = train_scaled.reshape(n_train, n_genes, n_dims)
-            test_scaled = test_scaled.reshape(n_test, n_genes, n_dims)
-
-            if args.pca_components is not None:
-                train_for_pca = train_scaled.reshape(-1, n_dims)
-                test_for_pca = test_scaled.reshape(-1, n_dims)
-                pca = PCA(n_components=args.pca_components)
-                train_pca = pca.fit_transform(train_for_pca)
-                test_pca = pca.transform(test_for_pca)
-                train_embeddings = train_pca.reshape(n_train, n_genes, args.pca_components)
-                test_embeddings = test_pca.reshape(n_test, n_genes, args.pca_components)
-                out(f"Applied StandardScaler (fit on train) + PCA 16->{args.pca_components} (fit on scaled train), transform train+test")
+            train_fold_indices = [i for i in range(n_folds) if i != test_fold_idx]
+            mil_seed = current_seed + test_fold_idx * 1000
+            if use_mil:
+                train_bags_flat: List[np.ndarray] = []
+                train_ptau_list: List[float] = []
+                train_thal_list: List[int] = []
+                for i in train_fold_indices:
+                    fd = all_fold_mil_data[i]
+                    for j, bag in enumerate(fd["cell_bags"]):
+                        train_bags_flat.append(bag)
+                        train_ptau_list.append(float(fd["ptau"][j]))
+                        train_thal_list.append(int(fd["thal"][j]))
+                test_fd = all_fold_mil_data[test_fold_idx]
+                test_bags = [np.asarray(b, dtype=np.float32) for b in test_fd["cell_bags"]]
+                test_ptau = test_fd["ptau"]
+                test_thal = test_fd["thal"]
+                mil_pca_components = (
+                    args.pca_components
+                    if getattr(args, "mil_use_pca", False)
+                    else None
+                )
+                if not getattr(args, "mil_use_pca", False) and args.pca_components is not None:
+                    out(
+                        "MIL: skipping --pca_components (full scaled embedding dims per gene; "
+                        "pass --mil_use_pca to apply PCA to cell bags)"
+                    )
+                train_bags_t, test_bags_t, cell_input_dim = _transform_mil_cell_bags(
+                    train_bags_flat, test_bags, mil_pca_components, out
+                )
+                train_ptau_arr = np.array(train_ptau_list, dtype=np.float32)
+                train_thal_arr = np.array(train_thal_list, dtype=np.int64)
+                out(
+                    f"Train: {len(train_bags_t)} patients (~{sum(b.shape[0] for b in train_bags_t)} cells), "
+                    f"Test: {len(test_bags_t)} patients"
+                )
+                train_dataset = MILDataset(
+                    train_bags_t,
+                    train_ptau_arr,
+                    train_thal_arr,
+                    train=True,
+                    mil_cells_per_patient=args.mil_cells_per_patient,
+                    augment_config=train_augment_cfg,
+                    seed=mil_seed,
+                )
+                test_dataset = MILDataset(
+                    test_bags_t,
+                    test_ptau,
+                    test_thal,
+                    train=False,
+                    mil_cells_per_patient=args.mil_cells_per_patient,
+                    augment_config=train_augment_cfg,
+                    seed=mil_seed,
+                )
+                train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+                test_loader = DataLoader(
+                    test_dataset,
+                    batch_size=args.batch_size,
+                    shuffle=False,
+                    collate_fn=collate_mil_eval_batch,
+                )
+                model = MILModel(
+                    cell_input_dim=cell_input_dim,
+                    n_thal_classes=n_thal_classes,
+                    mil_hidden_dim=args.mil_hidden_dim,
+                    mil_attn_dim=args.mil_attn_dim,
+                    mil_encoder_layers=args.mil_encoder_layers,
+                    dropout=args.dropout,
+                    thal_ordinal=getattr(args, "thal_ordinal", False),
+                ).to(device)
+                mixup_train = 0.0
+                gene_cutmix_train = 0.0
+                run_eval = evaluate_mil
             else:
-                train_embeddings = train_scaled
-                test_embeddings = test_scaled
-                out(f"Applied StandardScaler (fit on train), transform train+test (no PCA, keeping {n_dims} dims)")
-        else:
-            scaler = StandardScaler()
-            train_scaled = scaler.fit_transform(train_embeddings)
-            test_scaled = scaler.transform(test_embeddings)
+                train_embeddings = np.concatenate([all_fold_patient_data[i]['embeddings'] for i in train_fold_indices], axis=0)
+                train_ptau = np.concatenate([all_fold_patient_data[i]['ptau'] for i in train_fold_indices], axis=0)
+                train_thal = np.concatenate([all_fold_patient_data[i]['thal'] for i in train_fold_indices], axis=0)
+                test_embeddings = all_fold_patient_data[test_fold_idx]['embeddings']
+                test_ptau = all_fold_patient_data[test_fold_idx]['ptau']
+                test_thal = all_fold_patient_data[test_fold_idx]['thal']
 
-            if args.pca_components is not None:
-                pca = PCA(n_components=args.pca_components)
-                train_embeddings = pca.fit_transform(train_scaled)
-                test_embeddings = pca.transform(test_scaled)
-                out(f"Applied StandardScaler (fit on train) + PCA 16->{args.pca_components} (fit on scaled train), transform train+test")
+                n_train, n_test = train_embeddings.shape[0], test_embeddings.shape[0]
+
+                if len(train_embeddings.shape) == 3:
+                    n_genes, n_dims = train_embeddings.shape[1], train_embeddings.shape[2]
+
+                    train_2d = train_embeddings.reshape(n_train, -1)
+                    test_2d = test_embeddings.reshape(n_test, -1)
+
+                    scaler = StandardScaler()
+                    train_scaled = scaler.fit_transform(train_2d)
+                    test_scaled = scaler.transform(test_2d)
+
+                    train_scaled = train_scaled.reshape(n_train, n_genes, n_dims)
+                    test_scaled = test_scaled.reshape(n_test, n_genes, n_dims)
+
+                    if args.pca_components is not None:
+                        train_for_pca = train_scaled.reshape(-1, n_dims)
+                        pca = PCA(n_components=args.pca_components)
+                        train_pca = pca.fit_transform(train_for_pca)
+                        test_pca = pca.transform(test_scaled.reshape(-1, n_dims))
+                        train_embeddings = train_pca.reshape(n_train, n_genes, args.pca_components)
+                        test_embeddings = test_pca.reshape(n_test, n_genes, args.pca_components)
+                        out(
+                            f"Applied StandardScaler (fit on train) + PCA 16->{args.pca_components} "
+                            "(fit on scaled train), transform train+test"
+                        )
+                    else:
+                        train_embeddings = train_scaled
+                        test_embeddings = test_scaled
+                        out(f"Applied StandardScaler (fit on train), transform train+test (no PCA, keeping {n_dims} dims)")
+                else:
+                    scaler = StandardScaler()
+                    train_scaled = scaler.fit_transform(train_embeddings)
+                    test_scaled = scaler.transform(test_embeddings)
+
+                    if args.pca_components is not None:
+                        pca = PCA(n_components=args.pca_components)
+                        train_embeddings = pca.fit_transform(train_scaled)
+                        test_embeddings = pca.transform(test_scaled)
+                        out(
+                            f"Applied StandardScaler (fit on train) + PCA 16->{args.pca_components} "
+                            "(fit on scaled train), transform train+test"
+                        )
+                    else:
+                        train_embeddings = train_scaled
+                        test_embeddings = test_scaled
+                        out(f"Applied StandardScaler (fit on train), transform train+test (no PCA, keeping 16 dims)")
+
+                out(f"Train: {len(train_embeddings)} patients, Test: {len(test_embeddings)} patients")
+
+                train_dataset = EmbeddingDataset(
+                    train_embeddings, train_ptau, train_thal, train=True, augment_config=train_augment_cfg
+                )
+                test_dataset = EmbeddingDataset(test_embeddings, test_ptau, test_thal, train=False)
+
+                train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+                test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
+
+                if use_gene_encoder:
+                    if len(train_embeddings.shape) != 3:
+                        raise ValueError(
+                            "--model gene_encoder requires pooling=None (3D input: n_patients, n_genes, n_dims)"
+                        )
+                    n_genes, n_dims = train_embeddings.shape[1], train_embeddings.shape[2]
+                    model = GeneEncoderModel(
+                        n_dims=n_dims,
+                        n_thal_classes=n_thal_classes,
+                        dropout=args.dropout,
+                        n_genes=n_genes,
+                        thal_ordinal=getattr(args, 'thal_ordinal', False),
+                    ).to(device)
+                else:
+                    if len(train_embeddings.shape) == 3:
+                        input_shape = (train_embeddings.shape[1], train_embeddings.shape[2])
+                        input_dim = None
+                    else:
+                        input_shape = None
+                        input_dim = train_embeddings.shape[1]
+
+                    model = BaselineRankingModel(
+                        input_dim=input_dim,
+                        input_shape=input_shape,
+                        n_thal_classes=n_thal_classes,
+                        use_attention=args.attention,
+                        num_heads=args.attention_heads if args.attention else 1,
+                        dropout=args.dropout,
+                        n_hidden_layers=args.n_hidden_layers,
+                        hidden_dim_3layer=args.hidden_dim_3layer,
+                        mlp_hidden_sizes=mlp_hidden_list,
+                        thal_ordinal=getattr(args, 'thal_ordinal', False),
+                    ).to(device)
+                mixup_train = mixup_alpha
+                gene_cutmix_train = gene_cutmix_prob
+                run_eval = evaluate
+
+            optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+
+            if use_mil:
+                model_suffix = '_mil'
+            elif use_gene_encoder:
+                model_suffix = '_geneenc'
             else:
-                train_embeddings = train_scaled
-                test_embeddings = test_scaled
-                out(f"Applied StandardScaler (fit on train), transform train+test (no PCA, keeping 16 dims)")
-
-        out(f"Train: {len(train_embeddings)} patients, Test: {len(test_embeddings)} patients")
-
-        train_dataset = EmbeddingDataset(
-            train_embeddings, train_ptau, train_thal, train=True, augment_config=train_augment_cfg
-        )
-        test_dataset = EmbeddingDataset(test_embeddings, test_ptau, test_thal, train=False)
-
-        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-        test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
-
-        if args.gene_encoder:
-            if len(train_embeddings.shape) != 3:
-                raise ValueError("--gene_encoder requires pooling=None (3D input: n_patients, n_genes, n_dims)")
-            n_genes, n_dims = train_embeddings.shape[1], train_embeddings.shape[2]
-            model = GeneEncoderModel(
-                n_dims=n_dims,
-                n_thal_classes=n_thal_classes,
-                dropout=args.dropout,
-                n_genes=n_genes,
-                thal_ordinal=getattr(args, 'thal_ordinal', False),
-            ).to(device)
-        else:
-            if len(train_embeddings.shape) == 3:
-                input_shape = (train_embeddings.shape[1], train_embeddings.shape[2])
-                input_dim = None
+                model_suffix = ''
+            attention_suffix = '_attn' if args.attention else ''
+            dropout_str = f'_drop{args.dropout}'
+            wd_str = f'_wd{args.weight_decay}'
+            if mlp_hidden_list:
+                layers_str = '_MLP' + '_'.join(str(h) for h in mlp_hidden_list)
+            elif args.n_hidden_layers == 3:
+                layers_str = f'_L{args.n_hidden_layers}'
             else:
-                input_shape = None
-                input_dim = train_embeddings.shape[1]
+                layers_str = ''
+            exp_id_str = f"_{args.exp_id}" if getattr(args, 'exp_id', None) else ''
+            log_base = getattr(args, 'log_base', 'runs')
+            no_tensorboard = getattr(args, "no_tensorboard", False)
+            if no_tensorboard:
+                writer = _NullSummaryWriter()
+            else:
+                log_dir = os.path.join(
+                    log_base,
+                    f"{args.region}_{args.pooling}_{args.loss_ptau}{model_suffix}{attention_suffix}"
+                    f"{dropout_str}{wd_str}{layers_str}{exp_id_str}_seed{current_seed}_testfold{test_fold_idx + 1}",
+                )
+                if os.path.exists(log_dir):
+                    try:
+                        import shutil
+                        shutil.rmtree(log_dir)
+                    except (PermissionError, OSError) as e:
+                        print(f"  Warning: Could not delete {log_dir}: {e}. TensorBoard may have it open. Continuing anyway.")
+                writer = SummaryWriter(log_dir)
 
-            model = BaselineRankingModel(
-                input_dim=input_dim,
-                input_shape=input_shape,
-                n_thal_classes=n_thal_classes,
-                use_attention=args.attention,
-                num_heads=args.attention_heads if args.attention else 1,
-                dropout=args.dropout,
-                n_hidden_layers=args.n_hidden_layers,
-                hidden_dim_3layer=args.hidden_dim_3layer,
-                mlp_hidden_sizes=mlp_hidden_list,
-                thal_ordinal=getattr(args, 'thal_ordinal', False),
-            ).to(device)
+            best_test_loss = float('inf')
+            best_test_f1 = float('-inf')
+            best_epoch = 0
+            best_test_mse = None
+            best_test_mae = None
+            best_state = None
+            patience = getattr(args, 'patience', 20)
+            min_epochs = getattr(args, 'min_epochs', 30)
+            if patience is not None and patience <= 0:
+                patience = None
+            epochs_without_f1_improvement = 0
 
-        optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+            thal_ordinal = getattr(args, 'thal_ordinal', False)
+            for epoch in range(args.epochs):
+                train_loss, train_ptau_loss, train_thal_loss = train_epoch(
+                    model, train_loader, criterion_ptau, criterion_thal, optimizer, device,
+                    lambda_entropy=args.lambda_entropy if use_gene_encoder else 0.0,
+                    thal_ordinal=thal_ordinal, n_thal_classes=n_thal_classes,
+                    mixup_alpha=mixup_train,
+                    gene_cutmix_prob=gene_cutmix_train,
+                    gene_cutmix_alpha=gene_cutmix_alpha,
+                )
+                test_loss, test_mse, test_mae, test_f1 = run_eval(
+                    model, test_loader, criterion_ptau, criterion_thal, device, idx_to_thal,
+                    thal_ordinal=thal_ordinal, n_thal_classes=n_thal_classes,
+                )
 
-        model_suffix = '_geneenc' if args.gene_encoder else ''
-        attention_suffix = '_attn' if args.attention else ''
-        dropout_str = f'_drop{args.dropout}'
-        wd_str = f'_wd{args.weight_decay}'
-        if mlp_hidden_list:
-            layers_str = '_MLP' + '_'.join(str(h) for h in mlp_hidden_list)
-        elif args.n_hidden_layers == 3:
-            layers_str = f'_L{args.n_hidden_layers}'
-        else:
-            layers_str = ''
-        exp_id_str = f"_{args.exp_id}" if getattr(args, 'exp_id', None) else ''
-        log_base = getattr(args, 'log_base', 'runs')
-        no_tensorboard = getattr(args, "no_tensorboard", False)
-        if no_tensorboard:
-            writer = _NullSummaryWriter()
-        else:
-            log_dir = os.path.join(
-                log_base,
-                f"{args.region}_{args.pooling}_{args.loss_ptau}{model_suffix}{attention_suffix}"
-                f"{dropout_str}{wd_str}{layers_str}{exp_id_str}_testfold{test_fold_idx + 1}",
-            )
-            if os.path.exists(log_dir):
-                try:
-                    import shutil
-                    shutil.rmtree(log_dir)
-                except (PermissionError, OSError) as e:
-                    print(f"  Warning: Could not delete {log_dir}: {e}. TensorBoard may have it open. Continuing anyway.")
-            writer = SummaryWriter(log_dir)
+                writer.add_scalar('Loss/Train', train_loss, epoch)
+                writer.add_scalar('Loss/Test', test_loss, epoch)
+                writer.add_scalar('Loss/Train_Ptau', train_ptau_loss, epoch)
+                writer.add_scalar('Loss/Train_Thal', train_thal_loss, epoch)
+                writer.add_scalar('Metrics/Test_MSE', test_mse, epoch)
+                writer.add_scalar('Metrics/Test_MAE', test_mae, epoch)
+                writer.add_scalar('Metrics/Test_F1', test_f1, epoch)
 
-        best_test_loss = float('inf')
-        best_test_f1 = float('-inf')
-        best_epoch = 0
-        best_test_mse = None
-        best_test_mae = None
-        best_state = None
-        patience = getattr(args, 'patience', 20)
-        use_best_f1 = getattr(args, 'best_f1', False)
-        if patience is not None and patience <= 0:
-            patience = None
-        epochs_without_improvement = 0
-
-        thal_ordinal = getattr(args, 'thal_ordinal', False)
-        for epoch in range(args.epochs):
-            train_loss, train_ptau_loss, train_thal_loss = train_epoch(
-                model, train_loader, criterion_ptau, criterion_thal, optimizer, device,
-                lambda_entropy=args.lambda_entropy if args.gene_encoder else 0.0,
-                thal_ordinal=thal_ordinal, n_thal_classes=n_thal_classes,
-                mixup_alpha=mixup_alpha,
-                gene_cutmix_prob=gene_cutmix_prob,
-                gene_cutmix_alpha=gene_cutmix_alpha,
-            )
-            test_loss, test_mse, test_mae, test_f1 = evaluate(
-                model, test_loader, criterion_ptau, criterion_thal, device, idx_to_thal,
-                thal_ordinal=thal_ordinal, n_thal_classes=n_thal_classes,
-            )
-
-            writer.add_scalar('Loss/Train', train_loss, epoch)
-            writer.add_scalar('Loss/Test', test_loss, epoch)
-            writer.add_scalar('Loss/Train_Ptau', train_ptau_loss, epoch)
-            writer.add_scalar('Loss/Train_Thal', train_thal_loss, epoch)
-            writer.add_scalar('Metrics/Test_MSE', test_mse, epoch)
-            writer.add_scalar('Metrics/Test_MAE', test_mae, epoch)
-            writer.add_scalar('Metrics/Test_F1', test_f1, epoch)
-
-            if use_best_f1:
-                if test_loss < best_test_loss:
-                    best_test_loss = test_loss
+                improved = False
+                if test_f1 > best_test_f1 or (test_f1 == best_test_f1 and test_loss < best_test_loss):
+                    improved = True
+                if improved:
                     best_test_f1 = test_f1
+                    best_test_loss = test_loss
                     best_epoch = epoch
                     best_test_mse = test_mse
                     best_test_mae = test_mae
                     best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
-                    epochs_without_improvement = 0
+                    epochs_without_f1_improvement = 0
                 else:
-                    epochs_without_improvement += 1
-            else:
-                if test_loss < best_test_loss:
-                    best_test_loss = test_loss
-                    best_test_f1 = test_f1  # for diagnostic only
-                    epochs_without_improvement = 0
-                else:
-                    epochs_without_improvement += 1
+                    epochs_without_f1_improvement += 1
 
-            """
-            # (legacy: best_f1 controlled by --best_f1 above)
-            if test_loss < best_test_loss:
-                best_test_loss = test_loss
-                best_test_f1 = test_f1
-                best_epoch = epoch
-                best_test_mse = test_mse
-                best_test_mae = test_mae
-                best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
-                epochs_without_improvement = 0
-            else:
-                epochs_without_improvement += 1
-            """
-            if (epoch + 1) % 10 == 0 and getattr(args, "verbose", True) and not quiet:
-                out(f"Epoch {epoch+1}/{args.epochs} - Train Loss: {train_loss:.4f}, "
-                    f"Test Loss: {test_loss:.4f}, Test F1: {test_f1:.4f}, Test MAE: {test_mae:.4f}")
+                if (epoch + 1) % 10 == 0 and getattr(args, "verbose", True) and not quiet:
+                    out(f"Epoch {epoch+1}/{args.epochs} - Train Loss: {train_loss:.4f}, "
+                        f"Test Loss: {test_loss:.4f}, Test F1: {test_f1:.4f}, Test MAE: {test_mae:.4f}")
 
-            if patience is not None and epochs_without_improvement >= patience:
-                if getattr(args, "verbose", True) and not quiet:
-                    out(f"  Early stopping at epoch {epoch+1} (no test loss improvement for {patience} epochs).")
-                break
+                if (
+                    patience is not None
+                    and epochs_without_f1_improvement >= patience
+                    and (epoch + 1) >= min_epochs
+                ):
+                    if getattr(args, "verbose", True) and not quiet:
+                        out(f"  Early stopping at epoch {epoch+1} (no F1 improvement for {patience} epochs, min_epochs={min_epochs}).")
+                    break
 
-        """
-        if best_state is not None:
-            model.load_state_dict(best_state)
-        """
-        if use_best_f1 and best_state is not None:
-            model.load_state_dict(best_state)
-        writer.close()
+            if best_state is not None:
+                model.load_state_dict(best_state)
 
-        if best_state is not None and getattr(args, 'save_best_model', False):
-            save_dir = getattr(args, 'save_dir', 'models')
-            os.makedirs(save_dir, exist_ok=True)
-            save_name = f'{args.region}_testfold{test_fold_idx+1}{model_suffix}{attention_suffix}{exp_id_str}.pt'
-            save_path = os.path.join(save_dir, save_name)
-            torch.save(best_state, save_path)
-            out(f"  Saved best model to {save_path}")
+            # Final evaluation with best checkpoint to collect pooled predictions
+            model.eval()
+            with torch.no_grad():
+                _, report_mse, report_mae, report_f1, fold_true, fold_pred = run_eval(
+                    model,
+                    test_loader,
+                    criterion_ptau,
+                    criterion_thal,
+                    device,
+                    idx_to_thal,
+                    thal_ordinal=thal_ordinal,
+                    n_thal_classes=n_thal_classes,
+                    return_preds=True,
+                )
+            writer.close()
 
-        if use_best_f1 and best_state is not None:
-            report_f1 = best_test_f1
-            report_mse = best_test_mse
-            report_mae = best_test_mae
+            if best_state is not None and getattr(args, 'save_best_model', False):
+                save_dir = getattr(args, 'save_dir', 'models')
+                os.makedirs(save_dir, exist_ok=True)
+                save_name = f'{args.region}_testfold{test_fold_idx+1}_seed{current_seed}{model_suffix}{attention_suffix}{exp_id_str}.pt'
+                save_path = os.path.join(save_dir, save_name)
+                torch.save(best_state, save_path)
+                out(f"  Saved best model to {save_path}")
+
             report_epoch = best_epoch + 1
             out(f"\nTest Fold {test_fold_idx + 1} Best F1: {report_f1:.4f} (epoch {report_epoch})")
             out(f"  MSE: {report_mse:.4f}, MAE: {report_mae:.4f}")
-        else:
-            # Final-epoch metrics (or fallback when --best_f1 but no improvement)
-            model.eval()
-            with torch.no_grad():
-                test_loss, test_mse, test_mae, test_f1 = evaluate(
-                    model, test_loader, criterion_ptau, criterion_thal, device, idx_to_thal,
-                    thal_ordinal=thal_ordinal, n_thal_classes=n_thal_classes,
-                )
-            report_f1 = test_f1
-            report_mse = test_mse
-            report_mae = test_mae
-            report_epoch = epoch + 1
-            out(f"\nTest Fold {test_fold_idx + 1} Final F1: {report_f1:.4f} (last epoch)")
-            if use_best_f1:
-                out(f"  (no improvement in any epoch; reporting last epoch)")
-            elif best_test_f1 != report_f1:
-                out(f"  (best F1 during training was {best_test_f1:.4f})")
-            out(f"  MSE: {report_mse:.4f}, MAE: {report_mae:.4f}")
 
-        fold_results.append({
-            'test_fold': test_fold_idx + 1,
-            'best_f1': report_f1,
-            'final_f1': report_f1,
-            'best_epoch': report_epoch,
-            'best_test_mse': report_mse,
-            'best_test_mae': report_mae
-        })
+            fold_results.append({
+                'test_fold': test_fold_idx + 1,
+                'seed': current_seed,
+                'best_f1': report_f1,
+                'best_epoch': report_epoch,
+                'best_test_mse': report_mse,
+                'best_test_mae': report_mae,
+                'thal_true': fold_true,
+                'thal_pred': fold_pred,
+            })
 
-    out(f"\n{'='*60}")
-    out("Leave-One-Fold-Out Cross-Validation Summary")
-    out(f"{'='*60}")
-    fold_f1s = [r['final_f1'] for r in fold_results]
-    label = "best" if getattr(args, 'best_f1', False) else "final (last-epoch)"
-    out(f"Per-fold {label} F1: {[f'{f:.4f}' for f in fold_f1s]}")
-    for result in fold_results:
-        out(f"\033[92mTest Fold {result['test_fold']}: F1={result['best_f1']:.4f}, "
+            all_true_labels.extend(fold_true)
+            all_pred_labels.extend(fold_pred)
+
+        # --- Per-seed summary ---
+        seed_f1s = [r['best_f1'] for r in fold_results]
+        seed_avg_f1 = np.mean(seed_f1s)
+        out(f"\n{'='*60}")
+        out(f"Seed {current_seed} LOFO Summary: per-fold best F1 = {[f'{f:.4f}' for f in seed_f1s]}")
+        out(f"Seed {current_seed} Average F1: {seed_avg_f1:.4f}")
+        out(f"{'='*60}")
+        all_seed_results.extend(fold_results)
+
+    # --- Grand summary across all seeds x folds ---
+    out(f"\n{'#'*60}")
+    out(f"Grand Summary ({n_seeds} seed(s) x {n_folds} folds = {len(all_seed_results)} runs)")
+    out(f"{'#'*60}")
+
+    all_f1s = [r['best_f1'] for r in all_seed_results]
+    all_mses = [r['best_test_mse'] for r in all_seed_results]
+    all_maes = [r['best_test_mae'] for r in all_seed_results]
+
+    grand_avg_f1 = np.mean(all_f1s)
+    grand_std_f1 = np.std(all_f1s)
+    grand_avg_mse = np.mean(all_mses)
+    grand_avg_mae = np.mean(all_maes)
+
+    per_seed_avg_f1s = []
+    for si in range(n_seeds):
+        s = base_seed + si
+        sf1 = [r['best_f1'] for r in all_seed_results if r['seed'] == s]
+        per_seed_avg_f1s.append(np.mean(sf1))
+    seed_of_f1_std = np.std(per_seed_avg_f1s) if len(per_seed_avg_f1s) > 1 else 0.0
+
+    if n_seeds > 1:
+        out(f"Per-seed avg F1: {[f'{f:.4f}' for f in per_seed_avg_f1s]}")
+        out(f"Std of per-seed avg F1: {seed_of_f1_std:.4f}")
+
+    for result in all_seed_results:
+        out(f"\033[92mSeed {result['seed']} Fold {result['test_fold']}: F1={result['best_f1']:.4f}, "
             f"MSE={result['best_test_mse']:.4f}, MAE={result['best_test_mae']:.4f}\033[0m")
 
-    avg_f1 = np.mean(fold_f1s)
-    avg_mse = np.mean([r['best_test_mse'] for r in fold_results])
-    avg_mae = np.mean([r['best_test_mae'] for r in fold_results])
+    from sklearn.metrics import f1_score as _f1_score_sklearn
+    pooled_f1 = _f1_score_sklearn(all_true_labels, all_pred_labels, average="weighted") if all_true_labels else float("nan")
 
-    out(f"\nAverage F1: {avg_f1:.4f}")
-    out(f"Average MSE: {avg_mse:.4f}")
-    out(f"Average MAE: {avg_mae:.4f}")
+    out(f"\nGeneralized F1 (mean over {len(all_f1s)} seed-fold runs): {grand_avg_f1:.4f} +/- {grand_std_f1:.4f}")
+    out(f"Pooled held-out F1 across all seeds x folds: {pooled_f1:.4f}")
+    out(f"Average MSE: {grand_avg_mse:.4f}")
+    out(f"Average MAE: {grand_avg_mae:.4f}")
 
-    return avg_f1, avg_mse, avg_mae, fold_results
+    return grand_avg_f1, grand_avg_mse, grand_avg_mae, all_seed_results
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Train model (baseline or gene encoder)')
+    parser = argparse.ArgumentParser(description='Train model (baseline, gene encoder, or cell-level MIL)')
     parser.add_argument('--region', type=str, required=True, help='Region name (e.g., EC, ITG, PFC)')
+    parser.add_argument(
+        '--model',
+        type=str,
+        choices=['baseline', 'gene_encoder', 'mil'],
+        default='baseline',
+        help='baseline: patient-level MLP; gene_encoder: learnable gene pooling; mil: cell-level MIL bags',
+    )
+    parser.add_argument('--seed', type=int, default=0, help='RNG seed (MIL subsampling + reproducibility aids)')
     parser.add_argument('--pooling', type=str, choices=['mean', 'max'], default=None,
                        help='Pooling method: mean or max (default: None)')
     parser.add_argument('--loss_ptau', type=str, default='mse',
@@ -877,8 +1417,22 @@ if __name__ == "__main__":
                        help='Weight decay for Adam optimizer (default: 1e-1)')
     parser.add_argument('--pca_components', type=int, default=None,
                        help='Number of PCA components; if not set, keep 16 dims (no PCA)')
-    parser.add_argument('--gene_encoder', action='store_true',
-                       help='Use GeneEncoderModel (gene encoder + attention pooling); requires pooling=None')
+    parser.add_argument(
+        '--gene_encoder',
+        action='store_true',
+        help='Deprecated: use --model gene_encoder. GeneEncoderModel; requires pooling=None',
+    )
+    parser.add_argument('--mil_cells_per_patient', type=int, default=128,
+                       help='MIL: number of cells sampled per patient per step (train only)')
+    parser.add_argument('--mil_hidden_dim', type=int, default=128, help='MIL: cell encoder output width')
+    parser.add_argument('--mil_attn_dim', type=int, default=64, help='MIL: attention bottleneck dim')
+    parser.add_argument('--mil_encoder_layers', type=int, default=2,
+                       help='MIL: number of linear layers in cell encoder (>=1)')
+    parser.add_argument(
+        '--mil_use_pca',
+        action='store_true',
+        help='MIL: after scaling, apply --pca_components per gene row (default: off; train on full D e.g. 16)',
+    )
     parser.add_argument('--lambda_entropy', type=float, default=1e-3,
                        help='Gene entropy regularization weight (default: 1e-3, gene_encoder only)')
     parser.add_argument('--thal_ordinal', action='store_true',
@@ -895,8 +1449,14 @@ if __name__ == "__main__":
         dest='verbose_cv',
         help='Print LOFO fold / data-load / summary stdout (default: quiet for less noise)',
     )
-    parser.add_argument('--patience', type=int, default=20,
-                       help='Early stopping: stop if test loss does not improve for this many epochs (default: 20). Set to 0 to disable.')
+    parser.add_argument('--patience', type=int, default=40,
+                       help='Early stopping: stop if held-out F1 does not improve for this many epochs (default: 40). Set to 0 to disable.')
+    parser.add_argument('--min_epochs', type=int, default=30,
+                       help='Minimum epochs before early stopping can trigger (default: 30).')
+    parser.add_argument('--n_seeds', type=int, default=10,
+                       help='Number of random seeds to run (default: 10). Each seed repeats full LOFO CV.')
+    parser.add_argument('--n_folds_eval', type=int, default=8,
+                       help='Number of CV folds to use by merging original folds (e.g., 4 or 8). Default: use all folds from data.')
     parser.add_argument('--n_hidden_layers', type=int, default=1, choices=[1, 3],
                        help='Baseline MLP: 1 (minimal) or 3 (original) when --mlp_hidden_sizes not set (default: 1).')
     parser.add_argument('--hidden_dim_3layer', type=int, default=32,
@@ -908,7 +1468,7 @@ if __name__ == "__main__":
         help='Comma-separated baseline MLP widths, e.g. 64,32,16,8,4. When set, overrides --n_hidden_layers layout.',
     )
     parser.add_argument('--best_f1', action='store_true',
-                       help='Use best F1 across epochs and restore best model; default is last-epoch F1.')
+                       help='(Deprecated, now always on) Checkpoint selection uses best held-out F1.')
     parser.add_argument('--top_genes', type=int, default=None,
                        help='Use only top N genes from ranked_genes.csv; filters at train time (default: all genes).')
     parser.add_argument('--ranked_genes_path', type=str, default=None,
@@ -950,5 +1510,9 @@ if __name__ == "__main__":
     parser.add_argument('--no_tensorboard', action='store_true',
                        help='Disable TensorBoard logging (no SummaryWriter / event files).')
     args = parser.parse_args()
+    if args.gene_encoder:
+        args.model = 'gene_encoder'
+    if args.model == 'mil' and args.mil_encoder_layers < 1:
+        raise SystemExit('--mil_encoder_layers must be >= 1')
 
     main(args)
