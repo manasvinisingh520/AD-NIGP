@@ -131,8 +131,8 @@ def create_anndata_astrocytes(region):
     return adata
 
 
-def load_anndata_microglia(region):
-    """Load Microglia per-cell AnnData from pre-built h5ad (metadata is not Excel/sheets)."""
+def create_anndata_microglia(region):
+    """Create/return Microglia per-cell AnnData from pre-built h5ad (metadata is not Excel/sheets)."""
     path = find_anndata_file(region, cell_type="Microglia")
     if path is None:
         raise FileNotFoundError(
@@ -158,8 +158,8 @@ def load_anndata_microglia(region):
     return adata
 
 
-def load_anndata_mtg(region):
-    """Load MTG (SEA AD) per-cell AnnData. Targets: Thal and Braak (categorical)."""
+def create_anndata_mtg(region):
+    """Create/return MTG (SEA AD) per-cell AnnData. Targets: Thal and Braak (categorical)."""
     path = find_anndata_file(region, cell_type="MTG")
     if path is None:
         raise FileNotFoundError(
@@ -204,9 +204,9 @@ def create_anndata(region, cell_type='Astrocytes'):
     if cell_type == "Astrocytes":
         return create_anndata_astrocytes(region)
     elif cell_type == "Microglia":
-        return load_anndata_microglia(region)
+        return create_anndata_microglia(region)
     elif cell_type == "MTG":
-        return load_anndata_mtg(region)
+        return create_anndata_mtg(region)
     raise ValueError(f"Invalid cell type: {cell_type}")
 
 def main(args=None):
