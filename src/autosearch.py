@@ -154,9 +154,12 @@ def suggest_trial_optuna(trial, *, fixed_input_type: Optional[str] = None) -> Tr
         input_type = trial.suggest_categorical("input_type", INPUT_TYPE_CHOICES)
 
     if input_type == "expression":
-        model_type = trial.suggest_categorical("model_type", EXPR_MODEL_CHOICES)
+        # Use a distinct Optuna parameter name for expression-only models
+        model_type = trial.suggest_categorical("model_type_expr", EXPR_MODEL_CHOICES)
     else:
-        model_type = trial.suggest_categorical("model_type", EMB_MODEL_CHOICES)
+        # And a separate name for embedding-based models to avoid
+        # dynamic value spaces on a single parameter.
+        model_type = trial.suggest_categorical("model_type_emb", EMB_MODEL_CHOICES)
 
     is_sklearn = model_type in ("logreg", "svm")
     is_scvi = model_type == "scvi"

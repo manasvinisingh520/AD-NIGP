@@ -102,6 +102,10 @@ python src/train_model_v2.py --region EC --input_type expression --model_type sc
 python src/train_model_v2.py --region EC --input_type embedding --model_type flatten_mlp \
     --mlp_hidden_sizes 256,128,64 --epochs 200 --n_seeds 10 --verbose-cv
 
+# Cell-level variant (no patient pooling; each cell is a sample)
+python src/train_model_v2.py --region EC --input_type embedding --model_type flatten_mlp \
+    --cell_level --mlp_hidden_sizes 256,128,64 --epochs 200 --n_seeds 10 --verbose-cv
+
 # Gene encoder (per-gene attention pooling)
 python src/train_model_v2.py --region EC --input_type embedding --model_type gene_encoder \
     --lambda_entropy 0.01 --epochs 200 --n_seeds 10 --verbose-cv
@@ -120,6 +124,10 @@ higher dimensionality.
 ```bash
 python src/train_model_v2.py --region EC --input_type random_embedding --model_type flatten_mlp \
     --mlp_hidden_sizes 256,128,64 --epochs 200 --n_seeds 10 --verbose-cv
+
+# Cell-level random embedding variant
+python src/train_model_v2.py --region EC --input_type random_embedding --model_type flatten_mlp \
+    --cell_level --mlp_hidden_sizes 256,128,64 --epochs 200 --n_seeds 10 --verbose-cv
 ```
 
 ---

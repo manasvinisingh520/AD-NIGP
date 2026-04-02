@@ -60,6 +60,9 @@ EMBEDDING_MODELS = {"flatten_mlp", "gene_encoder", "mil"}
 ALL_MODEL_TYPES = EXPRESSION_MODELS | EMBEDDING_MODELS
 INPUT_TYPES = {"expression", "embedding", "random_embedding"}
 
+# Fixed dimensionality for random gene embeddings (gene x D, scaled by expression)
+RANDOM_EMBEDDING_DIM = 16
+
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
@@ -100,14 +103,13 @@ def _select_folds(data: dict, input_type: str) -> List[np.ndarray]:
     elif input_type == "random_embedding":
         expr_folds = data["expression_folds"]
         n_genes = len(data["gene_names"])
-        emb_dim = data["embedding_dim"]
         result = []
         for expr in expr_folds:
             result.append(
                 generate_random_embeddings(
                     np.asarray(expr, dtype=np.float32),
                     n_genes=n_genes,
-                    embedding_dim=emb_dim,
+                    embedding_dim=RANDOM_EMBEDDING_DIM,
                 )
             )
         return result
@@ -380,6 +382,10 @@ def main(args) -> Tuple[float, float, float, List[dict]]:
     thal_folds = data["thal_folds"]
     gene_names = data["gene_names"]
     embedding_dim = data["embedding_dim"]
+    if args.input_type == "random_embedding":
+        # For random embeddings we override the original gene-embedding dim
+        # and instead use a small fixed D (e.g., 16) for gene x D random vectors.
+        embedding_dim = RANDOM_EMBEDDING_DIM
     n_genes = len(gene_names)
 
     out(
@@ -419,14 +425,50 @@ def main(args) -> Tuple[float, float, float, List[dict]]:
     n_thal_classes = len(thal_classes)
     out(f"Thal classes: {thal_classes} ({n_thal_classes} classes)")
 
-    # --- Prepare per-fold patient-level or MIL data ---
-    use_mil = args.model_type == "mil"
+    # --- Mode selection ---
+    use_cell_level = bool(getattr(args, "cell_level", False))
+
+    # --- Prepare per-fold data ---
+    use_mil = (args.model_type == "mil") and not use_cell_level
     use_sklearn = args.model_type in ("logreg", "svm")
-    use_scvi = args.model_type == "scvi"
+    use_scvi = (args.model_type == "scvi") and not use_cell_level
 
     all_fold_data = []
+
+    def _build_cell_level_thal(
+        fold_data: np.ndarray,
+        patient_info: list,
+        thal_fold,
+        thal_to_idx: dict,
+    ) -> np.ndarray:
+        """Create per-cell Thal labels given per-patient Thal."""
+        cell_thal = []
+        cell_idx = 0
+        for pi, (_, cell_names) in enumerate(patient_info):
+            n_cells = len(cell_names)
+            thal_class = thal_to_idx[int(thal_fold[pi])]
+            cell_thal.extend([thal_class] * n_cells)
+            cell_idx += n_cells
+        return np.asarray(cell_thal, dtype=np.int64)
+
     for fi in range(n_folds):
-        if use_mil:
+        if use_cell_level:
+            # Keep original cell-level data; labels are per cell.
+            fold_cells = np.asarray(raw_folds[fi], dtype=np.float32)
+            cell_thal = _build_cell_level_thal(
+                fold_cells,
+                patient_info_folds[fi],
+                thal_folds[fi],
+                thal_to_idx,
+            )
+            all_fold_data.append(
+                {
+                    "embeddings": fold_cells,
+                    "thal": cell_thal,
+                    "ptau": np.zeros_like(cell_thal, dtype=np.float32),
+                }
+            )
+        elif use_mil:
             all_fold_data.append(
                 _build_mil_bags(
                     raw_folds[fi],
@@ -910,6 +952,11 @@ if __name__ == "__main__":
         default="log1p",
         choices=["log1p", "sqrt", "linear"],
         help="Expression transform used when creating v2 data pickles.",
+    )
+    parser.add_argument(
+        "--cell_level",
+        action="store_true",
+        help="Train on cell-level samples (no patient pooling / MIL / scVI).",
     )
     parser.add_argument(
         "--loss_ptau", type=str, default="none",
