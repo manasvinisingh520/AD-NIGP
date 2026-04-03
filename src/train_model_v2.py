@@ -15,9 +15,12 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import datetime
+import io
 import os
 import pickle
 import random as _py_random
+import sys
 import warnings
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -133,6 +136,74 @@ def _merge_folds(folds: list, group_size: int) -> list:
                 combined.extend(c)
             merged.append(combined)
     return merged
+
+
+def _standard_scale_inplace_chunked(
+    train_x: np.ndarray,
+    test_x: np.ndarray,
+    *,
+    eps: float = 1e-6,
+    max_bytes: int = 512 * 1024 * 1024,
+) -> None:
+    """Standardize features in-place using chunked float operations.
+
+    sklearn's StandardScaler often casts to float64 and can allocate huge
+    temporaries for large 2D tensors (e.g. cells x (genes*D)).
+    This implementation keeps memory bounded by chunking rows.
+    """
+    if train_x.ndim != 2 or test_x.ndim != 2:
+        raise ValueError(
+            f"Expected 2D arrays for scaling. Got train_x.ndim={train_x.ndim}, test_x.ndim={test_x.ndim}"
+        )
+    if train_x.shape[1] != test_x.shape[1]:
+        raise ValueError(
+            f"Train/test feature dims mismatch: {train_x.shape[1]} vs {test_x.shape[1]}"
+        )
+
+    if train_x.dtype != np.float32:
+        train_x = train_x.astype(np.float32)
+    if test_x.dtype != np.float32:
+        test_x = test_x.astype(np.float32)
+
+    n_samples, n_features = train_x.shape
+
+    # Number of rows per chunk so that x64 has roughly <= max_bytes.
+    # x64 uses 8 bytes/element.
+    rows_per_chunk = max(1, max_bytes // max(1, n_features * 8))
+    rows_per_chunk = int(min(rows_per_chunk, n_samples))
+
+    sum_x = np.zeros(n_features, dtype=np.float64)
+    sum_x2 = np.zeros(n_features, dtype=np.float64)
+
+    for start in range(0, n_samples, rows_per_chunk):
+        end = min(n_samples, start + rows_per_chunk)
+        x = train_x[start:end]
+        x64 = x.astype(np.float64)  # temp for this chunk
+        sum_x += x64.sum(axis=0)
+        sum_x2 += (x64 * x64).sum(axis=0)
+
+    mean = sum_x / float(n_samples)
+    var = sum_x2 / float(n_samples) - mean * mean
+    std = np.sqrt(np.maximum(var, eps))
+
+    mean32 = mean.astype(np.float32)
+    std32 = std.astype(np.float32)
+    std32 = np.where(std32 == 0, 1.0, std32)
+
+    # Transform train in-place
+    for start in range(0, n_samples, rows_per_chunk):
+        end = min(n_samples, start + rows_per_chunk)
+        train_x[start:end] -= mean32
+        train_x[start:end] /= std32
+
+    # Transform test in-place
+    n_test = test_x.shape[0]
+    rows_test_chunk = max(1, max_bytes // max(1, n_features * 8))
+    rows_test_chunk = int(min(rows_test_chunk, n_test))
+    for start in range(0, n_test, rows_test_chunk):
+        end = min(n_test, start + rows_test_chunk)
+        test_x[start:end] -= mean32
+        test_x[start:end] /= std32
 
 
 # ---------------------------------------------------------------------------
@@ -362,13 +433,82 @@ def _transform_mil_bags(
 # ---------------------------------------------------------------------------
 
 
+def _open_run_log_file(args) -> None:
+    """Set args._run_log_fp to a text file, or None if disabled."""
+    setattr(args, "_run_log_fp", None)
+    if getattr(args, "no_run_log", False):
+        return
+
+    explicit = getattr(args, "run_log", None)
+    log_base = getattr(args, "log_base", "runs") or "runs"
+    exp_id = getattr(args, "exp_id", None)
+    if exp_id:
+        log_base = os.path.join(log_base, str(exp_id))
+    os.makedirs(log_base, exist_ok=True)
+
+    def _safe(s: str) -> str:
+        return "".join(c if c.isalnum() or c in "-_" else "_" for c in str(s))
+
+    if explicit:
+        log_path = os.path.abspath(explicit)
+        parent = os.path.dirname(log_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+    else:
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        name = (
+            f"train_model_v2_{ts}_{_safe(args.region)}_{_safe(args.input_type)}"
+            f"_{_safe(args.model_type)}.log"
+        )
+        log_path = os.path.join(log_base, name)
+
+    fp = open(log_path, "w", encoding="utf-8")
+    fp.write("train_model_v2 run log\n")
+    fp.write(f"started: {datetime.datetime.now().isoformat()}\n")
+    fp.write(f"argv: {sys.argv}\n")
+    fp.write("-" * 60 + "\n")
+    fp.flush()
+    setattr(args, "_run_log_fp", fp)
+    print(f"[train_model_v2] Logging to: {os.path.abspath(log_path)}", flush=True)
+
+
 def main(args) -> Tuple[float, float, float, List[dict]]:
     quiet = getattr(args, "q", not getattr(args, "verbose_cv", False))
 
+    _open_run_log_file(args)
+
     def out(*a, **kw):
+        fp = getattr(args, "_run_log_fp", None)
+        if fp is not None:
+            buf = io.StringIO()
+            print(*a, file=buf, **kw)
+            fp.write(buf.getvalue())
+            fp.flush()
         if not quiet:
             print(*a, **kw)
 
+    try:
+        return _main_inner(args, out)
+    finally:
+        fp = getattr(args, "_run_log_fp", None)
+        if fp is not None:
+            try:
+                exc = sys.exc_info()[0]
+                fp.write(f"\nended: {datetime.datetime.now().isoformat()}\n")
+                if exc is None:
+                    fp.write("STATUS: completed\n")
+                else:
+                    fp.write(f"STATUS: failed ({getattr(exc, '__name__', exc)})\n")
+            except Exception:
+                pass
+            try:
+                fp.close()
+            except Exception:
+                pass
+            setattr(args, "_run_log_fp", None)
+
+
+def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
     # --- Load data ---
     expr_transform = getattr(args, "expr_transform", "log1p")
     data = _load_v2_pickle(
@@ -710,10 +850,33 @@ def main(args) -> Tuple[float, float, float, List[dict]]:
                 test_ptau = all_fold_data[test_fi]["ptau"]
                 test_thal = all_fold_data[test_fi]["thal"]
 
+                if getattr(args, "verbose_cv", False):
+                    # train_emb can be 2D (cells x features) or 3D (cells x genes x D)
+                    train_cells = int(train_emb.shape[0]) if hasattr(train_emb, "shape") else -1
+                    test_cells = int(test_emb.shape[0]) if hasattr(test_emb, "shape") else -1
+                    out(
+                        f"    [Debug] Fold {test_fi + 1}: "
+                        f"train_cells={train_cells}, test_cells={test_cells}, "
+                        f"train_emb_ndim={getattr(train_emb, 'ndim', None)}, "
+                        f"test_emb_ndim={getattr(test_emb, 'ndim', None)}"
+                    )
+
+                # StandardScaler expects 2D (n_samples, n_features).
+                # In cell_level mode, embedding inputs are still (cells, genes, D),
+                # so we flatten to (cells, genes*D).
+                if getattr(train_emb, "ndim", None) == 3:
+                    train_emb = train_emb.reshape(train_emb.shape[0], -1)
+                    test_emb = test_emb.reshape(test_emb.shape[0], -1)
+
                 # StandardScaler
-                scaler = StandardScaler()
-                train_emb = scaler.fit_transform(train_emb)
-                test_emb = scaler.transform(test_emb)
+                # In cell_level mode with flattened embeddings (cells x genes*D),
+                # sklearn can allocate float64 temporaries that exceed memory.
+                if bool(getattr(args, "cell_level", False)) and train_emb.ndim == 2 and train_emb.shape[1] >= 10000:
+                    _standard_scale_inplace_chunked(train_emb, test_emb)
+                else:
+                    scaler = StandardScaler()
+                    train_emb = scaler.fit_transform(train_emb)
+                    test_emb = scaler.transform(test_emb)
 
                 # Optional PCA
                 pca_comp = getattr(args, "pca_components", None)
@@ -806,7 +969,26 @@ def main(args) -> Tuple[float, float, float, List[dict]]:
             gene_cutmix_prob = float(getattr(args, "gene_cutmix_prob", 0.0) or 0.0)
             gene_cutmix_alpha = float(getattr(args, "gene_cutmix_alpha", 1.0) or 1.0)
 
-            for epoch in range(epochs):
+            show_epoch_progress = bool(getattr(args, "verbose_cv", False))
+            tqdm = None
+            if show_epoch_progress:
+                try:
+                    from tqdm import tqdm as _tqdm  # type: ignore
+                    tqdm = _tqdm
+                except ImportError:
+                    tqdm = None
+
+            epoch_iter = range(epochs)
+            if tqdm is not None:
+                epoch_iter = tqdm(
+                    range(epochs),
+                    desc=f"Fold {test_fi + 1}/{n_folds} epochs",
+                    leave=False,
+                )
+
+            last_epoch = -1
+            for epoch in epoch_iter:
+                last_epoch = epoch
                 if is_mil:
                     run_train(
                         model, train_loader, criterion_ptau, criterion_thal,
@@ -857,6 +1039,13 @@ def main(args) -> Tuple[float, float, float, List[dict]]:
 
             if best_state is not None:
                 model.load_state_dict(best_state)
+
+            if getattr(args, "verbose_cv", False):
+                out(
+                    f"    [Debug] Fold {test_fi + 1}: "
+                    f"epochs_ran={max(0, last_epoch + 1)}, best_epoch={best_epoch + 1}, "
+                    f"best_f1={best_f1:.4f}, patience={patience}, epochs_no_improve={epochs_no_improve}"
+                )
 
             # Final eval for pooled predictions
             model.eval()
@@ -1009,6 +1198,17 @@ if __name__ == "__main__":
     parser.add_argument("--no_tensorboard", action="store_true")
     parser.add_argument("--exp_id", type=str, default=None)
     parser.add_argument("--log_base", type=str, default="runs")
+    parser.add_argument(
+        "--run_log",
+        type=str,
+        default=None,
+        help="Write all training output to this file; if omitted, a timestamped file under --log_base is used.",
+    )
+    parser.add_argument(
+        "--no_run_log",
+        action="store_true",
+        help="Disable writing the run log file.",
+    )
 
     args = parser.parse_args()
 
