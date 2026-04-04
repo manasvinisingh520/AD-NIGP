@@ -1,13 +1,16 @@
 """
-Plot gene embeddings using UMAP visualization.
+Plot gene embeddings in 2D using UMAP and/or PCA.
 """
 
-import os
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import umap
 import argparse
+import os
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from matplotlib.patches import Patch
+from sklearn.decomposition import PCA
+
 from utils import create_color_mapping
 
 
@@ -123,7 +126,94 @@ def concatenate_all_gene_embeddings():
     return concatenated_embeddings, all_gene_ids, all_gene_labels, all_cell_types
 
 
-parser = argparse.ArgumentParser(description='Plot gene embeddings using UMAP visualization.')
+def resolve_colors(color_by: str, cell_types, gene_labels):
+    """Return scatter color array / mapping and a short note for plot titles."""
+    if color_by == "none":
+        return "gray", None, None, None
+    if color_by == "cell_type" and cell_types is not None:
+        if cell_types and not any("_" in str(ct) for ct in cell_types[:10]):
+            custom_colors = {
+                "Astrocytes": "#1f77b4",
+                "Microglia": "#ff7f0e",
+            }
+            point_colors, color_map, unique_values, _ = create_color_mapping(
+                cell_types, attribute_type="generic", custom_colors=custom_colors
+            )
+        else:
+            point_colors, color_map, unique_values, _ = create_color_mapping(
+                cell_types, attribute_type="cell_type"
+            )
+        return point_colors, color_map, unique_values, "Colored by Cell Type"
+    if color_by == "region" and gene_labels is not None:
+        point_colors, color_map, unique_values, _ = create_color_mapping(
+            gene_labels, attribute_type="region"
+        )
+        return point_colors, color_map, unique_values, "Colored by Region"
+    if color_by == "auto":
+        if cell_types is not None:
+            if cell_types and not any("_" in str(ct) for ct in cell_types[:10]):
+                custom_colors = {
+                    "Astrocytes": "#1f77b4",
+                    "Microglia": "#ff7f0e",
+                }
+                point_colors, color_map, unique_values, _ = create_color_mapping(
+                    cell_types, attribute_type="generic", custom_colors=custom_colors
+                )
+            else:
+                point_colors, color_map, unique_values, _ = create_color_mapping(
+                    cell_types, attribute_type="cell_type"
+                )
+            return point_colors, color_map, unique_values, "Colored by Cell Type"
+        if gene_labels is not None:
+            point_colors, color_map, unique_values, _ = create_color_mapping(
+                gene_labels, attribute_type="region"
+            )
+            return point_colors, color_map, unique_values, "Colored by Region"
+        return "gray", None, None, None
+    return "gray", None, None, None
+
+
+def compute_embeddings_2d(embeddings_matrix: np.ndarray, method: str, args):
+    """Return list of (label, xy ndarray). method: umap, pca, or both."""
+    X = np.asarray(embeddings_matrix, dtype=np.float64)
+    if not np.isfinite(X).all():
+        n_bad = int(np.sum(~np.isfinite(X)))
+        print(f"Warning: {n_bad} non-finite values in embedding matrix; replacing with 0 for reduction.")
+        X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+
+    out = []
+    if method in ("umap", "both"):
+        import umap
+
+        print("\nComputing UMAP (2D)...")
+        reducer = umap.UMAP(
+            n_components=2,
+            random_state=42,
+            n_neighbors=int(getattr(args, "umap_n_neighbors", 15)),
+            min_dist=float(getattr(args, "umap_min_dist", 0.1)),
+        )
+        xy = reducer.fit_transform(X)
+        out.append(("UMAP", np.asarray(xy, dtype=np.float64)))
+    if method in ("pca", "both"):
+        n_comp = min(2, X.shape[0], X.shape[1])
+        print(f"\nComputing PCA (2D, n_comp={n_comp})...")
+        pca = PCA(n_components=n_comp, random_state=42)
+        xy = pca.fit_transform(X)
+        print(f"  Explained variance ratio: {pca.explained_variance_ratio_}")
+        print(f"  Cumulative explained variance: {float(np.sum(pca.explained_variance_ratio_)):.4f}")
+        # Always return (n, 2) for plotting (pad if rank-deficient)
+        if xy.ndim == 1:
+            xy = xy.reshape(-1, 1)
+        if xy.shape[1] == 1:
+            xy = np.concatenate([xy, np.zeros((xy.shape[0], 1), dtype=xy.dtype)], axis=1)
+            print("  Note: only one PCA component available; second axis padded with zeros.")
+        out.append(("PCA", np.asarray(xy, dtype=np.float64)))
+    return out
+
+
+parser = argparse.ArgumentParser(
+    description="Plot gene embeddings in 2D using UMAP and/or PCA.",
+)
 parser.add_argument('--region', type=str, default='EC', help='Region to process (default: EC). Can specify multiple regions separated by commas.')
 parser.add_argument('--embeddings_path', type=str, default=None, help='Path to embeddings file (default: auto-detect)')
 parser.add_argument('--combine_all', action='store_true', help='Combine all gene embeddings from all regions (Astrocytes and Microglia)')
@@ -131,6 +221,15 @@ parser.add_argument('--cell_type', type=str, default=None, choices=['Astrocytes'
                     help='Filter by cell type (Astrocytes or Microglia). If not specified, includes all cell types.')
 parser.add_argument('--color_by', type=str, default='auto', choices=['cell_type', 'region', 'none', 'auto'],
                     help='What to color by: cell_type, region, none (single color), or auto (detect from data)')
+parser.add_argument(
+    "--method",
+    type=str,
+    default="umap",
+    choices=["umap", "pca", "both"],
+    help="2D reduction: umap (default), pca, or both (side-by-side).",
+)
+parser.add_argument("--umap_n_neighbors", type=int, default=15, help="UMAP n_neighbors (default: 15).")
+parser.add_argument("--umap_min_dist", type=float, default=0.1, help="UMAP min_dist (default: 0.1).")
 args = parser.parse_args()
 
 # Determine if we're loading multiple embeddings
@@ -172,77 +271,90 @@ print(f"Embedding matrix shape: {embeddings_matrix.shape}")
 print(f"  - Number of genes: {embeddings_matrix.shape[0]}")
 print(f"  - Embedding dimensions: {embeddings_matrix.shape[1]}")
 
-# Compute UMAP for visualization (2D)
-print("\nComputing UMAP for visualization...")
-reducer = umap.UMAP(n_components=2, random_state=42, n_neighbors=15, min_dist=0.1)
-embeddings_2d = reducer.fit_transform(embeddings_matrix)
+plots_2d = compute_embeddings_2d(embeddings_matrix, args.method, args)
 
-# Determine coloring scheme based on color_by argument
-from matplotlib.patches import Patch
+if args.color_by == "cell_type" and cell_types is None:
+    print(
+        "Warning: color_by=cell_type but no cell type metadata (use --combine_all). "
+        "Falling back to single color."
+    )
+elif args.color_by == "region" and gene_labels is None:
+    print(
+        "Warning: color_by=region but no region labels (use --combine_all). "
+        "Falling back to single color."
+    )
 
-if args.color_by == 'none':
-    point_colors = 'gray'
-    title = f'{region_label} Gene Embeddings - UMAP'
-    color_map = None
-    unique_values = None
-elif args.color_by == 'cell_type' and cell_types is not None:
-    # If cell_types are already simple strings (not labels with underscores), use 'generic' type with custom colors
-    # Otherwise use 'cell_type' to extract from labels
-    if cell_types and not any('_' in str(ct) for ct in cell_types[:10]):
-        # Already extracted cell types, use generic with custom colors
-        custom_colors = {
-            'Astrocytes': '#1f77b4',      # Blue
-            'Microglia': '#ff7f0e',       # Orange
-        }
-        point_colors, color_map, unique_values, _ = create_color_mapping(cell_types, attribute_type='generic', custom_colors=custom_colors)
+point_colors, color_map, unique_values, color_note = resolve_colors(
+    args.color_by, cell_types, gene_labels
+)
+
+n_plots = len(plots_2d)
+fig_w = 12 * n_plots
+fig, axes = plt.subplots(1, n_plots, figsize=(fig_w, 10))
+if n_plots == 1:
+    axes = [axes]
+
+title_mid = f" ({color_note})" if color_note else ""
+
+for ax_idx, (ax, (reducer_name, xy)) in enumerate(zip(axes, plots_2d)):
+    ax.scatter(
+        xy[:, 0],
+        xy[:, 1],
+        c=point_colors,
+        alpha=0.6,
+        s=20,
+        edgecolors="none",
+    )
+    ax.set_xlabel(f"{reducer_name} component 1", fontsize=12)
+    ax.set_ylabel(f"{reducer_name} component 2", fontsize=12)
+    ax.set_title(
+        f"{region_label} Gene Embeddings — {reducer_name}{title_mid}",
+        fontsize=14,
+        fontweight="bold",
+    )
+    ax.grid(True, alpha=0.3)
+
+    if reducer_name == "UMAP":
+        ax.relim()
+        ax.autoscale_view()
+        try:
+            if np.nanmax(np.abs(xy)) < 30:
+                ax.set_xlim(-5, 25)
+                ax.set_ylim(-15, 15)
+        except Exception:
+            pass
     else:
-        point_colors, color_map, unique_values, _ = create_color_mapping(cell_types, attribute_type='cell_type')
-    title = f'{region_label} Gene Embeddings - UMAP (Colored by Cell Type)'
-elif args.color_by == 'region' and gene_labels is not None:
-    point_colors, color_map, unique_values, _ = create_color_mapping(gene_labels, attribute_type='region')
-    title = f'{region_label} Gene Embeddings - UMAP (Colored by Region)'
-elif args.color_by == 'auto':
-    # Auto-detect: use cell_type if available, otherwise region, otherwise single color
-    if cell_types is not None:
-        # If cell_types are already simple strings (not labels with underscores), use 'generic' type with custom colors
-        if cell_types and not any('_' in str(ct) for ct in cell_types[:10]):
-            custom_colors = {
-                'Astrocytes': '#1f77b4',      # Blue
-                'Microglia': '#ff7f0e',       # Orange
-            }
-            point_colors, color_map, unique_values, _ = create_color_mapping(cell_types, attribute_type='generic', custom_colors=custom_colors)
+        # PCA: explicit limits from data (avoid invisible panels when autoscale/legend interact)
+        x0, x1 = float(np.nanmin(xy[:, 0])), float(np.nanmax(xy[:, 0]))
+        y0, y1 = float(np.nanmin(xy[:, 1])), float(np.nanmax(xy[:, 1]))
+        rx = max(x1 - x0, 1e-12)
+        ry = max(y1 - y0, 1e-12)
+        pad_x, pad_y = 0.05 * rx, 0.05 * ry
+        ax.set_xlim(x0 - pad_x, x1 + pad_x)
+        ax.set_ylim(y0 - pad_y, y1 + pad_y)
+
+    # A large categorical legend on every panel (especially the second) often covers all points.
+    show_legend_here = color_map is not None and unique_values is not None
+    if show_legend_here:
+        legend_elements = [
+            Patch(facecolor=color_map[val], label=val) for val in unique_values
+        ]
+        if n_plots > 1 and ax_idx > 0:
+            pass
         else:
-            point_colors, color_map, unique_values, _ = create_color_mapping(cell_types, attribute_type='cell_type')
-        title = f'{region_label} Gene Embeddings - UMAP (Colored by Cell Type)'
-    elif gene_labels is not None:
-        point_colors, color_map, unique_values, _ = create_color_mapping(gene_labels, attribute_type='region')
-        title = f'{region_label} Gene Embeddings - UMAP (Colored by Region)'
-    else:
-        point_colors = 'gray'
-        title = f'{region_label} Gene Embeddings - UMAP'
-        color_map = None
-        unique_values = None
-else:
-    # Fallback to single color
-    point_colors = 'gray'
-    title = f'{region_label} Gene Embeddings - UMAP'
-    color_map = None
-    unique_values = None
-
-# Plot embedding
-fig, ax = plt.subplots(figsize=(12, 10))
-ax.scatter(embeddings_2d[:, 0], embeddings_2d[:, 1], c=point_colors, alpha=0.6, s=20)
-ax.set_xlabel('UMAP Dimension 1', fontsize=12)
-ax.set_ylabel('UMAP Dimension 2', fontsize=12)
-ax.set_title(title, fontsize=14, fontweight='bold')
-ax.set_xlim(-5, 25)
-ax.set_ylim(-15, 15)
-ax.grid(True, alpha=0.3)
-
-# Add legend if we have a color mapping
-if color_map is not None and unique_values is not None:
-    legend_elements = [Patch(facecolor=color_map[val], label=val) for val in unique_values]
-    ax.legend(handles=legend_elements, loc='best', fontsize=10)
+            ax.legend(
+                handles=legend_elements,
+                loc="center left",
+                bbox_to_anchor=(1.02, 0.5),
+                fontsize=9,
+                borderaxespad=0.0,
+            )
 
 plt.tight_layout()
+# Legend outside the first axes: give the row room so UMAP/PCA are not clipped.
+if color_map is not None and unique_values is not None:
+    if n_plots > 1:
+        fig.subplots_adjust(wspace=0.22, right=0.88)
+    else:
+        fig.subplots_adjust(right=0.88)
 plt.show()
