@@ -137,7 +137,9 @@ def create_anndata_microglia(region):
     if path is None:
         raise FileNotFoundError(
             f"Microglia AnnData not found: data/model_data/{region}_Microglia_AnnData_perCell.h5ad. "
-            "Create it first (e.g. from your Microglia pipeline); metadata for Microglia is CSV/per-region, not Excel."
+            "Build it with: python src/save_perCell_AnnData.py -cell_type Microglia -region "
+            f"{region}\n"
+            "(Requires MTX + metadata CSV for that region; see save_perCell_AnnData.py.)"
         )
     adata = ad.read_h5ad(path)
     # Ensure patient column exists (Microglia often uses Donor ID / Donor_ID)

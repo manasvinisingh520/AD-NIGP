@@ -509,6 +509,7 @@ def main(args) -> Tuple[float, float, float, List[dict]]:
 
 
 def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
+    quiet = getattr(args, "q", not getattr(args, "verbose_cv", False))
     # --- Load data ---
     expr_transform = getattr(args, "expr_transform", "log1p")
     data = _load_v2_pickle(

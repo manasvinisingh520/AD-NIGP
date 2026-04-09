@@ -40,6 +40,12 @@ from train_model_v2 import (
 # Search-space constants
 # ---------------------------------------------------------------------------
 
+REGIONS_BY_CELL_TYPE = {
+    "Astrocytes": ["EC", "ITG", "PFC", "V2", "V1"],
+    "Microglia": ["CrossRegion", "ITG", "PFC"],
+    "MTG": ["MTG"],
+}
+
 INPUT_TYPE_CHOICES = ["expression", "embedding", "random_embedding"]
 EXPR_MODEL_CHOICES = ["logreg", "svm", "mlp"]
 EMB_MODEL_CHOICES = ["flatten_mlp", "gene_encoder", "mil"]
@@ -1072,12 +1078,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Generalized autosearch: expression vs embedding, all regions"
     )
-    parser.add_argument("--region", type=str, required=True)
-    parser.add_argument("--cell_type", type=str, default="Astrocytes",
-                        choices=["Astrocytes", "Microglia", "MTG"])
-    parser.add_argument("--input_type", type=str, default=None,
+    all_known_regions = sorted({r for rs in REGIONS_BY_CELL_TYPE.values() for r in rs})
+    parser.add_argument("--region", type=str, nargs="+", required=True,
+                        help='One or more regions, or "all" to auto-select per cell_type.')
+    parser.add_argument("--cell_type", type=str, nargs="+", default=["Astrocytes"],
+                        choices=["Astrocytes", "Microglia", "MTG"],
+                        help="One or more cell types (runs sequentially per type).")
+    parser.add_argument("--input_type", type=str, nargs="+", default=None,
                         choices=sorted(INPUT_TYPES),
-                        help="Fix input_type for all trials; if omitted, search over all.")
+                        help="One or more input types to fix; omit to search all three.")
     parser.add_argument("--sampler", type=str, choices=["optuna", "random", "llm"], default="optuna")
     parser.add_argument("--n_trials", type=int, default=20)
     parser.add_argument("--total_trials", type=int, default=None, help="Alias for --n_trials")
@@ -1109,12 +1118,47 @@ def main() -> None:
     if args.total_trials is not None:
         args.n_trials = args.total_trials
 
-    if args.sampler == "llm":
-        run_llm_sampler(args)
-    elif args.sampler == "optuna":
-        run_optuna_sampler(args)
-    else:
-        run_random_sampler(args)
+    cell_types = args.cell_type          # list (nargs="+")
+    input_types = args.input_type        # list or None
+    raw_regions = args.region             # list (nargs="+")
+    use_all_regions = len(raw_regions) == 1 and raw_regions[0].lower() == "all"
+
+    combos: List[Tuple[str, str, Optional[str]]] = []
+    for ct in cell_types:
+        regions = REGIONS_BY_CELL_TYPE[ct] if use_all_regions else raw_regions
+        if input_types is None:
+            combos.extend((rg, ct, None) for rg in regions)
+        else:
+            combos.extend((rg, ct, it) for rg in regions for it in input_types)
+
+    base_study = args.study_name
+    base_storage = args.storage
+    multi = len(combos) > 1
+
+    print(f"Planned runs ({len(combos)}):")
+    for i, (rg, ct, it) in enumerate(combos, 1):
+        print(f"  {i}. region={rg}  cell_type={ct}  input_type={it or 'all'}")
+
+    for rg, ct, it in combos:
+        tag = f"{rg}_{ct}" + (f"_{it}" if it else "")
+        args.region = rg
+        args.cell_type = ct
+        args.input_type = it
+        args.study_name = f"{base_study}_{tag}" if multi else base_study
+        args.storage = base_storage  # reset so _default_storage_url recalculates
+
+        print(f"\n{'='*60}")
+        print(f"  autosearch: region={rg}  cell_type={ct}"
+              f"  input_type={it or 'all'}")
+        print(f"  study={args.study_name}")
+        print(f"{'='*60}\n")
+
+        if args.sampler == "llm":
+            run_llm_sampler(args)
+        elif args.sampler == "optuna":
+            run_optuna_sampler(args)
+        else:
+            run_random_sampler(args)
 
 
 if __name__ == "__main__":

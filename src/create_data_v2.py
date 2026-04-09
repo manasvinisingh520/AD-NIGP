@@ -212,9 +212,16 @@ def main(args):
         base_patient_cell_names = []
         base_ptau, base_thal, base_braak = [], [], []
 
+        # Microglia Thal column contains CERAD string labels, not numeric Thal stages
+        CERAD_STR_TO_INT = {"none": 0, "sparse": 1, "moderate": 2, "frequent": 3}
+
         if cell_type == "MTG":
             thal_info = adata.obs["Thal"].astype(str).str.strip()
             braak_info = adata.obs["Braak"].astype(str).str.strip()
+        elif cell_type == "Microglia":
+            ptau_info = adata.obs["Ptau.Total.Tau..A.U.."]
+            raw_thal = adata.obs["Thal"].astype(str).str.strip().str.lower()
+            thal_info = raw_thal.map(CERAD_STR_TO_INT)
         else:
             ptau_info = adata.obs["Ptau.Total.Tau..A.U.."]
             thal_info = adata.obs["Thal"]
@@ -233,7 +240,7 @@ def main(args):
                 base_thal.append(thal_info[mask].iloc[0])
                 base_braak.append(None)
 
-        # Drop invalid patients (MTG Reference, Microglia NaN)
+        # Drop invalid patients (MTG Reference, Microglia unmapped, etc.)
         if cell_type == "MTG":
             valid_idx = [
                 i
@@ -246,7 +253,7 @@ def main(args):
 
             def _valid(ptau_val, thal_val):
                 try:
-                    return int(float(thal_val)) in CERAD_VALID
+                    return int(thal_val) in CERAD_VALID
                 except (ValueError, TypeError):
                     return False
 
