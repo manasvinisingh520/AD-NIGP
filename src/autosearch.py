@@ -819,6 +819,26 @@ def _default_storage_url(log_base: str, region: str, cell_type: str) -> str:
     return "sqlite:///" + db_path.replace("\\", "/")
 
 
+def _create_optuna_study(args: argparse.Namespace, storage: str):
+    """Create or resume study; optionally delete same-named study first (--new_study)."""
+    import optuna
+
+    if getattr(args, "new_study", False):
+        try:
+            optuna.delete_study(study_name=args.study_name, storage=storage)
+        except Exception:
+            pass  # study may not exist (KeyError / storage-specific errors)
+        print(
+            f"  [optuna] Fresh study: removed '{args.study_name}' on this storage if it existed."
+        )
+    return optuna.create_study(
+        study_name=args.study_name,
+        storage=storage,
+        direction="maximize",
+        load_if_exists=True,
+    )
+
+
 def run_optuna_sampler(args: argparse.Namespace) -> None:
     import optuna
     import torch
@@ -828,9 +848,7 @@ def run_optuna_sampler(args: argparse.Namespace) -> None:
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     os.makedirs(args.log_base, exist_ok=True)
     storage = args.storage or _default_storage_url(args.log_base, args.region, args.cell_type)
-    study = optuna.create_study(
-        study_name=args.study_name, storage=storage, direction="maximize", load_if_exists=True,
-    )
+    study = _create_optuna_study(args, storage)
 
     jsonl_path = os.path.join(args.log_base, f"{args.study_name}_trials.jsonl")
     open(jsonl_path, "w", encoding="utf-8").close()
@@ -900,9 +918,7 @@ def run_random_sampler(args: argparse.Namespace) -> None:
         try:
             import optuna
             storage = args.storage or _default_storage_url(args.log_base, args.region, args.cell_type)
-            optuna_study = optuna.create_study(
-                study_name=args.study_name, storage=storage, direction="maximize", load_if_exists=True,
-            )
+            optuna_study = _create_optuna_study(args, storage)
         except ImportError:
             pass
 
@@ -982,9 +998,7 @@ def run_llm_sampler(args: argparse.Namespace) -> None:
         try:
             import optuna
             storage = args.storage or _default_storage_url(args.log_base, args.region, args.cell_type)
-            optuna_study = optuna.create_study(
-                study_name=args.study_name, storage=storage, direction="maximize", load_if_exists=True,
-            )
+            optuna_study = _create_optuna_study(args, storage)
         except ImportError:
             pass
 
@@ -1088,8 +1102,26 @@ def main() -> None:
                         choices=sorted(INPUT_TYPES),
                         help="One or more input types to fix; omit to search all three.")
     parser.add_argument("--sampler", type=str, choices=["optuna", "random", "llm"], default="optuna")
-    parser.add_argument("--n_trials", type=int, default=20)
+    parser.add_argument(
+        "--n_trials",
+        type=int,
+        default=20,
+        help=(
+            "Number of NEW trials Optuna will run. Trial numbers are global per study name in "
+            "the DB (e.g. after 32 older trials, the next run starts at trial 32). "
+            "Use --new_study to wipe this study name and start from 0."
+        ),
+    )
     parser.add_argument("--total_trials", type=int, default=None, help="Alias for --n_trials")
+    parser.add_argument(
+        "--new_study",
+        action="store_true",
+        help=(
+            "Delete existing Optuna study with --study_name from this run's storage, then create "
+            "a fresh study. Use when you want exactly --n_trials trials starting at number 0, "
+            "without deleting the whole SQLite file (other studies in the same DB are kept)."
+        ),
+    )
     parser.add_argument("--study_name", type=str, default="autosearch_v2")
     parser.add_argument("--storage", type=str, default=None)
     parser.add_argument("--epochs", type=int, default=200)

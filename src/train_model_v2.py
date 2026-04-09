@@ -862,10 +862,17 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
                         f"test_emb_ndim={getattr(test_emb, 'ndim', None)}"
                     )
 
+                # Remember (genes, D) from 3D tensors before flatten. Pickle `embedding_dim` can
+                # disagree with the last axis (e.g. 512 in metadata but 500 in array → G*D not
+                # divisible by 512).
+                emb_geo: Optional[Tuple[int, int]] = None
+
                 # StandardScaler expects 2D (n_samples, n_features).
                 # In cell_level mode, embedding inputs are still (cells, genes, D),
                 # so we flatten to (cells, genes*D).
                 if getattr(train_emb, "ndim", None) == 3:
+                    g3, d3 = int(train_emb.shape[1]), int(train_emb.shape[2])
+                    emb_geo = (g3, d3)
                     train_emb = train_emb.reshape(train_emb.shape[0], -1)
                     test_emb = test_emb.reshape(test_emb.shape[0], -1)
 
@@ -879,8 +886,15 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
                     train_emb = scaler.fit_transform(train_emb)
                     test_emb = scaler.transform(test_emb)
 
-                # Optional PCA
+                # Optional PCA on flattened (cells, features). For gene_encoder + embedding,
+                # features are genes×D; PCA mixes genes and dimensions so input_dim is no longer
+                # a multiple of embedding_dim → actual_g = input_dim // D becomes 0 and reshape fails.
                 pca_comp = getattr(args, "pca_components", None)
+                if (
+                    args.model_type == "gene_encoder"
+                    and getattr(args, "input_type", None) in ("embedding", "random_embedding")
+                ):
+                    pca_comp = None
                 if pca_comp and pca_comp < train_emb.shape[1]:
                     n_comp = min(pca_comp, train_emb.shape[0], train_emb.shape[1])
                     pca = PCA(n_components=n_comp, random_state=current_seed)
@@ -890,11 +904,25 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
                 input_dim = train_emb.shape[1]
                 bs = int(getattr(args, "batch_size", 8))
 
-                # Reshape for gene_encoder (needs 2D: n_genes x D)
+                # Reshape for gene_encoder (needs 3D: cells x genes x D)
                 if args.model_type == "gene_encoder":
                     if args.input_type in ("embedding", "random_embedding"):
-                        actual_d = embedding_dim
-                        actual_g = input_dim // actual_d if actual_d > 0 else input_dim
+                        if emb_geo is not None:
+                            actual_g, actual_d = emb_geo
+                            if input_dim != actual_g * actual_d:
+                                raise ValueError(
+                                    f"gene_encoder+embedding: flat dim {input_dim} != "
+                                    f"G*D ({actual_g}*{actual_d}) from 3D tensor"
+                                )
+                        else:
+                            # 2D embeddings only: fall back to pickle metadata
+                            actual_d = int(embedding_dim)
+                            if actual_d <= 0 or input_dim % actual_d != 0:
+                                raise ValueError(
+                                    f"gene_encoder+embedding: feature dim {input_dim} not divisible by "
+                                    f"embedding_dim {actual_d} (need 3D cell×gene×D data or consistent flat G×D)"
+                                )
+                            actual_g = input_dim // actual_d
                         train_emb = train_emb.reshape(-1, actual_g, actual_d)
                         test_emb = test_emb.reshape(-1, actual_g, actual_d)
                     else:

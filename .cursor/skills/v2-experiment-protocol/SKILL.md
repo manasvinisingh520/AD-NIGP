@@ -38,28 +38,33 @@ python src/create_data_v2.py --cell_type Microglia
 
 ## Phase 2 -- Autosearch (per region, expression then embedding)
 
-For each (region, cell_type), run expression THEN embedding (sequential to avoid DB lock):
+For each (region, cell_type), run expression THEN embedding (sequential to avoid DB lock).
+
+**Important:** With a single `--region`, autosearch does **not** append tags to `--study_name`. A bare name like `v2b` makes every job write the same file `v2b_best_params.json` (last writer wins). Use an explicit study name per run so outputs match Phase 3:
 
 ```bash
+# PREFIX e.g. v2b — use the same string as scripts/run_phase3.py --prefix
 python src/autosearch.py --region REGION --cell_type CELL \
-  --input_type expression --sampler optuna --n_trials N \
-  --study_name v2_REGION_CELL_expr
+  --input_type expression --sampler optuna --n_trials 50 \
+  --study_name PREFIX_REGION_CELL_expression
 
 python src/autosearch.py --region REGION --cell_type CELL \
-  --input_type embedding --sampler optuna --n_trials N \
-  --study_name v2_REGION_CELL_emb
+  --input_type embedding --sampler optuna --n_trials 50 \
+  --study_name PREFIX_REGION_CELL_embedding
 ```
+
+Example (EC, Astrocytes, prefix `v2b`): `v2b_EC_Astrocytes_expression` then `v2b_EC_Astrocytes_embedding`.
 
 **Parallelism:** Different regions can run simultaneously (separate DBs). Same region expr+emb must be sequential.
 
-Best params written to: `ranking_model_runs/autosearch_v2/{study_name}_best_params.json`
+Best params written to: `ranking_model_runs/autosearch_v2/{study_name}_best_params.json` (must equal `PREFIX_REGION_CELL_expression` / `_embedding` for `run_phase3.py --prefix PREFIX`).
 
 ## Phase 3 -- Seeded training
 
 Use `scripts/run_phase3.py` which reads all best_params JSONs and runs train_model_v2 with n_seeds=10:
 
 ```bash
-python scripts/run_phase3.py --cell_type Astrocytes --cell_type Microglia [--include_random] [--dry-run]
+python scripts/run_phase3.py --cell_type Astrocytes --cell_type Microglia --prefix v2b [--dry-run]
 ```
 
 The script maps JSON params to CLI flags automatically. Logs go to `runs/`.

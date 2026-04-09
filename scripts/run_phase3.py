@@ -79,6 +79,8 @@ def main():
     parser.add_argument("--n_seeds", type=int, default=10)
     parser.add_argument("--include_random", action="store_true",
                         help="Also run random_embedding ablation.")
+    parser.add_argument("--prefix", type=str, default="v2b",
+                        help="Study-name prefix used in autosearch (match --study_name).")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -88,21 +90,21 @@ def main():
     for cell_type in args.cell_type:
         regions = REGION_MAP[cell_type]
         for region in regions:
-            ep = load_params(cell_type, region, "expr")
+            ep = load_params(cell_type, region, "expression", prefix=args.prefix)
             if ep and ep.get("best_value", float("-inf")) > 0:
-                tasks.append((cell_type, "expr", region,
+                tasks.append((cell_type, "expression", region,
                               build_cmd(cell_type, region, ep["trial_params"], args.n_seeds)))
 
-            emb_p = load_params(cell_type, region, "emb")
+            emb_p = load_params(cell_type, region, "embedding", prefix=args.prefix)
             if emb_p and emb_p.get("best_value", float("-inf")) > 0:
-                tasks.append((cell_type, "emb", region,
+                tasks.append((cell_type, "embedding", region,
                               build_cmd(cell_type, region, emb_p["trial_params"], args.n_seeds)))
 
             if args.include_random and emb_p and emb_p.get("best_value", float("-inf")) > 0:
                 tp_rand = dict(emb_p["trial_params"])
                 tp_rand["input_type"] = "random_embedding"
                 tp_rand["model_type"] = "flatten_mlp"
-                tasks.append((cell_type, "rand", region,
+                tasks.append((cell_type, "random", region,
                               build_cmd(cell_type, region, tp_rand, args.n_seeds)))
 
     print(f"Phase 3: {len(tasks)} training runs queued")
