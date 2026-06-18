@@ -3,6 +3,12 @@ adni_blood_gep.py: reads ADNI_gene_expression_profile
                 fixes file format (uses subjects in column 3 as first column)
                 prints info for 27 genes (listed in file)
 
+analyze_f1_embeddings_vs_expression.py: analyze csv files for given embedding and expression 
+                                        models and print summary of F1 differences
+
+analyze_intersections.py: analyze intersections beween GREMLN, AnnData objects, DGE results,
+                          for genes
+
 anndata_filtering_guide.md: how to filter anndata objects based on rows, columns, etc
 
 anndata_guide.md: describes anndata objects
@@ -30,7 +36,7 @@ dge.py: does DGE analysis on single-cell level analysis (NOT USED)
 dge2.py: does DGE analysis after pseudobulking cells by patient (USED)
 
 export_matrices_to_csv.py: creates {region}_AnnData.h5ad objects saved in data/GRN/
-                            saves {region}_matrix.csv file as well in data/GRN/
+                              saves {region}_matrix.csv file as well in data/GRN/
 
 export_TFs_to_txt.py: saves TFs found in specific region matrix in file {region}_TFs.txt in data/GRN/
 
@@ -89,3 +95,6 @@ python src/train_model.py --region EC --loss_ptau none --model mil --verbose-cv 
 python src/train_model.py --region EC --loss_ptau none --model mil --verbose-cv --n_seeds 1
 # Custom patience / min_epochs
 python src/train_model.py --region EC --loss_ptau none --model mil --verbose-cv --n_seeds 5 --patience 50 --min_epochs 40
+
+generate_ranking_list_v2.py: generate ranking list of genes based on importance to model's F1 score (using perturbation analysis) 
+                            except specifically designed for v2 which is Optuna model optimization results

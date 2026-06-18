@@ -517,8 +517,13 @@ def evaluate_standard(
 
     thal_preds_labels = [idx_to_thal[int(i)] for i in thal_preds]
     thal_targets_labels = [idx_to_thal[int(i)] for i in thal_targets]
-    mse = mean_squared_error(ptau_targets, ptau_preds)
-    mae = mean_absolute_error(ptau_targets, ptau_preds)
+    y_t = np.asarray(ptau_targets, dtype=np.float64)
+    y_p = np.asarray(ptau_preds, dtype=np.float64)
+    if not np.isfinite(y_t).all() or not np.isfinite(y_p).all():
+        y_t = np.nan_to_num(y_t, nan=0.0, posinf=0.0, neginf=0.0)
+        y_p = np.nan_to_num(y_p, nan=0.0, posinf=0.0, neginf=0.0)
+    mse = mean_squared_error(y_t, y_p)
+    mae = mean_absolute_error(y_t, y_p)
     f1 = f1_score(thal_targets_labels, thal_preds_labels, average="weighted")
 
     if return_preds:
@@ -585,8 +590,13 @@ def evaluate_mil_model(
 
     thal_preds_labels = [idx_to_thal[int(i)] for i in thal_preds_list]
     thal_targets_labels = [idx_to_thal[int(i)] for i in thal_targets_list]
-    mse = mean_squared_error(ptau_targets, ptau_preds)
-    mae = mean_absolute_error(ptau_targets, ptau_preds)
+    y_t = np.asarray(ptau_targets, dtype=np.float64)
+    y_p = np.asarray(ptau_preds, dtype=np.float64)
+    if not np.isfinite(y_t).all() or not np.isfinite(y_p).all():
+        y_t = np.nan_to_num(y_t, nan=0.0, posinf=0.0, neginf=0.0)
+        y_p = np.nan_to_num(y_p, nan=0.0, posinf=0.0, neginf=0.0)
+    mse = mean_squared_error(y_t, y_p)
+    mae = mean_absolute_error(y_t, y_p)
     f1 = f1_score(thal_targets_labels, thal_preds_labels, average="weighted")
 
     if return_preds:

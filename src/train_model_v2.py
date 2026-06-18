@@ -211,6 +211,17 @@ def _standard_scale_inplace_chunked(
 # ---------------------------------------------------------------------------
 
 
+def _safe_ptau_scalar(ptau_fold, pi_idx: int) -> float:
+    """Braak/ptau metadata can be NaN for some donors; sklearn metrics require finite values."""
+    if not ptau_fold:
+        return 0.0
+    try:
+        v = float(ptau_fold[pi_idx])
+    except (TypeError, ValueError):
+        return 0.0
+    return float(v) if np.isfinite(v) else 0.0
+
+
 def _aggregate_patients(
     fold_data: np.ndarray,
     patient_info: list,
@@ -225,13 +236,18 @@ def _aggregate_patients(
     cell_idx = 0
     for pi_idx, (_, cell_names) in enumerate(patient_info):
         n_cells = len(cell_names)
-        patient_cells = fold_data[cell_idx : cell_idx + n_cells]
+        patient_cells = np.asarray(
+            fold_data[cell_idx : cell_idx + n_cells], dtype=np.float32
+        )
         if patient_cells.ndim == 3:
-            patient_emb = patient_cells.mean(axis=0).flatten()
+            patient_emb = np.nanmean(patient_cells, axis=0).flatten()
         else:
-            patient_emb = patient_cells.mean(axis=0)
-        patient_embeddings.append(patient_emb.astype(np.float32))
-        patient_ptau.append(float(ptau_fold[pi_idx]) if ptau_fold else 0.0)
+            patient_emb = np.nanmean(patient_cells, axis=0)
+        patient_emb = np.nan_to_num(
+            patient_emb, nan=0.0, posinf=0.0, neginf=0.0
+        ).astype(np.float32)
+        patient_embeddings.append(patient_emb)
+        patient_ptau.append(_safe_ptau_scalar(ptau_fold, pi_idx))
         patient_thal.append(thal_to_idx[int(thal_fold[pi_idx])])
         cell_idx += n_cells
     return {
@@ -258,7 +274,7 @@ def _build_mil_bags(
         if bag.ndim == 3:
             bag = bag.reshape(n_cells, -1)
         bags.append(bag.astype(np.float32))
-        ptau_list.append(float(ptau_fold[pi_idx]) if ptau_fold else 0.0)
+        ptau_list.append(_safe_ptau_scalar(ptau_fold, pi_idx))
         thal_list.append(thal_to_idx[int(thal_fold[pi_idx])])
         cell_idx += n_cells
     return {
@@ -862,9 +878,9 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
                         f"test_emb_ndim={getattr(test_emb, 'ndim', None)}"
                     )
 
-                # Remember (genes, D) from 3D tensors before flatten. Pickle `embedding_dim` can
-                # disagree with the last axis (e.g. 512 in metadata but 500 in array → G*D not
-                # divisible by 512).
+                # Remember (genes, D) from 3D tensors before flatten. Pickle `embedding_dim` is raw
+                # TSV width; v2 scaled folds use a smaller D (e.g. 16). After patient aggregation,
+                # train_emb is 2D (patients, n_genes*D) and emb_geo is unset—reshape uses n_genes below.
                 emb_geo: Optional[Tuple[int, int]] = None
 
                 # StandardScaler expects 2D (n_samples, n_features).
@@ -875,6 +891,17 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
                     emb_geo = (g3, d3)
                     train_emb = train_emb.reshape(train_emb.shape[0], -1)
                     test_emb = test_emb.reshape(test_emb.shape[0], -1)
+
+                # float16 v2 scaled folds can overflow to inf; rare NaNs from pooling.
+                # StandardScaler rejects non-finite values.
+                train_emb = np.asarray(train_emb, dtype=np.float32)
+                test_emb = np.asarray(test_emb, dtype=np.float32)
+                train_emb = np.nan_to_num(
+                    train_emb, nan=0.0, posinf=0.0, neginf=0.0
+                )
+                test_emb = np.nan_to_num(
+                    test_emb, nan=0.0, posinf=0.0, neginf=0.0
+                )
 
                 # StandardScaler
                 # In cell_level mode with flattened embeddings (cells x genes*D),
@@ -915,14 +942,21 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
                                     f"G*D ({actual_g}*{actual_d}) from 3D tensor"
                                 )
                         else:
-                            # 2D embeddings only: fall back to pickle metadata
-                            actual_d = int(embedding_dim)
-                            if actual_d <= 0 or input_dim % actual_d != 0:
-                                raise ValueError(
-                                    f"gene_encoder+embedding: feature dim {input_dim} not divisible by "
-                                    f"embedding_dim {actual_d} (need 3D cell×gene×D data or consistent flat G×D)"
-                                )
-                            actual_g = input_dim // actual_d
+                            # 2D after patient aggregation: flat is n_genes * D_tensor. v2 pickles use
+                            # scaled_emb with D_tensor=16 while data['embedding_dim'] is raw TSV width (512).
+                            if n_genes > 0 and input_dim % n_genes == 0:
+                                actual_g = n_genes
+                                actual_d = input_dim // n_genes
+                            else:
+                                # Legacy: flat G*D with D == pickle embedding_dim
+                                actual_d = int(embedding_dim)
+                                if actual_d <= 0 or input_dim % actual_d != 0:
+                                    raise ValueError(
+                                        f"gene_encoder+embedding: feature dim {input_dim} not divisible by "
+                                        f"n_genes={n_genes} or embedding_dim {actual_d} "
+                                        f"(need 3D cell×gene×D data or flat n_genes×D)"
+                                    )
+                                actual_g = input_dim // actual_d
                         train_emb = train_emb.reshape(-1, actual_g, actual_d)
                         test_emb = test_emb.reshape(-1, actual_g, actual_d)
                     else:

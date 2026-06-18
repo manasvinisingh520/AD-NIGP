@@ -1,61 +1,48 @@
-"""Load MTG DGE union (top 10) and ranked_genes.csv top 10."""
+# load atlas anndata object and print sample of adata.obs
+import anndata as ad
+import matplotlib.pyplot as plt
 
-import pandas as pd
-from pathlib import Path
+microglia_adata = ad.read_h5ad('data/ROSMAP_Data/Microglia.h5ad')
+astrocytes_adata = ad.read_h5ad('data/ROSMAP_Data/Astrocytes.h5ad')
 
+def donor_level_counts(adata, column, id_col="individualID"):
+    per_donor = adata.obs.drop_duplicates(id_col)
+    return per_donor[column].value_counts()
 
-DGE_DIR = Path("results/dge_final")
-# MTG DGE files: dge_results_SEA_AD_MTG_pseudobulk100_seed100_1_vs_2.csv etc.
-MTG_DGE_PATTERN = "dge_results_SEA_AD_MTG_*.csv"
-RANKED_GENES_PATH = Path("ranked_lists/ge_all_3L_shrinking_patience60_64_MTG_ThalOnly_run2/ranked_genes.csv")
+"""all_columns = input("Enter all columns to print: ")
+all_columns = [c.strip() for c in all_columns.split(',') if c.strip()]
 
+for column in all_columns:
+    print(f"{column} (Microglia, per individualID):\n")
+    print(donor_level_counts(microglia_adata, column))
+    print()
 
-def get_top_mtg_dge_union(top_k=10, dge_dir=None):
-    """Top K genes from union of MTG DGE results (by best padj)."""
-    dge_dir = Path(dge_dir or DGE_DIR)
-    if not dge_dir.exists():
-        raise FileNotFoundError(f"DGE results directory not found: {dge_dir}")
-    dge_files = sorted(dge_dir.glob(MTG_DGE_PATTERN))
-    if not dge_files:
-        raise FileNotFoundError(f"No MTG DGE files in {dge_dir}. Pattern: {MTG_DGE_PATTERN}")
-    gene_to_best_padj = {}
-    for path in dge_files:
-        df = pd.read_csv(path, index_col=0)
-        if "padj" not in df.columns:
-            continue
-        for gene in df.index[df["padj"].notna()]:
-            p = float(df.loc[gene, "padj"])
-            if gene not in gene_to_best_padj or p < gene_to_best_padj[gene]:
-                gene_to_best_padj[gene] = p
-    if not gene_to_best_padj:
-        raise ValueError("No genes with valid padj in DGE results.")
-    sorted_genes = sorted(gene_to_best_padj.keys(), key=lambda g: gene_to_best_padj[g])
-    return sorted_genes[:top_k]
+print("=" * 100)
 
+for column in all_columns:
+    print(f"{column} (Astrocytes, per individualID):\n")
+    print(donor_level_counts(astrocytes_adata, column))
+    print()"""
 
-def main():
-    # MTG DGE: union across results/dge_final, top 10 by best padj
-    print("MTG DGE (results/dge_final) – union, top 10 genes:")
-    try:
-        top10_dge = get_top_mtg_dge_union(top_k=10, dge_dir=DGE_DIR)
-        for i, g in enumerate(top10_dge, 1):
-            print(f"  {i}. {g}")
-    except FileNotFoundError as e:
-        print(f"  Error: {e}")
-    except Exception as e:
-        print(f"  Error: {e}")
+def patient_cells_heatmap(adata, id_col="individualID", title=None):
+    """Heatmap of cell counts per donor (one column = one individualID)."""
+    if id_col not in adata.obs.columns:
+        raise ValueError(f"Missing {id_col!r}. Available: {list(adata.obs.columns)}")
 
-    # Ranked genes: top 10 from CSV
-    print("\nRanked genes (ranked_lists/ge_all_3L_shrinking_patience60_64_MTG_ThalOnly_run2/ranked_genes.csv) – top 10:")
-    if not RANKED_GENES_PATH.exists():
-        print(f"  Error: File not found: {RANKED_GENES_PATH}")
-    else:
-        df = pd.read_csv(RANKED_GENES_PATH)
-        gene_col = "gene" if "gene" in df.columns else df.columns[1]
-        top10_ranked = df[gene_col].head(10).astype(str).str.strip().tolist()
-        for i, g in enumerate(top10_ranked, 1):
-            print(f"  {i}. {g}")
+    patient_cells = adata.obs.groupby(id_col).size().sort_values(ascending=False)
+    n = len(patient_cells)
+    fig_w = min(max(8, n * 0.08), 40)
 
+    fig, ax = plt.subplots(figsize=(fig_w, 2))
+    im = ax.imshow(patient_cells.values.reshape(1, -1), aspect="auto", cmap="viridis")
+    fig.colorbar(im, ax=ax, label="cells per donor")
+    ax.set_yticks([0])
+    ax.set_yticklabels(["cell count"])
+    ax.set_xticks(range(n))
+    ax.set_xticklabels(patient_cells.index, rotation=90, fontsize=max(4, 8 - n // 80))
+    ax.set_title(title or f"Cells per {id_col} ({adata.n_obs:,} cells, {n} donors)")
+    fig.tight_layout()
+    plt.show()
 
-if __name__ == "__main__":
-    main()
+patient_cells_heatmap(microglia_adata, title="Microglia")
+patient_cells_heatmap(astrocytes_adata, title="Astrocytes")
