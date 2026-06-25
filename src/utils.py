@@ -463,9 +463,12 @@ def aggregate_cells_into_pseudobulk(adata, target_cells_per_bin, filter_patients
         remainder = num_cells % num_bins
         
         # Work directly with underlying arrays to avoid AnnData indexing issues
-        # Use raw UMI counts from layer if present (e.g. SEA_AD), else .X
-        if "UMIs" in getattr(patient_cells, "layers", {}):
+        # Use raw UMI counts from layer if present (e.g. SEA_AD: UMIs, ROSMAP: counts), else .X
+        layers = getattr(patient_cells, "layers", {})
+        if "UMIs" in layers:
             count_matrix = patient_cells.layers["UMIs"]
+        elif "counts" in layers:
+            count_matrix = patient_cells.layers["counts"]
         else:
             count_matrix = patient_cells.X
         
@@ -1033,3 +1036,21 @@ def get_top_dge_union_genes(region="EC", cell_type="Astrocytes", top_k=5, dge_re
         raise ValueError("No genes with valid padj in DGE results.")
     sorted_genes = sorted(gene_to_best_padj.keys(), key=lambda g: gene_to_best_padj[g])
     return sorted_genes[:top_k]
+
+
+def map_rosmap_condition(adata, condition_col):
+    """Map ROSMAP condition column to Atlas-compatible condition column."""
+    if condition_col not in adata.obs.columns:
+        raise ValueError(f"Condition column '{condition_col}' not in adata.obs. Available: {list(adata.obs.columns)}")
+    # coerce condition_col to numeric
+    adata.obs[condition_col] = _coerce_numeric_series(adata.obs[condition_col])
+    # braaksc: 0: 1, 1,2: 2, 3,4: 3, 5,6: 4; drop cells with nan
+    adata.obs["dge_condition"] = adata.obs[condition_col].map({0: 1, 1: 2, 2: 2, 3: 3, 4: 3, 5: 4, 6: 4})
+    adata = adata[adata.obs["dge_condition"].notna()].copy()
+    return adata
+
+def _coerce_numeric_series(s):
+    return pd.to_numeric(
+        s.astype(str).str.strip().replace("90+", "90"),
+        errors="coerce",
+    )

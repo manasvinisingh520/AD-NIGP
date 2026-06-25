@@ -27,6 +27,11 @@ DATA_DIR = "data/AtlasData"
 GENE_ANNOTATIONS_FILE = "data/gene_annotations.pkl"
 DGE_RESULTS_BASE_DIR = "results"
 
+ROSMAP_DATA_DIR = "data/ROSMAP_Data"
+ROSMAP_CELL_TYPES = {"Astrocytes", "Microglia"}
+ROSMAP_CONDITION_COL = "braaksc" # 0: 1, 1,2: 2, 3,4: 3, 5,6: 4
+ROSMAP_PATIENT_COL = "individualID"
+
 ## EC genes from paper
 GENES_FROM_PAPER = {}
 GENES_FROM_PAPER['EC'] = ['APP', 'APOE', 'SLC1A2', 'MAPT', 'RORB', 'AGBL4',

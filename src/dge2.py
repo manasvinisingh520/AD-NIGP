@@ -5,11 +5,12 @@ This module provides a class-based interface for performing DGE analysis
 using PyDESeq2 (DESeq2 implementation in Python).
 """
 
+import os
 import pandas as pd
 import numpy as np
 from typing import Optional, Tuple, Dict, List, Any
 from anndata import AnnData
-from utils import filter_anndata_object, aggregate_cells_into_pseudobulk
+from utils import filter_anndata_object, aggregate_cells_into_pseudobulk, map_rosmap_condition
 
 try:
     from pydeseq2.dds import DeseqDataSet
@@ -19,7 +20,7 @@ try:
 except ImportError:
     PYDESEQ2_AVAILABLE = False
     print("Warning: pydeseq2 not installed. Install with: pip install pydeseq2")
-
+from config import ROSMAP_DATA_DIR, ROSMAP_CELL_TYPES, ROSMAP_CONDITION_COL, ROSMAP_PATIENT_COL
 
 class DGEAnalyzer:
     
@@ -141,9 +142,12 @@ class DGEAnalyzer:
             raise ValueError("Failed to filter AnnData object. Check your filter thresholds.")
 
         # Extract counts matrix (cells x genes from AnnData)
-        # Use raw UMI counts from layer if present (e.g. SEA_AD), else .X
-        if "UMIs" in getattr(self.data_file, "layers", {}):
+        # Prefer raw count layers (SEA_AD: UMIs; ROSMAP: counts), else .X
+        layers = getattr(self.data_file, "layers", {})
+        if "UMIs" in layers:
             X = self.data_file.layers["UMIs"]
+        elif "counts" in layers:
+            X = self.data_file.layers["counts"]
         else:
             X = self.data_file.X
         if hasattr(X, 'toarray'):
@@ -402,6 +406,43 @@ class DGEAnalyzer:
             f")"
         )
 
+
+def _ensure_rosmap_counts(adata: AnnData) -> AnnData:
+    """Use raw counts for DGE; processed ROSMAP h5ad may store them in layers['counts']."""
+    if "counts" in getattr(adata, "layers", {}):
+        adata = adata.copy()
+        adata.X = adata.layers["counts"]
+    return adata
+
+
+def _load_rosmap_anndata(
+    cell_type: str,
+    condition_col: Optional[str] = None,
+    patient_col: Optional[str] = None,
+) -> Tuple[AnnData, str, str]:
+    import anndata
+
+    h5ad_path = os.path.join(ROSMAP_DATA_DIR, f"{cell_type}.h5ad")
+    if not os.path.isfile(h5ad_path):
+        raise FileNotFoundError(
+            f"ROSMAP AnnData not found: {h5ad_path}. "
+            f"Run processing_ROSMAP_data.py (or equivalent) to build it."
+        )
+    condition_col = condition_col or ROSMAP_CONDITION_COL
+    patient_col = patient_col or ROSMAP_PATIENT_COL
+
+    adata = anndata.read_h5ad(h5ad_path)
+    adata = _ensure_rosmap_counts(adata)
+    if patient_col not in adata.obs.columns:
+        raise ValueError(
+            f"Patient column '{patient_col}' not in adata.obs. "
+            f"Available: {list(adata.obs.columns)}"
+        )
+    print(f"Loaded ROSMAP AnnData from {h5ad_path}: {adata.shape} (cells × genes)")
+    adata = map_rosmap_condition(adata, condition_col)
+    return adata, "dge_condition", patient_col
+
+
 # Example usage
 if __name__ == "__main__":
     """
@@ -417,7 +458,6 @@ if __name__ == "__main__":
         python dge.py --group1 "Control" --group2 "Treatment" --region "EC"
     """
     import argparse
-    import os
     
     # Set up argument parser
     parser = argparse.ArgumentParser(
@@ -426,10 +466,18 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
+        '-data',
+        type=str,
+        default='Atlas',
+        choices=['Atlas', 'SEA_AD', 'ROSMAP'],
+        help='Data source: Atlas (MTX+metadata) , SEA_AD (MTX+metadata) or ROSMAP (preprocessed h5ad under data/ROSMAP_Data/)'
+    )
+
+    parser.add_argument(
         '-cell_type',
         type=str,
         required=True,
-        help='Cell type identifier to locate data files (e.g., Astrocytes, Microglia), if None, use SEA_AD_Data/MTG/adata.h5ad'
+        help='Cell type (Atlas/SEA_AD/ROSMAP: Astrocytes or Microglia; with -adata: label for output only)'
     )
     
     parser.add_argument(
@@ -541,9 +589,14 @@ if __name__ == "__main__":
                     continue
                 ad = ad_filtered
                 # Pseudobulk this file before appending to avoid huge concat (saves ~50GB RAM)
+                if args.data == "ROSMAP":
+                    filter_patients_cell_threshold = 0
+                else:
+                    filter_patients_cell_threshold = 80
+
                 ad = aggregate_cells_into_pseudobulk(
                     ad, target_cells_per_bin=n_cells,
-                    filter_patients_cell_threshold=80, seed=args.seed, patient_col=patient_col
+                    filter_patients_cell_threshold=filter_patients_cell_threshold, seed=args.seed, patient_col=patient_col
                 )
                 adatas.append(ad)
                 print(f"  {f.name}: {ad.n_obs} pseudobulk samples")
@@ -575,10 +628,19 @@ if __name__ == "__main__":
                     print(f"Mapped condition to levels 1–4; dropped {n_dropped} cells with unmapped values (e.g. Reference).")
                 condition_col = "_dge_condition"
                 print(f"Condition levels for DGE: 1=Not AD, 2=Low, 3=Intermediate, 4=High. Patients: {patient_col}.")
+    elif args.data == "ROSMAP":
+        adata, condition_col, patient_col = _load_rosmap_anndata(
+            args.cell_type,
+            condition_col=args.condition_col,
+            patient_col=args.patient_col,
+        )
+        if not args.region:
+            region = "PFC"
+            print(f"ROSMAP: no -region given; using '{region}' for output naming only.")
     else:
         # Atlas data: MTX + metadata
         if not args.cell_type or not args.region:
-            raise ValueError("When not using -adata you must provide -cell_type and -region.")
+            raise ValueError("When using Atlas data you must provide -cell_type and -region.")
         if args.cell_type == "Astrocytes":
             base_prefix = f"2025-11-16_{args.cell_type}_{region}"
         elif args.cell_type == "Microglia":
@@ -634,22 +696,25 @@ if __name__ == "__main__":
 
     print(f"Before filtering: {adata.shape} (cells × genes)")
 
-    # Apply quality filters (only for Atlas Astrocytes; no gene-type filter). Skip for h5ad / Microglia.
-    if not args.adata and args.cell_type == "Astrocytes":
+    # Apply quality filters (only for Atlas Astrocytes; no gene-type filter). Skip for h5ad / ROSMAP / Microglia.
+    if not args.adata and args.data != "ROSMAP" and args.cell_type == "Astrocytes":
         adata = filter_anndata_object(adata, min_genes=0, min_cells=0, min_counts=None, max_counts=None, mito_max=None, gene_type=None)
     
     print(f"After filtering: {adata.shape} (cells × genes)")
 
     if adata is None:
         raise ImportError("Failed to create AnnData object. Make sure anndata is installed.")
-    
+    if args.data == "ROSMAP":
+        filter_patients_cell_threshold = 0
+    else:
+        filter_patients_cell_threshold = 80
     # --- Pseudobulk ---
     if not sea_ad_already_pseudobulked:
         if getattr(args, 'pseudobulk', None) is not None:
             if str(args.pseudobulk).strip().lower() == "none":
                 adata = aggregate_cells_into_pseudobulk(
                     adata, target_cells_per_bin=args.bins,
-                    filter_patients_cell_threshold=80, seed=args.seed, patient_col=patient_col
+                    filter_patients_cell_threshold=filter_patients_cell_threshold, seed=args.seed, patient_col=patient_col
                 )
                 pseudobulk_label = "none"
             else:
@@ -657,7 +722,7 @@ if __name__ == "__main__":
                     n_cells = int(args.pseudobulk)
                     adata = aggregate_cells_into_pseudobulk(
                         adata, target_cells_per_bin=n_cells,
-                        filter_patients_cell_threshold=80, seed=args.seed, patient_col=patient_col
+                        filter_patients_cell_threshold=filter_patients_cell_threshold, seed=args.seed, patient_col=patient_col
                     )
                     pseudobulk_label = str(n_cells)
                 except ValueError:
@@ -665,7 +730,7 @@ if __name__ == "__main__":
         else:
             adata = aggregate_cells_into_pseudobulk(
                 adata, target_cells_per_bin=args.bins,
-                filter_patients_cell_threshold=80, seed=args.seed, patient_col=patient_col
+                filter_patients_cell_threshold=filter_patients_cell_threshold, seed=args.seed, patient_col=patient_col
             )
             pseudobulk_label = str(args.bins)
     
@@ -688,12 +753,7 @@ if __name__ == "__main__":
         group_tuples = [('1', '2'), ('1', '3'), ('1', '4'), ('2', '3'), ('2', '4'), ('3', '4')]
     print(f"Condition comparisons: {group_tuples}")
 
-    if args.adata:
-        out_suffix = f"SEA_AD_MTG_pseudobulk{pseudobulk_label}_seed{args.seed}"
-    elif getattr(args, 'cell_type', None) == "Microglia":
-        out_suffix = f"microglia_{region}_pseudobulk{pseudobulk_label}_seed{args.seed}"
-    else:
-        out_suffix = f"{region}_pseudobulk{pseudobulk_label}_seed{args.seed}"
+    out_suffix = f"{args.data}_{args.cell_type}_{region}_pseudobulk{pseudobulk_label}_seed{args.seed}"
     output_file = os.path.join(output_dir, f"dge_results_{out_suffix}.csv")
     dge = DGEAnalyzer(
         data_file=adata,

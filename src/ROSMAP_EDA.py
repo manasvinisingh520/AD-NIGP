@@ -6,6 +6,7 @@ import pandas as pd
 import seaborn as sns
 from scipy.stats import chi2_contingency
 from tableone import TableOne
+from utils import _coerce_numeric_series
 
 microglia_adata = ad.read_h5ad('data/ROSMAP_Data/Microglia.h5ad')
 astrocytes_adata = ad.read_h5ad('data/ROSMAP_Data/Astrocytes.h5ad')
@@ -98,12 +99,6 @@ def create_correlation_plots(adata, col_names):
     plt.tight_layout()
     plt.show()
 
-
-def _coerce_numeric_series(s):
-    return pd.to_numeric(
-        s.astype(str).str.strip().replace("90+", "90"),
-        errors="coerce",
-    )
 
 
 def _prepare_batch_vs_numeric(adata, col1, col2, n_bins=10):
