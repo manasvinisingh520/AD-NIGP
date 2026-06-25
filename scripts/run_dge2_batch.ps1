@@ -1,5 +1,5 @@
-# PowerShell script to run dge2.py with multiple parameter combinations
-# Runs for bins [100, 250, 500], regions [EC, ITG, PFC, V2, V1], and 10 random seeds
+# PowerShell script to run dge2.py for Microglia with multiple parameter combinations
+# Runs for bins [100, 250, 500], regions [EC, ITG, PFC, V2, V1, CrossRegion], and 1 seed
 
 # Verify we're in the correct directory
 if (-not (Test-Path ".\src\dge2.py")) {
@@ -9,9 +9,12 @@ if (-not (Test-Path ".\src\dge2.py")) {
 }
 
 # Parameters
+$data = "ROSMAP"
+$cell_type = "Microglia"
 $bins = @(100)
-$regions = @("ITG", "PFC", "V2", "V1")
+$regions = @("PFC")
 
+# Use a single seed
 $seeds = @(100)  # Single seed value
 
 # Count total runs
@@ -22,6 +25,8 @@ $separator = "============================================================"
 Write-Host $separator
 Write-Host "DGE2 Batch Runner"
 Write-Host $separator
+Write-Host "Data: $data"
+Write-Host "Cell Type: $cell_type"
 Write-Host "Bins: $($bins -join ', ')"
 Write-Host "Regions: $($regions -join ', ')"
 Write-Host "Seeds: $($seeds -join ', ')"
@@ -30,7 +35,7 @@ Write-Host $separator
 Write-Host ""
 
 # Create logs directory
-$logDir = "logs\dge2_batch_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
+$logDir = "logs\dge2_batch_$data_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
 New-Item -ItemType Directory -Path $logDir -Force | Out-Null
 Write-Host "Log directory: $logDir"
 Write-Host ""
@@ -45,17 +50,18 @@ foreach ($bin in $bins) {
             $currentRun++
             
             # Create log file for this run
-            $logFileName = "dge2_{0}_bins{1}_seed{2}.log" -f $region, $bin, $seed
+            $logFileName = "dge2_$data_{0}_{1}_bins{2}_seed{3}.log" -f $cell_type, $region, $bin, $seed
             $logFile = Join-Path $logDir $logFileName
-            $errorLogFileName = "dge2_{0}_bins{1}_seed{2}_error.log" -f $region, $bin, $seed
+            $errorLogFileName = "dge2_$data_{0}_{1}_bins{2}_seed{3}_error.log" -f $cell_type, $region, $bin, $seed
             $errorLogFile = Join-Path $logDir $errorLogFileName
             
-            Write-Host "[$currentRun/$totalRuns] Running: region=$region, bins=$bin, seed=$seed"
+            Write-Host "[$currentRun/$totalRuns] Running: data=$data, cell_type=$cell_type, region=$region, bins=$bin, seed=$seed"
             
+            # Run the command and capture output
             try {
                 # Run command and redirect both stdout and stderr to log file
                 $process = Start-Process -FilePath "python" `
-                    -ArgumentList ".\src\dge2.py", "--region", $region, "--seed", $seed, "--bins", $bin `
+                    -ArgumentList ".\src\dge2.py", "-data", $data, "-cell_type", $cell_type, "-region", $region, "-seed", $seed, "-bins", $bin `
                     -NoNewWindow `
                     -Wait `
                     -PassThru `

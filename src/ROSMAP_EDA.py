@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from scipy.stats import chi2_contingency
+from tableone import TableOne
 
 microglia_adata = ad.read_h5ad('data/ROSMAP_Data/Microglia.h5ad')
 astrocytes_adata = ad.read_h5ad('data/ROSMAP_Data/Astrocytes.h5ad')
@@ -147,7 +148,21 @@ def cramer_v_test(adata, col1, col2, n_bins=10):
     cramer_v = np.sqrt(phi2 / min(r - 1, k - 1))
     print(f"Cramer's V: {cramer_v:.4f}, p-value: {p:.4f}")
 
-batch_effects_test(microglia_adata, 'batch', 'age_death')
-cramer_v_test(microglia_adata, 'batch', 'age_death')
-batch_effects_test(astrocytes_adata, 'batch', 'age_death')
-cramer_v_test(astrocytes_adata, 'batch', 'age_death')
+def table1(adata, groupby, target_cols):
+    cols = [groupby] + [c for c in target_cols if c != groupby]
+    df = adata.obs[cols].copy()
+    for col in target_cols:
+        coerced = _coerce_numeric_series(df[col])
+        if coerced.notna().sum() > 0:
+            df[col] = coerced
+    table = TableOne(
+        df,
+        groupby=groupby,
+        columns=target_cols,
+        nonnormal=target_cols,
+        pval=True,
+    )
+    print(table.tabulate(tablefmt="github"))
+
+table1(microglia_adata, 'msex', ['ceradsc'])
+table1(astrocytes_adata, 'msex', ['ceradsc'])
