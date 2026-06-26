@@ -10,7 +10,7 @@ if (-not (Test-Path ".\src\dge2.py")) {
 
 # Parameters
 $data = "ROSMAP"
-$cell_type = "Microglia"
+$cell_type = "Astrocytes"
 $bins = @(100)
 $regions = @("PFC")
 
