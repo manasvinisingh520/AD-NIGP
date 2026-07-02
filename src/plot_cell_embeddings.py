@@ -14,18 +14,44 @@ from sklearn.metrics import silhouette_score
 from collections import Counter
 import pickle
 import re
-from utils import create_color_mapping
+from utils import create_color_mapping, get_grn_file_paths
+
+# Dataset -> regions / default region. Embeddings live in GREmLN/embeddings/, keyed by region.
+# DATA_REGIONS values are the *parsed* region names (used by --combine_all's filter);
+# concatenate parses 'ROSMAP_Microglia_cell_embeddings.tsv' -> region 'ROSMAP'.
+# DATA_DEFAULT_REGION values are the single-region *file stems*.
+DATA_REGIONS = {
+    "Atlas": ["EC", "ITG", "PFC", "V1", "V2", "CrossRegion"],
+    "SEAAD": ["MTG"],
+    "ROSMAP": ["ROSMAP"],
+}
+DATA_DEFAULT_REGION = {"Atlas": "V2", "SEAAD": "MTG", "ROSMAP": "ROSMAP_Microglia"}
 
 parser = argparse.ArgumentParser(description='Plot cell embeddings using UMAP visualization.')
-parser.add_argument('--region', type=str, default='V2', help='Region to process (default: V2). Can specify multiple regions separated by commas.')
+parser.add_argument('--data', type=str, default='Atlas', choices=['Atlas', 'SEAAD', 'ROSMAP'],
+                    help='Dataset to plot: Atlas (default), SEAAD (=MTG), or ROSMAP. Sets the default '
+                         'region and, with --combine_all, restricts to that dataset\'s regions.')
+parser.add_argument('--region', type=str, default=None,
+                    help='Region to process. Default depends on --data (Atlas: V2, SEAAD: MTG).')
 parser.add_argument('--n_clusters', type=int, default=4, help='Maximum number of clusters to test (tests from 2 to n_clusters, default: 4)')
 parser.add_argument('--combine_all', action='store_true', help='Combine all embeddings from all regions (both Astrocytes and Microglia)')
-parser.add_argument('--color_by', type=str, default='cluster', choices=['cluster', 'cell_type', 'region', 'condition'], 
-                    help='Color embeddings by: cluster (default), cell_type, region, or condition')
-parser.add_argument('--cells_to_keep', type=str, default=None, 
+parser.add_argument('--color_by', type=str, default='cluster', choices=['cluster', 'cell_type', 'region', 'condition', 'batch'],
+                    help='Color embeddings by: cluster (default), cell_type, region, condition, or batch')
+parser.add_argument('--batch_col', type=str, default=None,
+                    help="Metadata column to use as batch (default: auto per dataset, e.g. "
+                         "'batch_vendor_name' for SEA-AD/MTG, 'Flowcell' for Atlas Astrocytes).")
+parser.add_argument('--cells_to_keep', type=str, default=None,
                     choices=['Astrocytes', 'Microglia'],
                     help='Cell type to filter by: Astrocytes or Microglia. If not specified, loads all cell types.')
+parser.add_argument('--save_clusters', action='store_true',
+                    help='Save each KMeans cluster to data/Astrocyte_cluster_<id>_cells.pkl (default: off).')
 args = parser.parse_args()
+
+# Resolve default region from --data when not given explicitly
+if args.region is None:
+    args.region = DATA_DEFAULT_REGION.get(args.data)
+    if args.region is None:
+        parser.error(f"No embeddings available for --data {args.data} yet; pass --region explicitly.")
 
 
 def load_cell_embeddings(embeddings_path):
@@ -77,7 +103,160 @@ def load_conditions_from_mapping(mapping_path):
         return None
 
 
-def concatenate_all_embeddings(cell_type_filter=None):
+def _mapping_path(region, cell_type):
+    """Path to the patient_mapping.csv (holds 'condition') for a region + cell type."""
+    if region == "ROSMAP":
+        ct = cell_type or "Microglia"
+        return os.path.join("data", "GRN", "ROSMAP", ct, f"{ct}_patient_mapping.csv")
+    if region == "MTG":  # SEA-AD
+        return os.path.join("data", "GRN", "MTG", "MTG_patient_mapping.csv")
+    sub = "Microglia" if cell_type == "Microglia" else "Astrocytes"
+    stem = f"{region}_Microglia" if cell_type == "Microglia" else f"{region}_Astrocytes"
+    for cand in (os.path.join("data", "GRN", sub, f"{stem}_patient_mapping.csv"),
+                 os.path.join("data", "GRN", sub, f"{region}_patient_mapping.csv")):
+        if os.path.exists(cand):
+            return cand
+    return None
+
+
+# Default batch (technical) column per dataset. Atlas Astrocytes falls back to the
+# metadata xlsx 'Flowcell' (batch is not kept in the astro pseudobulk obs).
+BATCH_COL_DEFAULTS = {"MTG": "batch_vendor_name", "ROSMAP": "batch"}   # per-dataset batch column
+ATLAS_ASTRO_META_XLSX = os.path.join("data", "AtlasData", "2025-11-16_Astrocytes_metadata.xlsx")
+# Cache for the (slow) Atlas astro metadata xlsx: in-process + on-disk, keyed by column.
+_ATLAS_BATCH_MEM = {}
+_ATLAS_BATCH_CACHE_PKL = os.path.join("data", "AtlasData", ".batch_map_cache.pkl")
+
+
+def _default_batch_col(region, cell_type):
+    """Preferred batch column when --batch_col isn't given.
+
+    SEA-AD/MTG -> 'batch_vendor_name'; Atlas Astrocytes -> 'Flowcell' (from the
+    metadata xlsx); otherwise None (auto-detect a batch-like column from obs).
+    """
+    if region in BATCH_COL_DEFAULTS:
+        return BATCH_COL_DEFAULTS[region]
+    if cell_type in (None, "Astrocytes"):
+        return "Flowcell"
+    return None
+
+
+def _parse_region_celltype(cell_label):
+    """Parse a cell_label like 'PFC_Microglia' or 'EC' -> (region, cell_type)."""
+    if isinstance(cell_label, str) and cell_label.endswith("_Microglia"):
+        return cell_label[: -len("_Microglia")], "Microglia"
+    if isinstance(cell_label, str) and cell_label.endswith("_Astrocytes"):
+        return cell_label[: -len("_Astrocytes")], "Astrocytes"
+    return cell_label, "Astrocytes"  # astro files carry no suffix
+
+
+def _atlas_astro_batch_map(col):
+    """{SampleName -> batch value} from the Atlas astro metadata xlsx, for one column.
+
+    Reads all sheets once and caches the result both in-process and on disk
+    (data/AtlasData/.batch_map_cache.pkl), re-reading only if the xlsx changes.
+    """
+    if col in _ATLAS_BATCH_MEM:
+        return _ATLAS_BATCH_MEM[col]
+    if not os.path.exists(ATLAS_ASTRO_META_XLSX):
+        return {}
+    src_mtime = os.path.getmtime(ATLAS_ASTRO_META_XLSX)
+
+    # on-disk cache
+    cache = {}
+    if os.path.exists(_ATLAS_BATCH_CACHE_PKL):
+        try:
+            with open(_ATLAS_BATCH_CACHE_PKL, "rb") as f:
+                cache = pickle.load(f)
+        except Exception:
+            cache = {}
+    entry = cache.get(col)
+    if entry and entry.get("mtime") == src_mtime:
+        _ATLAS_BATCH_MEM[col] = entry["map"]
+        return entry["map"]
+
+    # (re)build from the xlsx (slow) and persist
+    print(f"  [batch] reading {os.path.basename(ATLAS_ASTRO_META_XLSX)} for '{col}' (caching)...")
+    sheets = pd.read_excel(ATLAS_ASTRO_META_XLSX, sheet_name=None)
+    frames = [d[["SampleName", col]] for d in sheets.values()
+              if col in d.columns and "SampleName" in d.columns]
+    mapping = {}
+    if frames:
+        m = pd.concat(frames).dropna().drop_duplicates("SampleName")
+        mapping = dict(zip(m["SampleName"].astype(str), m[col].astype(str)))
+    cache[col] = {"mtime": src_mtime, "map": mapping}
+    try:
+        with open(_ATLAS_BATCH_CACHE_PKL, "wb") as f:
+            pickle.dump(cache, f)
+    except Exception:
+        pass
+    _ATLAS_BATCH_MEM[col] = mapping
+    return mapping
+
+
+def _batch_lut(region, cell_type, batch_col=None):
+    """Build {bin_or_patient -> batch} for one region/cell_type, plus the column used.
+
+    Primary source: the region's pseudobulk AnnData obs (keyed by _sample_id) --
+    works for SEA-AD/MTG ('batch_vendor_name') and ROSMAP ('batch').
+    Fallback for Atlas Astrocytes: the metadata xlsx 'Flowcell' keyed by SampleName.
+    """
+    import anndata as ad
+    lut, col = {}, batch_col or _default_batch_col(region, cell_type)
+
+    if region == "ROSMAP":
+        ct = cell_type or "Microglia"
+        anndata_file = os.path.join("data", "GRN", "ROSMAP", ct, f"{ct}_pseudobulk_AnnData.h5ad")
+    else:
+        try:
+            _, _, anndata_file, *_ = get_grn_file_paths(region, cell_type=cell_type or "Astrocytes", data_dir="data")
+        except Exception:
+            anndata_file = None
+
+    if anndata_file and os.path.exists(anndata_file):
+        obs = ad.read_h5ad(anndata_file, backed="r").obs
+        if col is None:  # no preference -> auto-detect a batch-like column from obs
+            for cand in ["batch_vendor_name", "batch", "load_name", "Flowcell", "orig.ident", "plate"]:
+                if cand in obs.columns:
+                    col = cand
+                    break
+        if col and col in obs.columns and "_sample_id" in obs.columns:
+            lut = dict(zip(obs["_sample_id"].astype(str), obs[col].astype(str)))
+            return lut, col
+
+    # Atlas Astrocytes fallback: xlsx column (default Flowcell) keyed by SampleName (cached)
+    if cell_type in (None, "Astrocytes"):
+        fcol = batch_col or col or "Flowcell"
+        lut = _atlas_astro_batch_map(fcol)
+        if lut:
+            return lut, fcol
+
+    return lut, col
+
+
+def load_batch_labels(cell_names, cell_labels, batch_col=None):
+    """Return a batch label per cell (aligned to cell_names).
+
+    Looks up each bin by its _sample_id, falling back to the patient id
+    (the part of '<patient>_bin<n>' before '_bin'). Missing -> None.
+    """
+    lut_cache = {}
+    labels, used_cols = [], set()
+    for name, lab in zip(cell_names, cell_labels):
+        region, cell_type = _parse_region_celltype(lab)
+        key = (region, cell_type)
+        if key not in lut_cache:
+            lut_cache[key] = _batch_lut(region, cell_type, batch_col)
+            used_cols.add(lut_cache[key][1])
+        lut, _ = lut_cache[key]
+        patient = name.rsplit("_bin", 1)[0]
+        labels.append(lut.get(name, lut.get(patient)))
+    n_found = sum(l is not None for l in labels)
+    print(f"  Batch labels: matched {n_found}/{len(labels)} cells; column(s) used: {sorted(c for c in used_cols if c)}")
+    return labels
+
+
+def concatenate_all_embeddings(cell_type_filter=None, regions_filter=None):
     """
     Automatically find and combine all cell embeddings from all regions.
     
@@ -129,6 +308,11 @@ def concatenate_all_embeddings(cell_type_filter=None):
             else:
                 cell_type = None  # Assume Astrocytes for labels without explicit type
         
+        # Filter by dataset (region allowlist) if specified
+        if regions_filter is not None and region not in regions_filter:
+            print(f"  Skipping {filename} (region: {region} not in {regions_filter})")
+            continue
+
         # Filter by cell type if specified
         actual_cell_type = cell_type or 'Astrocytes'
         if cell_type_filter is not None and actual_cell_type != cell_type_filter:
@@ -150,15 +334,8 @@ def concatenate_all_embeddings(cell_type_filter=None):
         
         # Try to load conditions from appropriate directory
         conditions = None
-        if cell_type == 'Microglia':
-            mapping_path = os.path.join("data", "GRN", "Microglia", f"{region}_Microglia_patient_mapping.csv")
-            if not os.path.exists(mapping_path):
-                mapping_path = os.path.join("data", "GRN", "Microglia", f"{region}_patient_mapping.csv")
-        else:
-            mapping_path = os.path.join("data", "GRN", "Astrocytes", f"{region}_Astrocytes_patient_mapping.csv")
-            if not os.path.exists(mapping_path):
-                mapping_path = os.path.join("data", "GRN", "Astrocytes", f"{region}_patient_mapping.csv")
-        if os.path.exists(mapping_path):
+        mapping_path = _mapping_path(region, cell_type)
+        if mapping_path and os.path.exists(mapping_path):
             conditions = load_conditions_from_mapping(mapping_path)
         
         if conditions is not None:
@@ -206,7 +383,8 @@ cell_labels = None
 
 if args.combine_all:
     # Combine all embeddings, optionally filtered by cell type
-    embeddings_matrix, cell_conditions, cell_labels, cell_names = concatenate_all_embeddings(cell_type_filter=args.cells_to_keep)
+    embeddings_matrix, cell_conditions, cell_labels, cell_names = concatenate_all_embeddings(
+        cell_type_filter=args.cells_to_keep, regions_filter=DATA_REGIONS.get(args.data))
     has_unmapped = any(c is None for c in cell_conditions)
     if args.cells_to_keep:
         region_label = f"All Regions ({args.cells_to_keep} only)"
@@ -216,13 +394,23 @@ else:
     # Load single region
     region = args.region
     embeddings_path = os.path.join("GREmLN", "embeddings", f"{region}_cell_embeddings.tsv")
+    if not os.path.exists(embeddings_path):
+        raise FileNotFoundError(
+            f"Embeddings not found: {embeddings_path} (data={args.data}, region={region})")
     embeddings_matrix, cell_names = load_cell_embeddings(embeddings_path)
-    cell_conditions = None
-    # Try to infer cell type from filename
-    if 'Microglia' in embeddings_path:
+    # Parse the file stem into (region, cell_type); avoid doubling an existing suffix
+    _region, _ct = _parse_region_celltype(region)
+    is_micro = 'Microglia' in embeddings_path
+    if is_micro and not region.endswith("Microglia"):
         cell_labels = [f"{region}_Microglia"] * len(cell_names)
     else:
-        cell_labels = [region] * len(cell_names)  # Default to region name
+        cell_labels = [region] * len(cell_names)
+    # Load conditions from the region's patient mapping (dataset-aware path)
+    mapping_path = _mapping_path(_region, _ct)
+    cell_conditions = load_conditions_from_mapping(mapping_path) if mapping_path else None
+    if cell_conditions is not None and len(cell_conditions) != len(cell_names):
+        print(f"  Warning: {len(cell_conditions)} conditions but {len(cell_names)} cells - ignoring conditions")
+        cell_conditions = None
     region_label = region
 
 print(f"Embedding matrix shape: {embeddings_matrix.shape}")
@@ -298,26 +486,27 @@ print(f"\nCells per cluster:")
 for cluster_id in sorted(cluster_counts.keys()):
     print(f"  Cluster {cluster_id}: {cluster_counts[cluster_id]} cells")
 
-# Save each cluster to a separate file
-print(f"\nSaving clusters to separate files:")
+# Save each cluster to a separate file (only when --save_clusters is set)
 all_cluster_ids = sorted(cluster_counts.keys())
+if args.save_clusters:
+    print(f"\nSaving clusters to separate files:")
+    for cluster_id in all_cluster_ids:
+        cluster_cell_indices = [i for i, label in enumerate(cluster_labels) if label == cluster_id]
+        cluster_cell_names = [cell_names[i] for i in cluster_cell_indices]
 
-for cluster_id in all_cluster_ids:
-    cluster_cell_indices = [i for i, label in enumerate(cluster_labels) if label == cluster_id]
-    cluster_cell_names = [cell_names[i] for i in cluster_cell_indices]
-    
-    # Save this cluster to a separate file
-    cluster_pickle = f"data/Astrocyte_cluster_{cluster_id}_cells.pkl"
-    print(f"  Saving cluster {cluster_id} ({len(cluster_cell_names)} cells) to: {cluster_pickle}")
-    with open(cluster_pickle, 'wb') as f:
-        pickle.dump({
-            'cluster_id': cluster_id,
-            'cell_names': cluster_cell_names,
-            'n_cells': len(cluster_cell_names)
-        }, f)
-    print(f"  ✓ Saved {len(cluster_cell_names)} cells from cluster {cluster_id}")
-
-print(f"\n✓ All {len(all_cluster_ids)} clusters saved successfully")
+        # Save this cluster to a separate file
+        cluster_pickle = f"data/Astrocyte_cluster_{cluster_id}_cells.pkl"
+        print(f"  Saving cluster {cluster_id} ({len(cluster_cell_names)} cells) to: {cluster_pickle}")
+        with open(cluster_pickle, 'wb') as f:
+            pickle.dump({
+                'cluster_id': cluster_id,
+                'cell_names': cluster_cell_names,
+                'n_cells': len(cluster_cell_names)
+            }, f)
+        print(f"  ✓ Saved {len(cluster_cell_names)} cells from cluster {cluster_id}")
+    print(f"\n✓ All {len(all_cluster_ids)} clusters saved successfully")
+else:
+    print(f"\nSkipping cluster pickle export ({len(all_cluster_ids)} clusters); pass --save_clusters to write them.")
 
 # Compute 2D UMAP for visualization
 print("\nComputing 2D UMAP for visualization...")
@@ -340,6 +529,11 @@ elif args.color_by == 'condition' and cell_conditions is not None:
     plot_colors, color_map, unique_values, extracted_values = create_color_mapping(cell_conditions, attribute_type='condition')
     title_suffix = 'Condition'
     label_prefix = 'Condition '
+elif args.color_by == 'batch' and cell_labels is not None:
+    batch_labels = load_batch_labels(cell_names, cell_labels, batch_col=args.batch_col)
+    plot_colors, color_map, unique_values, extracted_values = create_color_mapping(batch_labels, attribute_type='generic')
+    title_suffix = f"Batch ({args.batch_col or 'auto'})"
+    label_prefix = ''
 else:
     plot_colors = None
 

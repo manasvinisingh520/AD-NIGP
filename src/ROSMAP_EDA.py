@@ -1,6 +1,15 @@
-# load atlas anndata object and print sample of adata.obs
+# EDA over snRNA-seq cohorts (ROSMAP, SEA-AD, Atlas): per-donor sequencing stats
+# and Table 1. Column names differ per dataset, so they live in DATASET_CONFIG below.
+import os
+import sys
 import anndata as ad
 import matplotlib.pyplot as plt
+
+# Avoid cp1252 UnicodeEncodeError when printing tables with e.g. Greek 'ε' (Windows).
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -8,28 +17,275 @@ from scipy.stats import chi2_contingency
 from tableone import TableOne
 from utils import _coerce_numeric_series
 
-microglia_adata = ad.read_h5ad('data/ROSMAP_Data/Microglia.h5ad')
-astrocytes_adata = ad.read_h5ad('data/ROSMAP_Data/Astrocytes.h5ad')
+
+# ---------------------------------------------------------------------------
+# Dataset configuration: the "respective column names" for each cohort.
+# canonical concept -> that dataset's actual obs column / value coding.
+# ---------------------------------------------------------------------------
+DATASET_CONFIG = {
+    "ROSMAP": {
+        "loader": "h5ad",
+        "path": "data/ROSMAP_Data/{cell_type}.h5ad",
+        "cell_types": ["Astrocytes", "Microglia"],
+        "counts_layer": "counts",
+        "id_col": "individualID",
+        "age_col": "age_death",
+        "pmi_col": "pmi",
+        "braak_col": "braaksc",
+        "cerad_col": "ceradsc",
+        "table1_continuous": ["age_death", "educ", "pmi", "cts_mmse30_lv"],
+        "table1_categorical": ["msex", "race", "apoe_genotype", "cogdx", "Study", "braaksc", "ceradsc"],
+        "row_labels": {
+            "age_death": "Age at death (yrs)", "educ": "Education (yrs)",
+            "pmi": "Post-mortem interval (h)", "cts_mmse30_lv": "MMSE (last visit)",
+            "msex": "Sex", "race": "Race", "apoe_genotype": "APOE genotype",
+            "cogdx": "Clinical diagnosis", "Study": "Study cohort",
+            "braaksc": "Braak stage", "ceradsc": "CERAD score",
+        },
+        "value_labels": {
+            "msex": {0: "Female", 1: "Male"},
+            "race": {1: "White", 2: "Black", 3: "Native American", 6: "Asian", 7: "Other"},
+            "apoe_genotype": {22: "ε2/ε2", 23: "ε2/ε3", 24: "ε2/ε4",
+                              33: "ε3/ε3", 34: "ε3/ε4", 44: "ε4/ε4"},
+            "cogdx": {1: "NCI", 2: "MCI", 3: "MCI + other", 4: "AD",
+                      5: "AD + other", 6: "Other dementia"},
+            "ceradsc": {1: "Definite AD", 2: "Probable AD", 3: "Possible AD", 4: "No AD"},
+            "braaksc": {0: "0", 1: "I", 2: "II", 3: "III", 4: "IV", 5: "V", 6: "VI"},
+        },
+        "group_caption": {
+            "braaksc": "Braak stage (0-VI)",
+            "ceradsc": "CERAD score (1=Definite AD, 2=Probable, 3=Possible, 4=No AD)",
+        },
+    },
+    "SEAAD": {
+        "loader": "h5ad",
+        "path": "data/SEA_AD_Data/MTG/SEAAD_MTG_RNAseq_all-nuclei.2024-02-13.h5ad",
+        "cell_types": ["MTG"],          # single region file
+        "counts_layer": "UMIs",
+        "id_col": "Donor ID",
+        "age_col": "Age at Death",
+        "pmi_col": "PMI",
+        "braak_col": "Braak",
+        "cerad_col": "CERAD score",
+        "table1_continuous": ["Age at Death", "Years of education", "PMI", "Last MMSE Score"],
+        "table1_categorical": ["Sex", "APOE Genotype", "Cognitive Status",
+                               "Primary Study Name", "Braak", "CERAD score"],
+        "row_labels": {
+            "Age at Death": "Age at death (yrs)", "Years of education": "Education (yrs)",
+            "PMI": "Post-mortem interval (h)", "Last MMSE Score": "MMSE (last)",
+            "Sex": "Sex", "APOE Genotype": "APOE genotype",
+            "Cognitive Status": "Cognitive status", "Primary Study Name": "Study cohort",
+            "Braak": "Braak stage", "CERAD score": "CERAD score",
+        },
+        "value_labels": {},             # SEA-AD values are already human-readable text
+        "group_caption": {"Braak": "Braak stage", "CERAD score": "CERAD score"},
+    },
+    "Atlas": {
+        "loader": "atlas_xlsx",         # obs from the astro metadata xlsx (all region sheets)
+        "meta_xlsx": "data/AtlasData/2025-11-16_Astrocytes_metadata.xlsx",
+        "cell_types": ["Astrocytes"],
+        "counts_layer": None,           # raw counts live in per-region MTX, not a single h5ad
+        "id_col": "SampleName",
+        "age_col": "Age",
+        "pmi_col": "PMI",
+        "braak_col": "Braak",
+        "cerad_col": None,              # Atlas has Thal / Path..Group., no CERAD
+        "table1_continuous": ["Age", "PMI", "RIN"],
+        "table1_categorical": ["Sex", "apoe", "Braak", "Thal", "Path..Group."],
+        "row_labels": {
+            "Age": "Age (yrs)", "PMI": "Post-mortem interval (h)", "RIN": "RIN",
+            "Sex": "Sex", "apoe": "APOE", "Braak": "Braak stage",
+            "Thal": "Thal phase", "Path..Group.": "Pathology group",
+        },
+        "value_labels": {},
+        "group_caption": {"Braak": "Braak stage", "Path..Group.": "Pathology group"},
+    },
+}
+
+
+def load_dataset(dataset, cell_type=None, backed=False):
+    """Load a dataset as an AnnData.
+
+    ROSMAP/SEAAD -> read the h5ad (backed='r' for obs-only work like Table 1).
+    Atlas -> build an obs-only AnnData from the metadata xlsx (all region sheets);
+             it has no count matrix, so sequencing stats aren't available for Atlas here.
+    """
+    cfg = DATASET_CONFIG[dataset]
+    if cfg["loader"] == "h5ad":
+        ct = cell_type or cfg["cell_types"][0]
+        path = cfg["path"].format(cell_type=ct)
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"{dataset} file not found: {path}")
+        return ad.read_h5ad(path, backed="r" if backed else None)
+    if cfg["loader"] == "atlas_xlsx":
+        sheets = pd.read_excel(cfg["meta_xlsx"], sheet_name=None)
+        obs = pd.concat(sheets.values(), ignore_index=True)
+        obs.index = obs.index.astype(str)
+        return ad.AnnData(obs=obs)
+    raise ValueError(f"Unknown loader for dataset {dataset}")
+
 
 def donor_level_counts(adata, column, id_col="individualID"):
     per_donor = adata.obs.drop_duplicates(id_col)
     return per_donor[column].value_counts()
 
-def general_counts(microglia_adata, astrocytes_adata, id_col="individualID"):
-    all_columns = input("Enter all columns to print: ")
-    all_columns = [c.strip() for c in all_columns.split(',') if c.strip()]
 
-    for column in all_columns:
-        print(f"{column} (Microglia, per {id_col}):\n")
-        print(donor_level_counts(microglia_adata, column))
-        print()
+def general_counts(adatas, columns, id_col="individualID"):
+    """Print per-donor value counts of `columns` for each (label, adata) in `adatas`."""
+    for label, adata in adatas.items():
+        print("=" * 100, f"\n{label}")
+        for column in columns:
+            if column in adata.obs.columns:
+                print(f"\n{column} (per {id_col}):")
+                print(donor_level_counts(adata, column, id_col))
 
-    print("=" * 100)
 
-    for column in all_columns:
-        print(f"{column} (Astrocytes, per {id_col}):\n")
-        print(donor_level_counts(astrocytes_adata, column))
-        print()
+def donor_sequencing_stats(adata, id_col="individualID", layer="counts"):
+    """Per-individual sequencing statistics derived from the count matrix.
+
+    Aggregates the raw counts (layers[layer] if present, else .X) to one row per
+    donor, summarizing sequencing depth and library complexity.
+
+    Returns a DataFrame indexed by donor with:
+      n_cells, total_counts,
+      mean/median counts_per_cell, mean/median genes_per_cell,
+      n_genes_detected (genes with >0 counts anywhere in that donor),
+      mean_pct_mito (avg fraction of counts in MT- genes per cell).
+    """
+    import scipy.sparse as sp
+
+    X = adata.layers[layer] if (layer and layer in getattr(adata, "layers", {})) else adata.X
+    if not sp.issparse(X):
+        X = sp.csr_matrix(X)
+    X = X.tocsr()
+
+    counts_per_cell = np.asarray(X.sum(axis=1)).ravel()
+    genes_per_cell = np.asarray((X > 0).sum(axis=1)).ravel()
+
+    # mitochondrial fraction per cell (gene symbols starting with 'MT-')
+    mt_mask = np.asarray(adata.var_names.astype(str).str.upper().str.startswith("MT-"))
+    if mt_mask.any():
+        mt_counts = np.asarray(X[:, mt_mask].sum(axis=1)).ravel()
+        with np.errstate(divide="ignore", invalid="ignore"):
+            pct_mito = np.where(counts_per_cell > 0, mt_counts / counts_per_cell * 100, np.nan)
+    else:
+        pct_mito = np.full(counts_per_cell.shape, np.nan)
+
+    df = pd.DataFrame({
+        id_col: np.asarray(adata.obs[id_col].values),
+        "counts": counts_per_cell,
+        "genes": genes_per_cell,
+        "pct_mito": pct_mito,
+    })
+    g = df.groupby(id_col, observed=True)
+    stats = pd.DataFrame({
+        "n_cells": g.size(),
+        "total_counts": g["counts"].sum(),
+        "mean_counts_per_cell": g["counts"].mean(),
+        "median_counts_per_cell": g["counts"].median(),
+        "mean_genes_per_cell": g["genes"].mean(),
+        "median_genes_per_cell": g["genes"].median(),
+        "mean_pct_mito": g["pct_mito"].mean(),
+    })
+
+    # genes detected per donor (>0 counts in any of that donor's cells)
+    codes, uniques = pd.factorize(df[id_col].values)
+    n_genes_detected = np.zeros(len(uniques), dtype=int)
+    for i in range(len(uniques)):
+        rows = np.flatnonzero(codes == i)
+        n_genes_detected[i] = int((X[rows].sum(axis=0) > 0).sum())
+    stats["n_genes_detected"] = pd.Series(n_genes_detected, index=uniques)
+
+    return stats.sort_values("n_cells", ascending=False)
+
+
+# ---- Donor-level sequencing-stat plots ----
+# (column, human-readable label) for the metrics produced by donor_sequencing_stats
+_DONOR_SEQ_METRICS = [
+    ("n_cells", "cells per donor"),
+    ("total_counts", "total counts per donor"),
+    ("mean_counts_per_cell", "mean counts / cell"),
+    ("median_counts_per_cell", "median counts / cell"),
+    ("mean_genes_per_cell", "mean genes / cell"),
+    ("median_genes_per_cell", "median genes / cell"),
+    ("mean_pct_mito", "mean % mito"),
+    ("n_genes_detected", "genes detected per donor"),
+]
+
+
+def _finish_fig(fig, save_path):
+    """Save the figure to save_path (making dirs) or show it interactively."""
+    if save_path:
+        os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"Saved: {save_path}")
+    else:
+        plt.show()
+
+
+def plot_seq_stats_histograms(stats_df, title="donor sequencing stats", bins=30, save_path=None):
+    """Grid of histograms (one per metric) for a per-donor sequencing-stats DataFrame.
+
+    A red dashed line marks each metric's median. Saves to save_path if given,
+    otherwise shows the figure. Returns the figure.
+    """
+    df = stats_df
+    metrics = [(c, l) for c, l in _DONOR_SEQ_METRICS if c in df.columns]
+
+    ncols = 4
+    nrows = int(np.ceil(len(metrics) / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4 * ncols, 3.2 * nrows))
+    axes = np.atleast_1d(axes).ravel()
+
+    for ax, (col, label) in zip(axes, metrics):
+        vals = pd.to_numeric(df[col], errors="coerce").dropna()
+        ax.hist(vals, bins=bins, edgecolor="black", linewidth=0.5)
+        med = vals.median()
+        ax.axvline(med, color="red", linestyle="--", linewidth=1, label=f"median={med:,.1f}")
+        ax.set_xlabel(label)
+        ax.set_ylabel("donors")
+        ax.legend(fontsize=8)
+
+    for ax in axes[len(metrics):]:
+        ax.set_visible(False)
+
+    fig.suptitle(f"{title} ({len(df)} donors)", fontsize=14)
+    fig.tight_layout(rect=[0, 0, 1, 0.97])
+    _finish_fig(fig, save_path)
+    return fig
+
+
+def compare_seq_stats(named_stats, bins=40, save_path=None):
+    """Overlay per-metric histograms (normalized density) for several stats DataFrames.
+
+    named_stats: dict {label -> stats DataFrame}.
+    """
+    common = None
+    for df in named_stats.values():
+        cols = {c for c, _ in _DONOR_SEQ_METRICS if c in df.columns}
+        common = cols if common is None else (common & cols)
+    metrics = [(c, l) for c, l in _DONOR_SEQ_METRICS if c in common]
+
+    ncols = 4
+    nrows = int(np.ceil(len(metrics) / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4 * ncols, 3.2 * nrows))
+    axes = np.atleast_1d(axes).ravel()
+
+    for ax, (col, label) in zip(axes, metrics):
+        for name, df in named_stats.items():
+            v = pd.to_numeric(df[col], errors="coerce").dropna()
+            ax.hist(v, bins=bins, alpha=0.5, density=True, label=name)
+        ax.set_xlabel(label)
+        ax.set_ylabel("density")
+        ax.legend(fontsize=8)
+
+    for ax in axes[len(metrics):]:
+        ax.set_visible(False)
+
+    fig.suptitle("Donor sequencing stats: " + " vs ".join(named_stats), fontsize=14)
+    fig.tight_layout(rect=[0, 0, 1, 0.97])
+    _finish_fig(fig, save_path)
+    return fig
 
 
 def patient_cells(adata, id_col="individualID", bin_width=10, title=None):
@@ -46,59 +302,53 @@ def patient_cells(adata, id_col="individualID", bin_width=10, title=None):
     plt.show()
 
 
-def _age_per_donor(adata, id_col="individualID", col="age_at_visit_max"):
+def _age_per_donor(adata, id_col="individualID", col="age_death"):
     per_donor = adata.obs.drop_duplicates(id_col)
-    raw = per_donor[col].astype(str).str.strip()
-    raw = raw.replace("90+", "90")
+    raw = per_donor[col].astype(str).str.strip().replace("90+", "90")
     return pd.to_numeric(raw, errors="coerce")
 
 
-def patient_age_distribution(adata, id_col="individualID", bin_width=5, title=None):
-    ages = _age_per_donor(adata, id_col).dropna()
+def patient_age_distribution(adata, id_col="individualID", col="age_death", bin_width=5, title=None):
+    ages = _age_per_donor(adata, id_col, col).dropna()
     max_age = int(ages.max())
     bins = np.arange(0, max_age + bin_width, bin_width)
 
     fig, ax = plt.subplots(figsize=(10, 4))
     ax.hist(ages.values, bins=bins, edgecolor="black", linewidth=0.5)
-    ax.set_xlabel(f"age at first AD diagnosis (bins of {bin_width}; 90+ → 90)")
+    ax.set_xlabel(f"{col} (bins of {bin_width}; 90+ → 90)")
     ax.set_ylabel("number of donors")
     ax.set_title(title or f"Age distribution ({len(ages)} donors)")
     fig.tight_layout()
     plt.show()
 
-def pmi_distribution(adata, bin_width=1, title=None):
+
+def pmi_distribution(adata, col="pmi", bin_width=1, title=None):
     """Cell-level PMI histogram (clinical PMI broadcast to each cell from its donor)."""
-    pmi = pd.to_numeric(adata.obs["pmi"], errors="coerce")
+    pmi = pd.to_numeric(adata.obs[col], errors="coerce")
     n_total = len(pmi)
     pmi = pmi.dropna()
-    n_with_pmi = len(pmi)
-    print(f"cells with PMI: {n_with_pmi:,} / {n_total:,} total")
+    print(f"cells with PMI: {len(pmi):,} / {n_total:,} total")
 
     max_pmi = float(pmi.max())
     bins = np.arange(0, max_pmi + bin_width, bin_width)
 
     fig, ax = plt.subplots(figsize=(10, 4))
     ax.hist(pmi.values, bins=bins, edgecolor="black", linewidth=0.5)
-    ax.set_xlabel(f"PMI (bins of {bin_width})")
+    ax.set_xlabel(f"{col} (bins of {bin_width})")
     ax.set_ylabel("number of cells")
-    ax.set_title(title or f"PMI distribution ({n_with_pmi:,} cells)")
+    ax.set_title(title or f"PMI distribution ({len(pmi):,} cells)")
     fig.tight_layout()
     plt.show()
 
-def create_correlation_plots(adata, col_names):
-    #put age_death in numbers (90+ -> 90)
-    adata.obs['age_death'] = adata.obs['age_death'].replace('90+', '90')
-    adata.obs['age_death'] = pd.to_numeric(adata.obs['age_death'])
-    corr = adata.obs[col_names].corr(method='spearman')
-    sns.heatmap(corr,
-                annot=True,
-                cmap="vlag",
-                center=0,
-                square=True,
-                linewidths=0.5)
+
+def create_correlation_plots(adata, col_names, age_col="age_death"):
+    df = adata.obs[col_names].copy()
+    if age_col in df.columns:
+        df[age_col] = pd.to_numeric(df[age_col].astype(str).replace("90+", "90"), errors="coerce")
+    corr = df.apply(lambda s: _coerce_numeric_series(s)).corr(method="spearman")
+    sns.heatmap(corr, annot=True, cmap="vlag", center=0, square=True, linewidths=0.5)
     plt.tight_layout()
     plt.show()
-
 
 
 def _prepare_batch_vs_numeric(adata, col1, col2, n_bins=10):
@@ -118,13 +368,8 @@ def batch_effects_test(adata, col1, col2, n_bins=10):
     df_cat = _prepare_batch_vs_numeric(adata, col1, col2, n_bins)
     ct_norm = pd.crosstab(df_cat[col1], df_cat[col2], normalize="index")
     plt.figure(figsize=(10, 6))
-    sns.heatmap(
-        ct_norm,
-        annot=False,
-        fmt=".2f",
-        cmap="Blues",
-        cbar_kws={"label": "Proportion within row"},
-    )
+    sns.heatmap(ct_norm, annot=False, fmt=".2f", cmap="Blues",
+                cbar_kws={"label": "Proportion within row"})
     plt.xlabel(col2)
     plt.ylabel(col1)
     plt.xticks(rotation=45, ha="right")
@@ -143,21 +388,158 @@ def cramer_v_test(adata, col1, col2, n_bins=10):
     cramer_v = np.sqrt(phi2 / min(r - 1, k - 1))
     print(f"Cramer's V: {cramer_v:.4f}, p-value: {p:.4f}")
 
-def table1(adata, groupby, target_cols):
-    cols = [groupby] + [c for c in target_cols if c != groupby]
-    df = adata.obs[cols].copy()
-    for col in target_cols:
-        coerced = _coerce_numeric_series(df[col])
-        if coerced.notna().sum() > 0:
-            df[col] = coerced
+
+def _relabel_values(series, vmap):
+    """Map numeric codes to readable labels; keep unknown codes, preserve NaN."""
+    s = _coerce_numeric_series(series)
+    return [vmap.get(int(v), v) if pd.notna(v) else v for v in s]
+
+
+def _save_table_image(table, title, save_path):
+    """Render a TableOne as a monospaced-table PNG."""
+    txt = table.tabulate(tablefmt="grid")
+    body = f"{title}\n\n{txt}"
+    lines = body.split("\n")
+    w = max(len(l) for l in lines)
+    fig = plt.figure(figsize=(max(6, w * 0.085), max(2, len(lines) * 0.2)))
+    fig.text(0.01, 0.99, body, family="monospace", fontsize=8.5, va="top", ha="left")
+    plt.axis("off")
+    os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
+    fig.savefig(save_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {save_path}")
+
+
+def donor_table1(adata, groupby, id_col="individualID", continuous=None, categorical=None,
+                 row_labels=None, value_labels=None, group_caption=None,
+                 pval=True, save_path=None):
+    """Donor-level Table 1 stratified by `groupby` (e.g. Braak or CERAD).
+
+    One row per donor (deduplicated on id_col): covariates are rows, groups are columns.
+    Continuous vars -> median [IQR] (nonnormal); categorical vars -> n (%).
+    Column names / labels are dataset-specific (see DATASET_CONFIG); pass them in via
+    continuous/categorical/row_labels/value_labels/group_caption.
+    """
+    continuous = list(continuous or [])
+    categorical = list(categorical or [])
+    row_labels = row_labels or {}
+    value_labels = value_labels or {}
+    group_caption = group_caption or {}
+
+    # one row per donor
+    df = adata.obs.drop_duplicates(id_col).copy()
+
+    # groupby: use integer codes when the column is (mostly) numeric (ROSMAP braaksc/
+    # ceradsc), else keep the string categories (SEA-AD 'Braak', 'CERAD score').
+    gb_numeric = _coerce_numeric_series(df[groupby])
+    df = df[gb_numeric.notna() | df[groupby].notna()].copy()
+    if gb_numeric.notna().mean() > 0.5:
+        df = df[gb_numeric.reindex(df.index).notna()].copy()
+        df[groupby] = gb_numeric.reindex(df.index).astype(int).astype(str)
+    else:
+        df = df[df[groupby].notna()].copy()
+        df[groupby] = df[groupby].astype(str)
+
+    # never place the stratifier in the rows; keep only present columns
+    continuous = [c for c in continuous if c != groupby and c in df.columns]
+    categorical = [c for c in categorical if c != groupby and c in df.columns]
+
+    for c in continuous:
+        df[c] = _coerce_numeric_series(df[c])
+    for c in categorical:
+        if c in value_labels:
+            df[c] = _relabel_values(df[c], value_labels[c])
+
     table = TableOne(
         df,
+        columns=continuous + categorical,
+        categorical=categorical,
+        nonnormal=continuous,
         groupby=groupby,
-        columns=target_cols,
-        nonnormal=target_cols,
-        pval=True,
+        rename=row_labels,
+        pval=pval,
     )
+    caption = group_caption.get(groupby, groupby)
+    title = f"Table 1 (donor-level, n={len(df)}) by {caption}"
+    print(f"\n=== {title} ===")
     print(table.tabulate(tablefmt="github"))
+    if save_path:
+        _save_table_image(table, title, save_path)
+    return table
 
-table1(microglia_adata, 'msex', ['ceradsc'])
-table1(astrocytes_adata, 'msex', ['ceradsc'])
+
+def dataset_table1(dataset, cell_type=None, groupby=None, save_dir="images"):
+    """Build Table 1(s) for a dataset using its configured columns/labels.
+
+    groupby defaults to the dataset's Braak (and CERAD, if any) columns.
+    Loads obs only (backed), so it's cheap even for the large SEA-AD file.
+    """
+    cfg = DATASET_CONFIG[dataset]
+    adata = load_dataset(dataset, cell_type, backed=True)
+    groupbys = [groupby] if groupby else [c for c in (cfg["braak_col"], cfg["cerad_col"]) if c]
+    tag = f"{dataset}_{cell_type or cfg['cell_types'][0]}".lower()
+    tables = {}
+    for gb in groupbys:
+        if gb not in adata.obs.columns:
+            print(f"  skip {gb}: not in {dataset} obs")
+            continue
+        out = os.path.join(save_dir, f"{tag}_table1_{gb.replace(' ', '_')}.png")
+        tables[gb] = donor_table1(
+            adata, gb, id_col=cfg["id_col"],
+            continuous=cfg["table1_continuous"], categorical=cfg["table1_categorical"],
+            row_labels=cfg["row_labels"], value_labels=cfg["value_labels"],
+            group_caption=cfg["group_caption"], save_path=out,
+        )
+    return tables
+
+
+def dataset_seq_stats(dataset, cell_type=None, out_dir="data", plot=True, save_dir="images"):
+    """Compute + save per-donor sequencing stats for a dataset (needs a count matrix).
+
+    Not available for Atlas (counts_layer is None -> raw counts are in per-region MTX).
+    """
+    cfg = DATASET_CONFIG[dataset]
+    if cfg["loader"] != "h5ad":
+        raise ValueError(f"{dataset}: sequencing stats need a count matrix; "
+                         f"not available via this loader ({cfg['loader']}).")
+    ct = cell_type or cfg["cell_types"][0]
+    adata = load_dataset(dataset, ct, backed=False)
+    stats = donor_sequencing_stats(adata, id_col=cfg["id_col"], layer=cfg["counts_layer"])
+    tag = f"{dataset}_{ct}".lower()
+    csv = os.path.join(out_dir, f"{tag}_donor_seq_stats.csv")
+    os.makedirs(out_dir, exist_ok=True)
+    stats.to_csv(csv)
+    print(f"Saved: {csv}  ({len(stats)} donors)")
+    if plot:
+        plot_seq_stats_histograms(stats, title=f"{dataset} {ct} donor seq stats",
+                                  save_path=os.path.join(save_dir, f"{tag}_donor_seq_stats_hist.png"))
+    return stats
+
+
+def run_dataset(dataset, cell_types=None, seq_stats=True, out_dir="images"):
+    """Run the standard EDA (Table 1 + optional sequencing stats) for a dataset."""
+    cfg = DATASET_CONFIG[dataset]
+    cell_types = cell_types or cfg["cell_types"]
+    print(f"\n########## {dataset} ##########")
+    for ct in cell_types:
+        dataset_table1(dataset, ct, save_dir=out_dir)
+        if seq_stats and cfg["loader"] == "h5ad":
+            dataset_seq_stats(dataset, ct, save_dir=out_dir)
+
+
+def main():
+    import argparse
+    p = argparse.ArgumentParser(description="Cohort EDA: donor sequencing stats + Table 1.")
+    p.add_argument("--dataset", default="ROSMAP", choices=list(DATASET_CONFIG))
+    p.add_argument("--cell-types", nargs="*", default=None,
+                   help="Subset of cell types (default: all for the dataset).")
+    p.add_argument("--skip-seq-stats", action="store_true",
+                   help="Only build Table 1 (skip the heavy count-matrix pass).")
+    p.add_argument("--out-dir", default="images")
+    args = p.parse_args()
+    run_dataset(args.dataset, cell_types=args.cell_types,
+                seq_stats=not args.skip_seq_stats, out_dir=args.out_dir)
+
+
+if __name__ == "__main__":
+    main()
