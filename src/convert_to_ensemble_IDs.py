@@ -1,6 +1,8 @@
 """
 Script to map gene symbols to Ensembl IDs using genes_2_ensembl_ids.pkl and update GRN.tsv, matrix.csv, and AnnData.h5ad files.
-Supports V1, V1, V2, and other regions.
+
+Atlas: per-region files under data/GRN/<CellType>/ (requires -region).
+ROSMAP: GRN inputs under data/GRN/ROSMAP/<CellType>/ plus raw data/ROSMAP_Data/<CellType>.h5ad.
 """
 
 import pandas as pd
@@ -9,7 +11,8 @@ import argparse
 import anndata as ad
 import pickle
 from tqdm import tqdm
-from utils import get_grn_file_paths
+from utils import get_grn_file_paths, get_rosmap_file_paths
+from config import ROSMAP_CELL_TYPES
 
 
 def load_mapping(mapping_file=None):
@@ -169,17 +172,46 @@ def process_anndata_file(anndata_file, output_file, mapping):
     print(f"Successfully saved to: {output_file}")
 
 
+def _process_grn_matrix_anndata(grn_file, matrix_file, anndata_file, grn_output, matrix_output, anndata_output, mapping):
+    """Convert GRN, matrix, and pseudobulk AnnData if each input file exists."""
+    if os.path.exists(grn_file):
+        process_grn_file(grn_file, grn_output, mapping)
+    else:
+        print(f"\nNote: GRN file not found at {grn_file}, skipping...")
+
+    if os.path.exists(matrix_file):
+        process_matrix_file(matrix_file, matrix_output, mapping)
+    else:
+        print(f"\nNote: Matrix file not found at {matrix_file}, skipping...")
+
+    if os.path.exists(anndata_file):
+        process_anndata_file(anndata_file, anndata_output, mapping)
+    else:
+        print(f"\nNote: AnnData file not found at {anndata_file}, skipping...")
+
+
 def main():
     """Main function to update GRN, matrix, and AnnData files."""
     parser = argparse.ArgumentParser(
         description='Convert gene symbols to Ensembl IDs in GRN, matrix, and AnnData files',
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""Examples:
+  python src/convert_to_ensemble_IDs.py -data Atlas -region PFC -cell_type Astrocytes
+  python src/convert_to_ensemble_IDs.py -data ROSMAP -cell_type Astrocytes
+""",
+    )
+    parser.add_argument(
+        '-data',
+        type=str,
+        default='Atlas',
+        choices=['Atlas', 'ROSMAP'],
+        help='Dataset: Atlas (per-region GRN files) or ROSMAP (data/GRN/ROSMAP/ and data/ROSMAP_Data/)'
     )
     parser.add_argument(
         '-region',
         type=str,
-        required=True,
-        help='Region to process (e.g., V1, V2, ITG, PFC, EC, MTG for SEA AD)'
+        default=None,
+        help='Region for Atlas/SEA-AD (e.g., V1, EC, ITG, PFC, MTG). Not used for ROSMAP.'
     )
     parser.add_argument(
         '-cell_type',
@@ -187,38 +219,53 @@ def main():
         default='Astrocytes',
         help='Cell type (e.g., Astrocytes, Microglia). Default: Astrocytes'
     )
-    
-    args = parser.parse_args()
-    
-    data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
-    
-    # Load mapping once at the start
-    mapping = load_mapping()
-    
-    # Get file paths using utility function
-    grn_file, matrix_file, anndata_file, grn_output, matrix_output, anndata_output = get_grn_file_paths(
-        args.region, cell_type=args.cell_type, data_dir=data_dir
+    parser.add_argument(
+        '--skip-raw',
+        action='store_true',
+        help='ROSMAP only: skip converting data/ROSMAP_Data/<CellType>.h5ad'
     )
-    
+
+    args = parser.parse_args()
+
+    if args.data == 'Atlas' and not args.region:
+        parser.error('-region is required when -data Atlas')
+
+    if args.data == 'ROSMAP' and args.cell_type not in ROSMAP_CELL_TYPES:
+        parser.error(
+            f"ROSMAP cell type must be one of {sorted(ROSMAP_CELL_TYPES)}, got '{args.cell_type}'"
+        )
+
+    data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
+
+    mapping = load_mapping()
+
     try:
-        # Process GRN file
-        if os.path.exists(grn_file):
-            process_grn_file(grn_file, grn_output, mapping)
+        if args.data == 'ROSMAP':
+            (
+                grn_file, matrix_file, anndata_file,
+                grn_output, matrix_output, anndata_output,
+                raw_anndata_file, raw_anndata_output,
+            ) = get_rosmap_file_paths(cell_type=args.cell_type, data_dir=data_dir)
+
+            _process_grn_matrix_anndata(
+                grn_file, matrix_file, anndata_file,
+                grn_output, matrix_output, anndata_output, mapping,
+            )
+
+            if not args.skip_raw:
+                if os.path.exists(raw_anndata_file):
+                    process_anndata_file(raw_anndata_file, raw_anndata_output, mapping)
+                else:
+                    print(f"\nNote: Raw ROSMAP AnnData not found at {raw_anndata_file}, skipping...")
         else:
-            print(f"\nNote: GRN file not found at {grn_file}, skipping...")
-        
-        # Process matrix file
-        if os.path.exists(matrix_file):
-            process_matrix_file(matrix_file, matrix_output, mapping)
-        else:
-            print(f"\nNote: Matrix file not found at {matrix_file}, skipping...")
-        
-        # Process AnnData file
-        if os.path.exists(anndata_file):
-            process_anndata_file(anndata_file, anndata_output, mapping)
-        else:
-            print(f"\nNote: AnnData file not found at {anndata_file}, skipping...")
-    
+            grn_file, matrix_file, anndata_file, grn_output, matrix_output, anndata_output = get_grn_file_paths(
+                args.region, cell_type=args.cell_type, data_dir=data_dir
+            )
+            _process_grn_matrix_anndata(
+                grn_file, matrix_file, anndata_file,
+                grn_output, matrix_output, anndata_output, mapping,
+            )
+
     except Exception as e:
         print(f"\nError: {e}")
         raise

@@ -33,6 +33,7 @@ DATASET_CONFIG = {
         "pmi_col": "pmi",
         "braak_col": "braaksc",
         "cerad_col": "ceradsc",
+        "stratifiers": ["braaksc", "ceradsc"],
         "table1_continuous": ["age_death", "educ", "pmi", "cts_mmse30_lv"],
         "table1_categorical": ["msex", "race", "apoe_genotype", "cogdx", "Study", "braaksc", "ceradsc"],
         "row_labels": {
@@ -56,6 +57,10 @@ DATASET_CONFIG = {
             "braaksc": "Braak stage (0-VI)",
             "ceradsc": "CERAD score (1=Definite AD, 2=Probable, 3=Possible, 4=No AD)",
         },
+        "corr_cols": ["braaksc", "ceradsc", "age_death", "pmi", "educ", "cts_mmse30_lv"],
+        "ordinal_maps": {},   # ROSMAP braaksc/ceradsc are already numeric
+        "dist_continuous": ["age_death", "educ", "pmi", "cts_mmse30_lv"],
+        "dist_categorical": ["msex", "race", "apoe_genotype", "cogdx", "Study", "braaksc", "ceradsc"],
     },
     "SEAAD": {
         "loader": "h5ad",
@@ -67,6 +72,7 @@ DATASET_CONFIG = {
         "pmi_col": "PMI",
         "braak_col": "Braak",
         "cerad_col": "CERAD score",
+        "stratifiers": ["Braak", "CERAD score"],
         "table1_continuous": ["Age at Death", "Years of education", "PMI", "Last MMSE Score"],
         "table1_categorical": ["Sex", "APOE Genotype", "Cognitive Status",
                                "Primary Study Name", "Braak", "CERAD score"],
@@ -79,17 +85,30 @@ DATASET_CONFIG = {
         },
         "value_labels": {},             # SEA-AD values are already human-readable text
         "group_caption": {"Braak": "Braak stage", "CERAD score": "CERAD score"},
+        "corr_cols": ["Braak", "CERAD score", "Age at Death", "PMI", "RIN",
+                      "Years of education", "Last MMSE Score"],
+        "ordinal_maps": {
+            "Braak": {"Braak 0": 0, "Braak I": 1, "Braak II": 2, "Braak III": 3,
+                      "Braak IV": 4, "Braak V": 5, "Braak VI": 6},
+            "CERAD score": {"Absent": 0, "Sparse": 1, "Moderate": 2, "Frequent": 3},
+        },
+        "dist_continuous": ["Age at Death", "Years of education", "PMI", "RIN", "Brain pH",
+                            "GEX_Median_genes_per_cell", "GEX_Median_UMI_counts_per_cell",
+                            "Fraction mitochondrial UMIs"],
+        "dist_categorical": ["Sex", "Race", "APOE Genotype", "Braak", "CERAD score",
+                             "Cognitive Status", "Primary Study Name"],
     },
     "Atlas": {
         "loader": "atlas_xlsx",         # obs from the astro metadata xlsx (all region sheets)
         "meta_xlsx": "data/AtlasData/2025-11-16_Astrocytes_metadata.xlsx",
-        "cell_types": ["Astrocytes"],
+        "cell_types": ["Astrocytes", "Microglia"],
         "counts_layer": None,           # raw counts live in per-region MTX, not a single h5ad
-        "id_col": "SampleName",
+        "id_col": "Donor.ID.y",         # true donor id (32 donors); 'SampleName' is per donor-region
         "age_col": "Age",
         "pmi_col": "PMI",
         "braak_col": "Braak",
-        "cerad_col": None,              # Atlas has Thal / Path..Group., no CERAD
+        "cerad_col": None,              # Atlas has no CERAD; use Thal as the 2nd stratifier
+        "stratifiers": ["Braak", "Thal"],
         "table1_continuous": ["Age", "PMI", "RIN"],
         "table1_categorical": ["Sex", "apoe", "Braak", "Thal", "Path..Group."],
         "row_labels": {
@@ -98,9 +117,50 @@ DATASET_CONFIG = {
             "Thal": "Thal phase", "Path..Group.": "Pathology group",
         },
         "value_labels": {},
-        "group_caption": {"Braak": "Braak stage", "Path..Group.": "Pathology group"},
+        "group_caption": {"Braak": "Braak stage", "Thal": "Thal phase",
+                          "Path..Group.": "Pathology group"},
+        "corr_cols": ["Braak", "Thal", "Age", "PMI", "RIN"],
+        "ordinal_maps": {
+            "Braak": {"0": 0, "I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6},
+        },  # Thal is already numeric ('unk' -> NaN)
+        "dist_continuous": ["Age", "PMI", "RIN", "percent.mito", "percent.ribo",
+                            "Total.Genes.Detected", "Median.UMI.Counts.per.Cell"],
+        "dist_categorical": ["Sex", "apoe", "Braak", "Thal", "Path..Group."],
+        # Atlas Microglia uses a different, sparser metadata source (per-region CSVs):
+        # it has Braak/CERAD/Pathology Stage/Sex/APOE but no Age/PMI/RIN/Thal.
+        "cell_type_overrides": {
+            "Microglia": {
+                "loader": "atlas_micro_csv",
+                "meta_glob": "data/AtlasData/2025-12-27_Microglia_*_metadata.csv",
+                "id_col": "Donor ID",
+                "stratifiers": ["Braak", "CERAD"],
+                "table1_continuous": [],
+                "table1_categorical": ["Sex", "APOE", "Braak", "CERAD", "Pathology Stage"],
+                "corr_cols": ["Braak", "CERAD", "Pathology Stage"],
+                "ordinal_maps": {
+                    "Braak": {"0": 0, "I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6},
+                    "CERAD": {"none": 0, "sparse": 1, "moderate": 2, "frequent": 3},
+                },
+                "row_labels": {"Braak": "Braak stage", "CERAD": "CERAD score",
+                               "Pathology Stage": "Pathology stage", "Sex": "Sex",
+                               "APOE": "APOE genotype"},
+                "value_labels": {},
+                "group_caption": {"Braak": "Braak stage", "CERAD": "CERAD score"},
+                "dist_continuous": [],
+                "dist_categorical": ["Sex", "APOE", "Braak", "CERAD", "Pathology Stage"],
+            },
+        },
     },
 }
+
+
+def _cfg(dataset, cell_type=None):
+    """Config for a dataset, with any per-cell-type overrides merged in."""
+    cfg = dict(DATASET_CONFIG[dataset])
+    overrides = cfg.get("cell_type_overrides", {})
+    if cell_type in overrides:
+        cfg = {**cfg, **overrides[cell_type]}
+    return cfg
 
 
 def load_dataset(dataset, cell_type=None, backed=False):
@@ -110,17 +170,44 @@ def load_dataset(dataset, cell_type=None, backed=False):
     Atlas -> build an obs-only AnnData from the metadata xlsx (all region sheets);
              it has no count matrix, so sequencing stats aren't available for Atlas here.
     """
-    cfg = DATASET_CONFIG[dataset]
+    cfg = _cfg(dataset, cell_type)
     if cfg["loader"] == "h5ad":
         ct = cell_type or cfg["cell_types"][0]
         path = cfg["path"].format(cell_type=ct)
         if not os.path.exists(path):
             raise FileNotFoundError(f"{dataset} file not found: {path}")
         return ad.read_h5ad(path, backed="r" if backed else None)
+    if cfg["loader"] == "atlas_micro_csv":
+        import glob
+        frames = [pd.read_csv(f) for f in sorted(glob.glob(cfg["meta_glob"]))]
+        if not frames:
+            raise FileNotFoundError(f"No Atlas microglia metadata matched {cfg['meta_glob']}")
+        obs = pd.concat(frames, ignore_index=True).drop_duplicates(cfg["id_col"])
+        obs.index = obs.index.astype(str)
+        return ad.AnnData(obs=obs)
     if cfg["loader"] == "atlas_xlsx":
-        sheets = pd.read_excel(cfg["meta_xlsx"], sheet_name=None)
+        import pickle
+        xlsx = cfg["meta_xlsx"]
+        cache_pkl = os.path.join("data", "AtlasData", ".atlas_obs_cache.pkl")
+        mtime = os.path.getmtime(xlsx)
+        # reuse cached obs unless the xlsx changed (the multi-sheet read is very slow)
+        if os.path.exists(cache_pkl):
+            try:
+                with open(cache_pkl, "rb") as f:
+                    c = pickle.load(f)
+                if c.get("mtime") == mtime:
+                    return ad.AnnData(obs=c["obs"])
+            except Exception:
+                pass
+        print(f"Reading {os.path.basename(xlsx)} (all sheets; caching)...")
+        sheets = pd.read_excel(xlsx, sheet_name=None)
         obs = pd.concat(sheets.values(), ignore_index=True)
         obs.index = obs.index.astype(str)
+        try:
+            with open(cache_pkl, "wb") as f:
+                pickle.dump({"mtime": mtime, "obs": obs}, f)
+        except Exception:
+            pass
         return ad.AnnData(obs=obs)
     raise ValueError(f"Unknown loader for dataset {dataset}")
 
@@ -474,9 +561,10 @@ def dataset_table1(dataset, cell_type=None, groupby=None, save_dir="images"):
     groupby defaults to the dataset's Braak (and CERAD, if any) columns.
     Loads obs only (backed), so it's cheap even for the large SEA-AD file.
     """
-    cfg = DATASET_CONFIG[dataset]
+    cfg = _cfg(dataset, cell_type)
     adata = load_dataset(dataset, cell_type, backed=True)
-    groupbys = [groupby] if groupby else [c for c in (cfg["braak_col"], cfg["cerad_col"]) if c]
+    default_gbs = cfg.get("stratifiers") or [c for c in (cfg.get("braak_col"), cfg.get("cerad_col")) if c]
+    groupbys = [groupby] if groupby else list(default_gbs)
     tag = f"{dataset}_{cell_type or cfg['cell_types'][0]}".lower()
     tables = {}
     for gb in groupbys:
@@ -493,12 +581,109 @@ def dataset_table1(dataset, cell_type=None, groupby=None, save_dir="images"):
     return tables
 
 
+def _to_numeric_ordinal(series, ordinal_map=None):
+    """Convert a column to numbers for correlation.
+
+    Uses an ordinal map for string stages (e.g. Braak/CERAD); otherwise coerces
+    numerically ('90+' -> 90, 'unk'/'Reference' -> NaN).
+    """
+    if ordinal_map:
+        mapped = series.astype(str).str.strip().map(ordinal_map)
+        return mapped.where(mapped.notna(), _coerce_numeric_series(series))
+    return _coerce_numeric_series(series)
+
+
+def dataset_correlation(dataset, cell_type=None, method="spearman", save_dir="images"):
+    """Correlation heatmap of a dataset's key clinical/QC variables (donor-level).
+
+    Columns come from cfg['corr_cols']; string stages are ordinalized via
+    cfg['ordinal_maps'] so Braak/CERAD/Thal correlate sensibly.
+    """
+    cfg = _cfg(dataset, cell_type)
+    adata = load_dataset(dataset, cell_type, backed=True)
+    df = adata.obs.drop_duplicates(cfg["id_col"]).copy()
+
+    omaps = cfg.get("ordinal_maps", {})
+    cols = [c for c in cfg.get("corr_cols", []) if c in df.columns]
+    num = pd.DataFrame({c: _to_numeric_ordinal(df[c], omaps.get(c)) for c in cols})
+    num = num.dropna(axis=1, how="all").rename(columns=cfg.get("row_labels", {}))
+
+    corr = num.corr(method=method)
+    fig, ax = plt.subplots(figsize=(1.15 * len(corr.columns) + 2, 1.0 * len(corr.columns) + 2))
+    sns.heatmap(corr, annot=True, fmt=".2f", cmap="vlag", center=0, vmin=-1, vmax=1,
+                square=True, linewidths=0.5, cbar_kws={"label": f"{method} r"}, ax=ax)
+    ct = cell_type or cfg["cell_types"][0]
+    ax.set_title(f"{dataset} {ct}: key-variable {method} correlation (n={len(df)})")
+    fig.tight_layout()
+    _finish_fig(fig, os.path.join(save_dir, f"{dataset}_{ct}_correlation.png".lower()))
+    return corr
+
+
+def _derive_race(df):
+    """Collapse SEA-AD's split 'Race (choice=X)' columns into a single 'Race' column."""
+    choice = [c for c in df.columns if c.startswith("Race (choice=")]
+    if not choice or "Race" in df.columns:
+        return df
+    df = df.copy()
+    neg = {"unchecked", "no", "0", "false", "nan", "", "0.0"}
+
+    def pick(row):
+        hits = [c.split("choice=")[1].rstrip(")").strip() for c in choice
+                if str(row[c]).strip().lower() not in neg]
+        return hits[0] if len(hits) == 1 else ("Multiple" if hits else "Unknown")
+
+    df["Race"] = df[choice].apply(pick, axis=1)
+    return df
+
+
+def dataset_distributions(dataset, cell_type=None, bins=20, save_dir="images"):
+    """Donor-level distribution panel: histograms for continuous vars, bar charts for
+    categorical vars (from cfg dist_continuous / dist_categorical)."""
+    cfg = _cfg(dataset, cell_type)
+    df = _derive_race(load_dataset(dataset, cell_type, backed=True).obs.drop_duplicates(cfg["id_col"]).copy())
+    labels, omaps = cfg.get("row_labels", {}), cfg.get("ordinal_maps", {})
+    cont = [c for c in cfg.get("dist_continuous", []) if c in df.columns]
+    cats = [c for c in cfg.get("dist_categorical", []) if c in df.columns]
+    panels = [("c", c) for c in cont] + [("k", c) for c in cats]
+
+    ncols = 4
+    nrows = int(np.ceil(len(panels) / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4 * ncols, 3 * nrows))
+    axes = np.atleast_1d(axes).ravel()
+
+    for ax, (kind, c) in zip(axes, panels):
+        if kind == "c":
+            v = _coerce_numeric_series(df[c]).dropna()
+            ax.hist(v, bins=bins, edgecolor="black", linewidth=0.5)
+            if len(v):
+                ax.axvline(v.median(), color="red", ls="--", lw=1)
+        else:
+            vc = df[c].astype(str).replace({"nan": "NA"}).value_counts()
+            omap = omaps.get(c)
+            if omap:
+                vc = vc.reindex(sorted(vc.index, key=lambda x: omap.get(x, 999)))
+            ax.bar(range(len(vc)), vc.values, edgecolor="black", linewidth=0.5)
+            ax.set_xticks(range(len(vc)))
+            ax.set_xticklabels(vc.index, rotation=45, ha="right", fontsize=8)
+        ax.set_ylabel("donors")
+        ax.set_title(labels.get(c, c), fontsize=10)
+
+    for ax in axes[len(panels):]:
+        ax.set_visible(False)
+
+    ct = cell_type or cfg["cell_types"][0]
+    fig.suptitle(f"{dataset} {ct}: donor distributions (n={len(df)})", fontsize=14)
+    fig.tight_layout(rect=[0, 0, 1, 0.98])
+    _finish_fig(fig, os.path.join(save_dir, f"{dataset}_{ct}_distributions.png".lower()))
+    return df
+
+
 def dataset_seq_stats(dataset, cell_type=None, out_dir="data", plot=True, save_dir="images"):
     """Compute + save per-donor sequencing stats for a dataset (needs a count matrix).
 
     Not available for Atlas (counts_layer is None -> raw counts are in per-region MTX).
     """
-    cfg = DATASET_CONFIG[dataset]
+    cfg = _cfg(dataset, cell_type)
     if cfg["loader"] != "h5ad":
         raise ValueError(f"{dataset}: sequencing stats need a count matrix; "
                          f"not available via this loader ({cfg['loader']}).")
@@ -518,12 +703,12 @@ def dataset_seq_stats(dataset, cell_type=None, out_dir="data", plot=True, save_d
 
 def run_dataset(dataset, cell_types=None, seq_stats=True, out_dir="images"):
     """Run the standard EDA (Table 1 + optional sequencing stats) for a dataset."""
-    cfg = DATASET_CONFIG[dataset]
-    cell_types = cell_types or cfg["cell_types"]
+    cell_types = cell_types or DATASET_CONFIG[dataset]["cell_types"]
     print(f"\n########## {dataset} ##########")
     for ct in cell_types:
         dataset_table1(dataset, ct, save_dir=out_dir)
-        if seq_stats and cfg["loader"] == "h5ad":
+        dataset_correlation(dataset, ct, save_dir=out_dir)
+        if seq_stats and _cfg(dataset, ct)["loader"] == "h5ad":
             dataset_seq_stats(dataset, ct, save_dir=out_dir)
 
 

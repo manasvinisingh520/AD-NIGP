@@ -768,6 +768,36 @@ def get_grn_file_paths(region, cell_type="Astrocytes", data_dir="data"):
     
     return grn_file, matrix_file, anndata_file, grn_output, matrix_output, anndata_output
 
+
+def get_rosmap_file_paths(cell_type="Astrocytes", data_dir="data"):
+    """
+    Construct file paths for ROSMAP GRN inputs and raw cell-type AnnData.
+
+    GRN pipeline (create_GRN_data_ROSMAP.py) writes under data/GRN/ROSMAP/<CellType>/.
+    Raw processed AnnData lives in data/ROSMAP_Data/<CellType>.h5ad.
+
+    Returns
+    -------
+    tuple
+        (grn_file, matrix_file, anndata_file, grn_output, matrix_output, anndata_output,
+         raw_anndata_file, raw_anndata_output)
+    """
+    grn_dir = os.path.join(data_dir, "GRN", "ROSMAP", cell_type)
+    grn_file = os.path.join(grn_dir, f"ROSMAP_{cell_type}_GRN.tsv")
+    matrix_file = os.path.join(grn_dir, f"{cell_type}_matrix.csv")
+    anndata_file = os.path.join(grn_dir, f"{cell_type}_pseudobulk_AnnData.h5ad")
+    grn_output = os.path.join(grn_dir, f"ROSMAP_{cell_type}_GRN_ensembl.tsv")
+    matrix_output = os.path.join(grn_dir, f"{cell_type}_matrix_ensembl.csv")
+    anndata_output = os.path.join(grn_dir, f"{cell_type}_pseudobulk_AnnData_ensembl.h5ad")
+    raw_anndata_file = os.path.join(data_dir, "ROSMAP_Data", f"{cell_type}.h5ad")
+    raw_anndata_output = os.path.join(data_dir, "ROSMAP_Data", f"{cell_type}_ensembl.h5ad")
+    return (
+        grn_file, matrix_file, anndata_file,
+        grn_output, matrix_output, anndata_output,
+        raw_anndata_file, raw_anndata_output,
+    )
+
+
 def create_color_mapping(attribute_values, attribute_type='auto', custom_colors=None):
     """
     Create color mapping for cell embeddings based on different attributes.

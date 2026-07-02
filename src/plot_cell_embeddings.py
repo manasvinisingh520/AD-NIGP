@@ -35,8 +35,11 @@ parser.add_argument('--region', type=str, default=None,
                     help='Region to process. Default depends on --data (Atlas: V2, SEAAD: MTG).')
 parser.add_argument('--n_clusters', type=int, default=4, help='Maximum number of clusters to test (tests from 2 to n_clusters, default: 4)')
 parser.add_argument('--combine_all', action='store_true', help='Combine all embeddings from all regions (both Astrocytes and Microglia)')
-parser.add_argument('--color_by', type=str, default='cluster', choices=['cluster', 'cell_type', 'region', 'condition', 'batch'],
-                    help='Color embeddings by: cluster (default), cell_type, region, condition, or batch')
+parser.add_argument('--color_by', type=str, default='cluster',
+                    choices=['cluster', 'cell_type', 'region', 'condition', 'batch',
+                             'sex', 'individual', 'cell_subtype'],
+                    help='Color embeddings by: cluster (default), cell_type, region, condition, '
+                         'batch, sex, individual, or cell_subtype (ROSMAP only).')
 parser.add_argument('--batch_col', type=str, default=None,
                     help="Metadata column to use as batch (default: auto per dataset, e.g. "
                          "'batch_vendor_name' for SEA-AD/MTG, 'Flowcell' for Atlas Astrocytes).")
@@ -45,6 +48,10 @@ parser.add_argument('--cells_to_keep', type=str, default=None,
                     help='Cell type to filter by: Astrocytes or Microglia. If not specified, loads all cell types.')
 parser.add_argument('--save_clusters', action='store_true',
                     help='Save each KMeans cluster to data/Astrocyte_cluster_<id>_cells.pkl (default: off).')
+parser.add_argument('--save', action='store_true',
+                    help='Save the embedding plot to --outdir instead of showing it.')
+parser.add_argument('--outdir', type=str, default=os.path.join('images', 'cell_embeddings'),
+                    help='Directory for saved plots (default: images/cell_embeddings).')
 args = parser.parse_args()
 
 # Resolve default region from --data when not given explicitly
@@ -84,23 +91,33 @@ def load_cell_embeddings(embeddings_path):
 
 
 def load_conditions_from_mapping(mapping_path):
-    """Load conditions from patient mapping CSV file."""
-    if not os.path.exists(mapping_path):
+    """Load the per-bin 'condition' column from a patient_mapping CSV (row order)."""
+    if not mapping_path or not os.path.exists(mapping_path):
         print(f"Warning: Mapping file not found: {mapping_path}")
         return None
-    
     try:
         mapping_df = pd.read_csv(mapping_path)
-        if 'condition' in mapping_df.columns:
-            cell_conditions = mapping_df['condition'].values.tolist()
-            cell_conditions = [str(c) if pd.notna(c) else None for c in cell_conditions]
-            return cell_conditions
-        else:
-            print(f"Warning: 'condition' column not found in {mapping_path}")
-            return None
     except Exception as e:
-        print(f"Warning: Could not load conditions from {mapping_path}: {e}")
+        print(f"Warning: could not read {mapping_path}: {e}")
         return None
+    if 'condition' in mapping_df.columns:
+        return [str(c) if pd.notna(c) else None for c in mapping_df['condition'].tolist()]
+    print(f"Warning: 'condition' column not found in {mapping_path}")
+    return None
+
+
+def _condition_by_bin(mapping_path):
+    """{bin_name -> condition} from a patient_mapping CSV (robust name-based join)."""
+    if not mapping_path or not os.path.exists(mapping_path):
+        return None
+    try:
+        df = pd.read_csv(mapping_path)
+    except Exception:
+        return None
+    if 'condition' not in df.columns:
+        return None
+    key = 'bin_name' if 'bin_name' in df.columns else df.columns[0]
+    return {str(b): (str(c) if pd.notna(c) else None) for b, c in zip(df[key], df['condition'])}
 
 
 def _mapping_path(region, cell_type):
@@ -225,7 +242,7 @@ def _batch_lut(region, cell_type, batch_col=None):
             return lut, col
 
     # Atlas Astrocytes fallback: xlsx column (default Flowcell) keyed by SampleName (cached)
-    if cell_type in (None, "Astrocytes"):
+    if region != "ROSMAP" and cell_type in (None, "Astrocytes"):
         fcol = batch_col or col or "Flowcell"
         lut = _atlas_astro_batch_map(fcol)
         if lut:
@@ -254,6 +271,89 @@ def load_batch_labels(cell_names, cell_labels, batch_col=None):
     n_found = sum(l is not None for l in labels)
     print(f"  Batch labels: matched {n_found}/{len(labels)} cells; column(s) used: {sorted(c for c in used_cols if c)}")
     return labels
+
+
+def _obs_lut(region, cell_type, col):
+    """{_sample_id or SampleName -> value} for one obs/metadata column."""
+    import anndata as ad
+    if not col:
+        return {}
+    if region == "ROSMAP":
+        ct = cell_type or "Microglia"
+        anndata_file = os.path.join("data", "GRN", "ROSMAP", ct, f"{ct}_pseudobulk_AnnData.h5ad")
+    else:
+        try:
+            _, _, anndata_file, *_ = get_grn_file_paths(region, cell_type=cell_type or "Astrocytes", data_dir="data")
+        except Exception:
+            anndata_file = None
+    if anndata_file and os.path.exists(anndata_file):
+        obs = ad.read_h5ad(anndata_file, backed="r").obs
+        if col in obs.columns and "_sample_id" in obs.columns:
+            return dict(zip(obs["_sample_id"].astype(str), obs[col].astype(str)))
+    # Atlas Astrocytes fallback: metadata xlsx keyed by SampleName (cached)
+    if region != "ROSMAP" and cell_type in (None, "Astrocytes"):
+        return _atlas_astro_batch_map(col)
+    return {}
+
+
+# per-attribute obs column name, keyed by parsed region ('sex' falls back to 'Sex')
+_ATTR_COLS = {
+    "sex": {"ROSMAP": "msex", "MTG": "Sex"},
+    "cell_subtype": {"ROSMAP": "cell_type_high_resolution"},   # ROSMAP only
+}
+_SEX_LABELS = {"0": "Female", "1": "Male", "0.0": "Female", "1.0": "Male"}
+
+
+def _attr_col(attr, region, cell_type):
+    m = _ATTR_COLS.get(attr, {})
+    return m.get(region, "Sex") if attr == "sex" else m.get(region)
+
+
+def _rosmap_dominant_subtype_lut(cell_type):
+    """{_sample_id -> dominant subtype per bin} from the sidecar built by
+    src/build_bin_dominant_subtype.py (majority vote over each bin's raw cells)."""
+    ct = cell_type or "Microglia"
+    path = os.path.join("data", "GRN", "ROSMAP", ct, f"{ct}_bin_dominant_subtype.csv")
+    if not os.path.exists(path):
+        print(f"  (dominant-subtype sidecar missing: {path}; run src/build_bin_dominant_subtype.py)")
+        return {}
+    df = pd.read_csv(path)
+    return dict(zip(df["_sample_id"].astype(str), df["dominant_subtype"].astype(str)))
+
+
+def load_attr_labels(cell_names, cell_labels, attr):
+    """Per-bin values of an obs attribute ('sex' or 'cell_subtype'), aligned to cell_names.
+
+    For ROSMAP 'cell_subtype' this uses the DOMINANT subtype per bin (majority vote),
+    not the pseudobulk obs (which only stores the first cell's subtype).
+    """
+    lut_cache, labels, cols = {}, [], set()
+    for name, lab in zip(cell_names, cell_labels):
+        region, cell_type = _parse_region_celltype(lab)
+        if attr == "cell_subtype" and region == "ROSMAP":
+            key = (region, cell_type, "dominant")
+            if key not in lut_cache:
+                lut_cache[key] = _rosmap_dominant_subtype_lut(cell_type)
+                cols.add("dominant_subtype")
+        else:
+            col = _attr_col(attr, region, cell_type)
+            cols.add(col)
+            key = (region, cell_type, col)
+            if key not in lut_cache:
+                lut_cache[key] = _obs_lut(region, cell_type, col)
+        lut = lut_cache[key]
+        v = lut.get(name, lut.get(name.rsplit("_bin", 1)[0]))
+        if attr == "sex" and v is not None:
+            v = _SEX_LABELS.get(str(v), v)
+        labels.append(v)
+    n = sum(l is not None for l in labels)
+    print(f"  {attr} labels: matched {n}/{len(labels)}; column(s): {sorted(c for c in cols if c)}")
+    return labels
+
+
+def load_individual_labels(cell_names):
+    """Per-bin donor id = the '<patient>' part of '<patient>_bin<n>'."""
+    return [n.rsplit("_bin", 1)[0] for n in cell_names]
 
 
 def concatenate_all_embeddings(cell_type_filter=None, regions_filter=None):
@@ -405,11 +505,11 @@ else:
         cell_labels = [f"{region}_Microglia"] * len(cell_names)
     else:
         cell_labels = [region] * len(cell_names)
-    # Load conditions from the region's patient mapping (dataset-aware path)
-    mapping_path = _mapping_path(_region, _ct)
-    cell_conditions = load_conditions_from_mapping(mapping_path) if mapping_path else None
-    if cell_conditions is not None and len(cell_conditions) != len(cell_names):
-        print(f"  Warning: {len(cell_conditions)} conditions but {len(cell_names)} cells - ignoring conditions")
+    # Load conditions from the region's patient mapping (name-based join by bin)
+    cbin = _condition_by_bin(_mapping_path(_region, _ct))
+    cell_conditions = [cbin.get(n) for n in cell_names] if cbin else None
+    if cell_conditions is not None and all(c is None for c in cell_conditions):
+        print("  Warning: no conditions matched embedding bin names - ignoring conditions")
         cell_conditions = None
     region_label = region
 
@@ -534,6 +634,21 @@ elif args.color_by == 'batch' and cell_labels is not None:
     plot_colors, color_map, unique_values, extracted_values = create_color_mapping(batch_labels, attribute_type='generic')
     title_suffix = f"Batch ({args.batch_col or 'auto'})"
     label_prefix = ''
+elif args.color_by == 'sex' and cell_labels is not None:
+    sex_labels = load_attr_labels(cell_names, cell_labels, 'sex')
+    plot_colors, color_map, unique_values, extracted_values = create_color_mapping(sex_labels, attribute_type='generic')
+    title_suffix = 'Sex'
+    label_prefix = ''
+elif args.color_by == 'individual':
+    ind_labels = load_individual_labels(cell_names)
+    plot_colors, color_map, unique_values, extracted_values = create_color_mapping(ind_labels, attribute_type='generic')
+    title_suffix = 'Individual'
+    label_prefix = ''
+elif args.color_by == 'cell_subtype' and cell_labels is not None:
+    sub_labels = load_attr_labels(cell_names, cell_labels, 'cell_subtype')
+    plot_colors, color_map, unique_values, extracted_values = create_color_mapping(sub_labels, attribute_type='generic')
+    title_suffix = 'Cell subtype'
+    label_prefix = ''
 else:
     plot_colors = None
 
@@ -542,16 +657,19 @@ if plot_colors is not None:
     scatter = ax.scatter(embeddings_2d[:, 0], embeddings_2d[:, 1], c=plot_colors, alpha=0.6, s=20)
     title = f'{region_label} Cell Embeddings - UMAP (Colored by {title_suffix})'
     
-    # Create legend
-    legend_elements = []
-    value_counts = Counter(extracted_values)
-    for value in unique_values:
-        color = color_map[value]
-        count = value_counts.get(value, 0)
-        legend_elements.append(plt.Line2D([0], [0], marker='o', color='w', 
-                                           markerfacecolor=color, markersize=10, 
-                                           label=f'{label_prefix}{value} (n={count})'))
-    ax.legend(handles=legend_elements, loc='best', fontsize=10)
+    # Create legend (skip when there are too many categories, e.g. per-individual)
+    if len(unique_values) <= 30:
+        legend_elements = []
+        value_counts = Counter(extracted_values)
+        for value in unique_values:
+            color = color_map[value]
+            count = value_counts.get(value, 0)
+            legend_elements.append(plt.Line2D([0], [0], marker='o', color='w',
+                                               markerfacecolor=color, markersize=10,
+                                               label=f'{label_prefix}{value} (n={count})'))
+        ax.legend(handles=legend_elements, loc='best', fontsize=10)
+    else:
+        title += f'  [{len(unique_values)} groups]'
     
 else:
     # Default: Color by cluster
@@ -575,4 +693,12 @@ ax.set_title(title, fontsize=14, fontweight='bold')
 ax.grid(True, alpha=0.3)
 
 plt.tight_layout()
-plt.show()
+if args.save:
+    os.makedirs(args.outdir, exist_ok=True)
+    fname = (f"{args.data}_combined_{args.color_by}.png" if args.combine_all
+             else f"{args.region}_{args.color_by}.png").lower()
+    out_path = os.path.join(args.outdir, fname)
+    plt.savefig(out_path, dpi=150, bbox_inches='tight')
+    print(f"Saved plot to: {out_path}")
+else:
+    plt.show()
