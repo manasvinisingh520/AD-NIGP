@@ -9,10 +9,10 @@ if (-not (Test-Path ".\src\dge2.py")) {
 }
 
 # Parameters
-$data = "ROSMAP"
+$data = "SEA-AD"
 $cell_type = "Astrocytes"
 $bins = @(100)
-$regions = @("PFC")
+$regions = @("MTG")
 
 # Use a single seed
 $seeds = @(100)  # Single seed value

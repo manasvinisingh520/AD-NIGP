@@ -57,18 +57,26 @@ def build(cell_type):
             chunk = cells[idx:idx + size]
             idx += size
             vc = pd.Series(chunk).value_counts()
-            rows.append({
+            row = {
                 "_sample_id": f"{p}_bin{b + 1}",
                 "dominant_subtype": vc.index[0] if len(vc) else "NA",
                 "dominant_frac": round(vc.iloc[0] / len(chunk), 3) if chunk else float("nan"),
                 "n_cells": len(chunk),
                 "n_subtypes": int(vc.size),
-            })
+            }
+            # per-subtype fraction (composition), one column per subtype
+            for s, c in vc.items():
+                row[s] = round(c / len(chunk), 4)
+            rows.append(row)
 
+    meta = ["_sample_id", "dominant_subtype", "dominant_frac", "n_cells", "n_subtypes"]
     df = pd.DataFrame(rows)
+    sub_cols = sorted(c for c in df.columns if c not in meta)
+    df[sub_cols] = df[sub_cols].fillna(0.0)
+    df = df[meta + sub_cols]
     df.to_csv(out, index=False)
     covered = set(df["_sample_id"]) >= set(sid)
-    print(f"Saved {out}: {len(df)} bins | subtypes={df['dominant_subtype'].nunique()} "
+    print(f"Saved {out}: {len(df)} bins | subtypes={len(sub_cols)} {sub_cols} "
           f"| covers all pseudobulk bins={covered} | patient-binning mismatches={mismatches}")
     print(f"median dominant fraction: {df['dominant_frac'].median():.2f}")
     print(df['dominant_subtype'].value_counts().to_string())

@@ -33,16 +33,31 @@ parser.add_argument('--data', type=str, default='Atlas', choices=['Atlas', 'SEAA
                          'region and, with --combine_all, restricts to that dataset\'s regions.')
 parser.add_argument('--region', type=str, default=None,
                     help='Region to process. Default depends on --data (Atlas: V2, SEAAD: MTG).')
+parser.add_argument('--embeddings_dir', type=str, default=os.path.join('GREmLN', 'embeddings'),
+                    help='Directory of *_cell_embeddings.tsv (default GREmLN/embeddings; use '
+                         'pseudobulk_embeddings for the raw-pseudobulk UMAP embeddings).')
+parser.add_argument('--precomputed_umap', action='store_true',
+                    help='The loaded embedding is already a 2-D UMAP (e.g. pseudobulk_embeddings): '
+                         'use its first 2 columns directly instead of re-running UMAP.')
 parser.add_argument('--n_clusters', type=int, default=4, help='Maximum number of clusters to test (tests from 2 to n_clusters, default: 4)')
 parser.add_argument('--combine_all', action='store_true', help='Combine all embeddings from all regions (both Astrocytes and Microglia)')
 parser.add_argument('--color_by', type=str, default='cluster',
                     choices=['cluster', 'cell_type', 'region', 'condition', 'batch',
-                             'sex', 'individual', 'cell_subtype'],
-                    help='Color embeddings by: cluster (default), cell_type, region, condition, '
-                         'batch, sex, individual, or cell_subtype (ROSMAP only).')
+                             'sex', 'individual', 'cell_subtype', 'cell_subtype_dominant', 'leiden'],
+                    help='Color embeddings by: cluster (KMeans on UMAP), leiden (Leiden on the '
+                         'raw embeddings), cell_type, region, condition, batch, sex, individual, '
+                         'cell_subtype (ROSMAP; continuous subtype fraction), or '
+                         'cell_subtype_dominant (ROSMAP; categorical dominant subtype per bin).')
+parser.add_argument('--leiden_resolution', type=float, default=1.0,
+                    help='Leiden resolution for --color_by leiden (default 1.0; higher = more clusters).')
+parser.add_argument('--leiden_neighbors', type=int, default=15,
+                    help='k for the Leiden KNN graph built on the raw embeddings (default 15).')
 parser.add_argument('--batch_col', type=str, default=None,
                     help="Metadata column to use as batch (default: auto per dataset, e.g. "
                          "'batch_vendor_name' for SEA-AD/MTG, 'Flowcell' for Atlas Astrocytes).")
+parser.add_argument('--subtype', type=str, default=None,
+                    help="With --color_by cell_subtype: color continuously by this subtype's "
+                         "fraction per bin (default: the dataset's most common subtype).")
 parser.add_argument('--cells_to_keep', type=str, default=None,
                     choices=['Astrocytes', 'Microglia'],
                     help='Cell type to filter by: Astrocytes or Microglia. If not specified, loads all cell types.')
@@ -139,6 +154,12 @@ def _mapping_path(region, cell_type):
 # Default batch (technical) column per dataset. Atlas Astrocytes falls back to the
 # metadata xlsx 'Flowcell' (batch is not kept in the astro pseudobulk obs).
 BATCH_COL_DEFAULTS = {"MTG": "batch_vendor_name", "ROSMAP": "batch"}   # per-dataset batch column
+# For --color_by condition: use this obs column as the condition (SEA-AD -> ADNC),
+# instead of the patient_mapping 'condition' column, for regions listed here.
+CONDITION_OBS_COL = {"MTG": "Overall AD neuropathological Change"}
+# Severity color ramp for SEA-AD ADNC categories.
+ADNC_COLORS = {"Not AD": "green", "Low": "lightgreen", "Intermediate": "orange",
+               "High": "red", "Reference": "lightgray"}
 ATLAS_ASTRO_META_XLSX = os.path.join("data", "AtlasData", "2025-11-16_Astrocytes_metadata.xlsx")
 # Cache for the (slow) Atlas astro metadata xlsx: in-process + on-disk, keyed by column.
 _ATLAS_BATCH_MEM = {}
@@ -309,6 +330,44 @@ def _attr_col(attr, region, cell_type):
     return m.get(region, "Sex") if attr == "sex" else m.get(region)
 
 
+def _rosmap_subtype_composition(cell_type):
+    """DataFrame of per-bin subtype composition (sidecar), or None if missing."""
+    ct = cell_type or "Microglia"
+    path = os.path.join("data", "GRN", "ROSMAP", ct, f"{ct}_bin_dominant_subtype.csv")
+    return pd.read_csv(path) if os.path.exists(path) else None
+
+
+_SUBTYPE_META = {"_sample_id", "dominant_subtype", "dominant_frac", "n_cells", "n_subtypes"}
+
+
+def load_subtype_fraction(cell_names, cell_labels, subtype=None):
+    """Per-bin fraction of a subtype (continuous). Default = the dataset's most common
+    dominant subtype. Returns (fractions_list, subtype_name_used)."""
+    luts, chosen = {}, set()
+    for ct in {_parse_region_celltype(l)[1] for l in cell_labels}:
+        df = _rosmap_subtype_composition(ct)
+        if df is None:
+            luts[ct] = None
+            continue
+        st = subtype or df["dominant_subtype"].mode().iloc[0]
+        sub_cols = [c for c in df.columns if c not in _SUBTYPE_META]
+        if st not in sub_cols:
+            print(f"  subtype '{st}' not in {ct} sidecar; available: {sub_cols}")
+            luts[ct] = {}
+            continue
+        chosen.add(st)
+        luts[ct] = dict(zip(df["_sample_id"].astype(str), df[st]))
+    fracs = []
+    for name, lab in zip(cell_names, cell_labels):
+        region, ct = _parse_region_celltype(lab)
+        lut = luts.get(ct) if region == "ROSMAP" else None
+        fracs.append(lut.get(name) if lut else None)
+    used = " / ".join(sorted(chosen)) if chosen else (subtype or "NA")
+    n = sum(f is not None for f in fracs)
+    print(f"  subtype-fraction '{used}': matched {n}/{len(fracs)}")
+    return fracs, used
+
+
 def _rosmap_dominant_subtype_lut(cell_type):
     """{_sample_id -> dominant subtype per bin} from the sidecar built by
     src/build_bin_dominant_subtype.py (majority vote over each bin's raw cells)."""
@@ -356,6 +415,39 @@ def load_individual_labels(cell_names):
     return [n.rsplit("_bin", 1)[0] for n in cell_names]
 
 
+def compute_leiden(X, n_neighbors=15, resolution=1.0, seed=42):
+    """Leiden clustering on the RAW embeddings (KNN graph in embedding space, not UMAP).
+
+    Returns a list of string cluster labels aligned to the rows of X.
+    """
+    import scanpy as sc
+    import anndata as ad
+    a = ad.AnnData(X=np.asarray(X, dtype=np.float32))
+    sc.pp.neighbors(a, n_neighbors=n_neighbors, use_rep="X", random_state=seed)
+    sc.tl.leiden(a, resolution=resolution, flavor="igraph", n_iterations=2,
+                 directed=False, random_state=seed)
+    return a.obs["leiden"].astype(str).tolist()
+
+
+def load_condition_labels(cell_names, cell_labels):
+    """Per-bin condition. Uses a dataset's configured obs column when set
+    (SEA-AD -> 'Overall AD neuropathological Change'); otherwise the 'condition'
+    column of the region's patient_mapping."""
+    lut_cache, labels = {}, []
+    for name, lab in zip(cell_names, cell_labels):
+        region, cell_type = _parse_region_celltype(lab)
+        key = (region, cell_type)
+        if key not in lut_cache:
+            obs_col = CONDITION_OBS_COL.get(region)
+            lut_cache[key] = (_obs_lut(region, cell_type, obs_col) if obs_col
+                              else (_condition_by_bin(_mapping_path(region, cell_type)) or {}))
+        lut = lut_cache[key]
+        labels.append(lut.get(name, lut.get(name.rsplit("_bin", 1)[0])))
+    n = sum(l is not None for l in labels)
+    print(f"  condition labels: matched {n}/{len(labels)}")
+    return labels
+
+
 def concatenate_all_embeddings(cell_type_filter=None, regions_filter=None):
     """
     Automatically find and combine all cell embeddings from all regions.
@@ -376,7 +468,7 @@ def concatenate_all_embeddings(cell_type_filter=None, regions_filter=None):
     all_cell_names : list
         List of cell names
     """
-    embeddings_dir = os.path.join("GREmLN", "embeddings")
+    embeddings_dir = args.embeddings_dir
     if not os.path.exists(embeddings_dir):
         raise ValueError(f"Embeddings directory not found: {embeddings_dir}")
     
@@ -480,6 +572,8 @@ color_map = None
 unique_regions = None
 cell_conditions = None
 cell_labels = None
+continuous_values = None   # for gradient colorings (e.g. subtype fraction)
+continuous_label = None
 
 if args.combine_all:
     # Combine all embeddings, optionally filtered by cell type
@@ -493,7 +587,7 @@ if args.combine_all:
 else:
     # Load single region
     region = args.region
-    embeddings_path = os.path.join("GREmLN", "embeddings", f"{region}_cell_embeddings.tsv")
+    embeddings_path = os.path.join(args.embeddings_dir, f"{region}_cell_embeddings.tsv")
     if not os.path.exists(embeddings_path):
         raise FileNotFoundError(
             f"Embeddings not found: {embeddings_path} (data={args.data}, region={region})")
@@ -505,13 +599,13 @@ else:
         cell_labels = [f"{region}_Microglia"] * len(cell_names)
     else:
         cell_labels = [region] * len(cell_names)
-    # Load conditions from the region's patient mapping (name-based join by bin)
-    cbin = _condition_by_bin(_mapping_path(_region, _ct))
-    cell_conditions = [cbin.get(n) for n in cell_names] if cbin else None
-    if cell_conditions is not None and all(c is None for c in cell_conditions):
-        print("  Warning: no conditions matched embedding bin names - ignoring conditions")
-        cell_conditions = None
     region_label = region
+
+# Condition per bin (dataset-aware: SEA-AD uses the ADNC obs column)
+cell_conditions = load_condition_labels(cell_names, cell_labels)
+if cell_conditions is not None and all(c is None for c in cell_conditions):
+    print("  Warning: no conditions matched embedding bins - ignoring conditions")
+    cell_conditions = None
 
 print(f"Embedding matrix shape: {embeddings_matrix.shape}")
 print(f"  - Number of cells: {embeddings_matrix.shape[0]}")
@@ -529,9 +623,12 @@ best_silhouette = -1
 test_n_clusters = 2  # Use 2 for dimension testing
 
 for n_comp in umap_dimensions_to_test:
-    print(f"  Computing UMAP {n_comp}D...")
-    reducer_test = umap.UMAP(n_components=n_comp, random_state=42, n_neighbors=15, min_dist=0.1)
-    embeddings_test = reducer_test.fit_transform(embeddings_matrix)
+    if args.precomputed_umap:
+        embeddings_test = embeddings_matrix
+    else:
+        print(f"  Computing UMAP {n_comp}D...")
+        reducer_test = umap.UMAP(n_components=n_comp, random_state=42, n_neighbors=15, min_dist=0.1)
+        embeddings_test = reducer_test.fit_transform(embeddings_matrix)
     
     # Test clustering
     clusterer_test = KMeans(n_clusters=test_n_clusters, random_state=42, n_init=10)
@@ -565,9 +662,12 @@ if len(umap_results) > 1:
     plt.show()
 
 # Use optimal UMAP dimension for clustering
-print(f"\nUsing {best_umap_dim}D UMAP for clustering...")
-reducer_optimal = umap.UMAP(n_components=best_umap_dim, random_state=42, n_neighbors=15, min_dist=0.1)
-embeddings_optimal = reducer_optimal.fit_transform(embeddings_matrix)
+if args.precomputed_umap:
+    embeddings_optimal = embeddings_matrix
+else:
+    print(f"\nUsing {best_umap_dim}D UMAP for clustering...")
+    reducer_optimal = umap.UMAP(n_components=best_umap_dim, random_state=42, n_neighbors=15, min_dist=0.1)
+    embeddings_optimal = reducer_optimal.fit_transform(embeddings_matrix)
 
 # Use 4 clusters directly
 n_clusters = 7
@@ -608,10 +708,13 @@ if args.save_clusters:
 else:
     print(f"\nSkipping cluster pickle export ({len(all_cluster_ids)} clusters); pass --save_clusters to write them.")
 
-# Compute 2D UMAP for visualization
-print("\nComputing 2D UMAP for visualization...")
-reducer_2d = umap.UMAP(n_components=2, random_state=42, n_neighbors=15, min_dist=0.1)
-embeddings_2d = reducer_2d.fit_transform(embeddings_matrix)
+# Compute 2D UMAP for visualization (or use the precomputed one)
+if args.precomputed_umap:
+    embeddings_2d = embeddings_matrix[:, :2]
+else:
+    print("\nComputing 2D UMAP for visualization...")
+    reducer_2d = umap.UMAP(n_components=2, random_state=42, n_neighbors=15, min_dist=0.1)
+    embeddings_2d = reducer_2d.fit_transform(embeddings_matrix)
 
 # Plot embedding
 fig, ax = plt.subplots(figsize=(12, 10))
@@ -626,9 +729,11 @@ elif args.color_by == 'region' and cell_labels is not None:
     title_suffix = 'Region'
     label_prefix = ''
 elif args.color_by == 'condition' and cell_conditions is not None:
-    plot_colors, color_map, unique_values, extracted_values = create_color_mapping(cell_conditions, attribute_type='condition')
-    title_suffix = 'Condition'
-    label_prefix = 'Condition '
+    custom = ADNC_COLORS if any(str(v) in ADNC_COLORS for v in cell_conditions if v is not None) else None
+    plot_colors, color_map, unique_values, extracted_values = create_color_mapping(
+        cell_conditions, attribute_type='condition', custom_colors=custom)
+    title_suffix = 'ADNC' if custom else 'Condition'
+    label_prefix = '' if custom else 'Condition '
 elif args.color_by == 'batch' and cell_labels is not None:
     batch_labels = load_batch_labels(cell_names, cell_labels, batch_col=args.batch_col)
     plot_colors, color_map, unique_values, extracted_values = create_color_mapping(batch_labels, attribute_type='generic')
@@ -644,15 +749,38 @@ elif args.color_by == 'individual':
     plot_colors, color_map, unique_values, extracted_values = create_color_mapping(ind_labels, attribute_type='generic')
     title_suffix = 'Individual'
     label_prefix = ''
-elif args.color_by == 'cell_subtype' and cell_labels is not None:
-    sub_labels = load_attr_labels(cell_names, cell_labels, 'cell_subtype')
-    plot_colors, color_map, unique_values, extracted_values = create_color_mapping(sub_labels, attribute_type='generic')
-    title_suffix = 'Cell subtype'
+elif args.color_by == 'cell_subtype_dominant' and cell_labels is not None:
+    # categorical: the dominant (majority) subtype per bin
+    dom_labels = load_attr_labels(cell_names, cell_labels, 'cell_subtype')
+    plot_colors, color_map, unique_values, extracted_values = create_color_mapping(dom_labels, attribute_type='generic')
+    title_suffix = 'Dominant subtype'
     label_prefix = ''
+elif args.color_by == 'cell_subtype' and cell_labels is not None:
+    # continuous gradient = fraction of a chosen subtype per bin (mixed pseudobulk bins)
+    fracs, subtype_used = load_subtype_fraction(cell_names, cell_labels, args.subtype)
+    continuous_values = np.array([f if f is not None else np.nan for f in fracs], dtype=float)
+    continuous_label = f"fraction {subtype_used}"
+    title_suffix = f"Subtype fraction ({subtype_used})"
+    plot_colors = None
+elif args.color_by == 'leiden':
+    # Leiden on the RAW embeddings, overlaid on this same UMAP
+    leiden_labels = compute_leiden(embeddings_matrix, args.leiden_neighbors, args.leiden_resolution)
+    _lc = Counter(leiden_labels)
+    print(f"  Leiden: {len(_lc)} clusters (res={args.leiden_resolution}, k={args.leiden_neighbors}); "
+          f"sizes={dict(sorted(_lc.items(), key=lambda kv: int(kv[0])))}")
+    plot_colors, color_map, unique_values, extracted_values = create_color_mapping(leiden_labels, attribute_type='generic')
+    title_suffix = f"Leiden (res={args.leiden_resolution})"
+    label_prefix = 'Cluster '
 else:
     plot_colors = None
 
-if plot_colors is not None:
+if continuous_values is not None and np.isfinite(continuous_values).any():
+    # Continuous gradient (e.g. subtype fraction): scatter + colorbar
+    scatter = ax.scatter(embeddings_2d[:, 0], embeddings_2d[:, 1], c=continuous_values,
+                         cmap='viridis', alpha=0.75, s=20)
+    fig.colorbar(scatter, ax=ax, label=continuous_label)
+    title = f'{region_label} Cell Embeddings - UMAP (Colored by {title_suffix})'
+elif plot_colors is not None:
     # Plot with colors
     scatter = ax.scatter(embeddings_2d[:, 0], embeddings_2d[:, 1], c=plot_colors, alpha=0.6, s=20)
     title = f'{region_label} Cell Embeddings - UMAP (Colored by {title_suffix})'
@@ -695,8 +823,11 @@ ax.grid(True, alpha=0.3)
 plt.tight_layout()
 if args.save:
     os.makedirs(args.outdir, exist_ok=True)
-    fname = (f"{args.data}_combined_{args.color_by}.png" if args.combine_all
-             else f"{args.region}_{args.color_by}.png").lower()
+    base = f"{args.data}_combined" if args.combine_all else args.region
+    suffix = args.color_by
+    if args.color_by == 'cell_subtype' and args.subtype:
+        suffix += "_" + args.subtype.replace(" ", "")
+    fname = f"{base}_{suffix}.png".lower()
     out_path = os.path.join(args.outdir, fname)
     plt.savefig(out_path, dpi=150, bbox_inches='tight')
     print(f"Saved plot to: {out_path}")

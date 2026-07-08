@@ -617,7 +617,9 @@ if __name__ == "__main__":
             if patient_col not in adata.obs.columns:
                 raise ValueError(f"Patient column '{patient_col}' not in adata.obs. Available: {list(adata.obs.columns)}")
             print(f"Loaded AnnData from {adata_path}: {adata.shape} (cells × genes)")
-            if condition_col == "Overall AD neuropathological Change":
+            # SEA-AD pathology columns (ADNC or the legacy "Overall AD neuropathological Change")
+            # map to numeric groups 1–4; "Reference"/unmapped values are dropped.
+            if condition_col in ("ADNC", "Overall AD neuropathological Change"):
                 AD_LEVEL_MAP = {"Not AD": "1", "Low": "2", "Intermediate": "3", "High": "4"}
                 raw = adata.obs[condition_col].astype(str).str.strip()
                 adata.obs["_dge_condition"] = raw.map(AD_LEVEL_MAP)
