@@ -35,7 +35,8 @@ class DGEAnalyzer:
         output_file: str = "dge_results.csv",
         min_counts: int = 10,
         n_cpus: int = 4,
-        control_genes: Optional[List[str]] = None
+        control_genes: Optional[List[str]] = None,
+        covariates: Optional[List[str]] = None
     ):
         """
         Initialize DGEAnalyzer.
@@ -65,6 +66,11 @@ class DGEAnalyzer:
             Number of CPUs for parallel processing (default: 4)
         control_genes : list, optional
             List of control gene names for normalization (default: None)
+        covariates : list of str, optional
+            Column names in adata.obs to include as covariates in the DESeq2 design
+            formula. The design becomes ~cov1 + cov2 + ... + condition, so the
+            condition effect is estimated adjusting for these covariates (e.g. batch).
+            Default: None (design is ~condition).
         """
         # Validate pydeseq2 availability
         if method == "deseq2" and not PYDESEQ2_AVAILABLE:
@@ -99,6 +105,17 @@ class DGEAnalyzer:
                     f"Available groups: {list(unique_conditions)}"
                 )
         
+        # Validate covariate columns exist and differ from the condition
+        covariates = list(covariates) if covariates else []
+        for cov in covariates:
+            if cov == condition:
+                raise ValueError(f"Covariate '{cov}' is the same as the condition column.")
+            if cov not in data_file.obs.columns:
+                raise ValueError(
+                    f"Covariate column '{cov}' not found in adata.obs. "
+                    f"Available columns: {list(data_file.obs.columns)}"
+                )
+
         # Store groups
         self.groups = groups        # Store parameters
         self.data_file = data_file
@@ -109,6 +126,7 @@ class DGEAnalyzer:
         self.min_counts = min_counts
         self.n_cpus = n_cpus
         self.control_genes = control_genes
+        self.covariates = covariates
         
         # Set default thresholds if not provided
         if threshold is None:
@@ -203,9 +221,14 @@ class DGEAnalyzer:
         # Prepare data
         counts_df, metadata_df = self._prepare_data()
         
-        # Create design formula
-        design = f"~{self.condition}"
-        
+        # Create design formula. Covariates come first so the condition is the last
+        # term; DeseqStats contrasts on `condition` then adjust for the covariates.
+        if self.covariates:
+            design = "~" + " + ".join(self.covariates + [self.condition])
+        else:
+            design = f"~{self.condition}"
+        print(f"DESeq2 design formula: {design}")
+
         # Initialize inference
         inference = DefaultInference()
         
@@ -535,7 +558,16 @@ if __name__ == "__main__":
         default=None,
         help='Contrasts as group1,group2 (e.g. 1,2 1,3 1,4 2,3 2,4 3,4). Default: all pairwise 1 vs 2, 1 vs 3, 1 vs 4, 2 vs 3, 2 vs 4, 3 vs 4.'
     )
-    
+    parser.add_argument(
+        '-covariates',
+        type=str,
+        nargs='*',
+        default=None,
+        help='Obs column(s) to include as covariates in the DESeq2 design, so the design becomes '
+             '~cov1 + ... + condition (condition effect adjusted for the covariates). '
+             'For Atlas Astrocytes batch use: -covariates Flowcell.'
+    )
+
     # Parse arguments
     args = parser.parse_args()
     
@@ -664,8 +696,13 @@ if __name__ == "__main__":
             tab_index = REGION_TO_TAB.get(region)
             if tab_index is None:
                 raise ValueError(f"Region '{region}' not in REGION_TO_TAB. Available: {list(REGION_TO_TAB.keys())}")
-            metadata = read_excel_columns(metadata_path, columns=['cell_annotation', "RIN", "Path..Group.", "SampleName", 
-                                                                "Median.UMI.Counts.per.Cell", "percent.mito"],
+            astro_cols = ['cell_annotation', "RIN", "Path..Group.", "SampleName",
+                          "Median.UMI.Counts.per.Cell", "percent.mito"]
+            # Load any requested covariate columns (e.g. Flowcell for batch) from the xlsx too.
+            for cov in (args.covariates or []):
+                if cov not in astro_cols:
+                    astro_cols.append(cov)
+            metadata = read_excel_columns(metadata_path, columns=astro_cols,
                                         sheet_name=tab_index)
         else:
             metadata = pd.read_csv(metadata_path)
@@ -740,6 +777,18 @@ if __name__ == "__main__":
     if condition_col in adata.obs.columns:
         adata.obs[condition_col] = adata.obs[condition_col].astype(str)
 
+    # Ensure covariate columns are present and treated as categorical factors (strings)
+    covariates = list(args.covariates or [])
+    for cov in covariates:
+        if cov not in adata.obs.columns:
+            raise ValueError(
+                f"Covariate '{cov}' not found in adata.obs after loading. "
+                f"Available columns: {list(adata.obs.columns)}"
+            )
+        adata.obs[cov] = adata.obs[cov].astype(str)
+    if covariates:
+        print(f"Using covariate(s) in design: {covariates}")
+
     # Create output directory if it doesn't exist
     output_dir = "results/dge_final"
     os.makedirs(output_dir, exist_ok=True)
@@ -755,7 +804,8 @@ if __name__ == "__main__":
         group_tuples = [('1', '2'), ('1', '3'), ('1', '4'), ('2', '3'), ('2', '4'), ('3', '4')]
     print(f"Condition comparisons: {group_tuples}")
 
-    out_suffix = f"{args.data}_{args.cell_type}_{region}_pseudobulk{pseudobulk_label}_seed{args.seed}"
+    cov_tag = ("_cov" + "-".join(covariates)) if covariates else ""
+    out_suffix = f"{args.data}_{args.cell_type}_{region}_pseudobulk{pseudobulk_label}_seed{args.seed}{cov_tag}"
     output_file = os.path.join(output_dir, f"dge_results_{out_suffix}.csv")
     dge = DGEAnalyzer(
         data_file=adata,
@@ -765,7 +815,8 @@ if __name__ == "__main__":
         threshold={'padj': 0.05, 'log2fc': 0.5},
         topK=args.topK,
         output_file=output_file,
-        n_cpus=16
+        n_cpus=16,
+        covariates=covariates
     )
     
     # Run full analysis

@@ -13,6 +13,25 @@ from sklearn.decomposition import PCA
 
 from utils import create_color_mapping
 
+# Same convention as plot_cell_embeddings: <stem>_gene_embeddings.tsv.
+DATA_DEFAULT_CELL_TYPE = {"ROSMAP": "Microglia", "SEAAD": "Astrocytes", "Atlas": "Astrocytes"}
+
+
+def _gene_embedding_stem(data, cell_type, region):
+    """Resolve the <stem> in <stem>_gene_embeddings.tsv from data + cell_type (+ Atlas region).
+
+    ROSMAP -> ROSMAP_<ct>; SEAAD -> SEAAD_<ct>; Atlas -> <region> (astro) or <region>_Microglia.
+    """
+    ct = cell_type or DATA_DEFAULT_CELL_TYPE.get(data)
+    if data == "ROSMAP":
+        return f"ROSMAP_{ct}"
+    if data == "SEAAD":
+        return f"SEAAD_{ct}"
+    if data == "Atlas":
+        reg = region or "V2"
+        return f"{reg}_Microglia" if ct == "Microglia" else reg
+    return region
+
 
 def load_gene_embeddings(embeddings_path):
     """Load gene embeddings from TSV/CSV file."""
@@ -214,11 +233,19 @@ def compute_embeddings_2d(embeddings_matrix: np.ndarray, method: str, args):
 parser = argparse.ArgumentParser(
     description="Plot gene embeddings in 2D using UMAP and/or PCA.",
 )
-parser.add_argument('--region', type=str, default='EC', help='Region to process (default: EC). Can specify multiple regions separated by commas.')
+parser.add_argument('--data', type=str, default=None, choices=['Atlas', 'SEAAD', 'ROSMAP'],
+                    help='Dataset to resolve the embedding file stem, mirroring plot_cell_embeddings '
+                         '(ROSMAP -> ROSMAP_<ct>, SEAAD -> SEAAD_<ct>, Atlas -> <region>[_Microglia]). '
+                         'Uses --cell_type (and --region for Atlas). Overridden by --embeddings_path.')
+parser.add_argument('--region', type=str, default='EC', help='Region to process (default: EC). For Atlas this is the brain region (EC/ITG/...); for SEAAD/ROSMAP it is ignored when --data is given.')
 parser.add_argument('--embeddings_path', type=str, default=None, help='Path to embeddings file (default: auto-detect)')
 parser.add_argument('--combine_all', action='store_true', help='Combine all gene embeddings from all regions (Astrocytes and Microglia)')
 parser.add_argument('--cell_type', type=str, default=None, choices=['Astrocytes', 'Microglia'],
-                    help='Filter by cell type (Astrocytes or Microglia). If not specified, includes all cell types.')
+                    help='Cell type. With --data it selects the file stem (SEAAD/ROSMAP <ct>, Atlas Microglia suffix); '
+                         'with --combine_all it filters the combined set. If not specified, dataset default is used.')
+parser.add_argument('--save', action='store_true', help='Save the figure to --outdir instead of only showing it.')
+parser.add_argument('--outdir', type=str, default=os.path.join('images', 'gene_embeddings'),
+                    help='Directory for --save (default: images/gene_embeddings).')
 parser.add_argument('--color_by', type=str, default='auto', choices=['cell_type', 'region', 'none', 'auto'],
                     help='What to color by: cell_type, region, none (single color), or auto (detect from data)')
 parser.add_argument(
@@ -241,15 +268,22 @@ if args.combine_all:
     embeddings_matrix, gene_ids, gene_labels, cell_types = concatenate_all_gene_embeddings()
     region_label = "All Regions (Astrocytes and Microglia)"
 else:
-    # Load single region
-    region = args.region
-    if args.embeddings_path is None:
-        embeddings_path = os.path.join("GREmLN", "embeddings", f"{region}_gene_embeddings.tsv")
-    else:
+    # Load a single dataset/region embedding file.
+    if args.embeddings_path is not None:
         embeddings_path = args.embeddings_path
-    
+        region_label = args.region
+    else:
+        # --data resolves the stem (SEAAD_<ct>, ROSMAP_<ct>, Atlas <region>[_Microglia]);
+        # otherwise fall back to the literal --region stem (back-compat).
+        stem = _gene_embedding_stem(args.data, args.cell_type, args.region) if args.data else args.region
+        embeddings_path = os.path.join("GREmLN", "embeddings", f"{stem}_gene_embeddings.tsv")
+        region_label = stem
+    if not os.path.exists(embeddings_path):
+        raise FileNotFoundError(
+            f"Gene embeddings not found: {embeddings_path} "
+            f"(data={args.data}, region={args.region}, cell_type={args.cell_type})")
+
     embeddings_matrix, gene_ids = load_gene_embeddings(embeddings_path)
-    region_label = region
     gene_labels = None
     cell_types = None
 
@@ -357,4 +391,13 @@ if color_map is not None and unique_values is not None:
         fig.subplots_adjust(wspace=0.22, right=0.88)
     else:
         fig.subplots_adjust(right=0.88)
-plt.show()
+
+if args.save:
+    os.makedirs(args.outdir, exist_ok=True)
+    stem = str(region_label).replace(" ", "_").replace("(", "").replace(")", "")
+    fname = f"{stem}_gene_embeddings_{args.method}_{args.color_by}.png"
+    out_path = os.path.join(args.outdir, fname)
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    print(f"Saved plot to: {out_path}")
+else:
+    plt.show()

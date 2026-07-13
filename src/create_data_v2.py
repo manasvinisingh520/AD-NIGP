@@ -42,6 +42,37 @@ N_FOLDS = 8
 TARGET_DIMS = 16
 
 
+def _load_seaad_anndata(cell_type):
+    """Per-cell SEA-AD AnnData adapted to the model pipeline's conventions.
+
+    Uses raw integer counts (.raw.X) as X (X itself is log-normalized), exposes the
+    donor id as 'SampleName' and numeric 'Thal'/'Braak' labels (from 'Thal phase' /
+    'Braak stage'), and drops Reference / unmapped cells. This lets SEA-AD flow
+    through the same MTG label/fold logic (Thal + Braak).
+    """
+    import anndata as ad
+
+    path = os.path.join("data", "SEA_AD_Data", cell_type, f"{cell_type}.h5ad")
+    a = ad.read_h5ad(path)
+    counts = a.raw.X if a.raw is not None else a.X
+    var = (a.raw.var if a.raw is not None else a.var).copy()
+    b = ad.AnnData(X=counts, obs=a.obs.copy(), var=var)
+
+    b.obs["SampleName"] = b.obs["donor_id"].astype(str)
+    THAL = {f"Thal {i}": i for i in range(6)}
+    BRAAK = {"Braak 0": 0, "Braak I": 1, "Braak II": 2, "Braak III": 3,
+             "Braak IV": 4, "Braak V": 5, "Braak VI": 6}
+    b.obs["Thal"] = b.obs["Thal phase"].astype(str).map(THAL)
+    b.obs["Braak"] = b.obs["Braak stage"].astype(str).map(BRAAK)
+    keep = b.obs["Thal"].notna() & b.obs["Braak"].notna()
+    b = b[keep.values].copy()
+    b.obs["Thal"] = b.obs["Thal"].astype(int)
+    b.obs["Braak"] = b.obs["Braak"].astype(int)
+    print(f"  SEA-AD {cell_type}: {b.n_obs} cells (Reference/unmapped dropped), "
+          f"{b.obs['SampleName'].nunique()} donors")
+    return b
+
+
 def _build_folds(
     cell_type: str,
     expression_matrix: np.ndarray,
@@ -127,17 +158,25 @@ def _build_folds(
 
 def main(args):
     cell_type = args.cell_type
+    data = getattr(args, "data", "Atlas")
 
-    if cell_type == "Astrocytes":
-        all_regions = ["EC", "ITG", "PFC", "V2", "V1"]
-    elif cell_type == "Microglia":
-        all_regions = ["CrossRegion", "ITG", "PFC"]
-    elif cell_type == "MTG":
-        all_regions = ["MTG"]
+    if data == "SEAAD":
+        if cell_type not in ("Astrocytes", "Microglia"):
+            raise ValueError("--data SEAAD requires --cell_type Astrocytes or Microglia")
+        regions = ["SEAAD"]
+        label_mode = "MTG"          # SEA-AD (MTG region): Thal + Braak labels
     else:
-        raise ValueError(f"Invalid cell type: {cell_type}")
+        if cell_type == "Astrocytes":
+            all_regions = ["EC", "ITG", "PFC", "V2", "V1"]
+        elif cell_type == "Microglia":
+            all_regions = ["CrossRegion", "ITG", "PFC"]
+        elif cell_type == "MTG":
+            all_regions = ["MTG"]
+        else:
+            raise ValueError(f"Invalid cell type: {cell_type}")
+        regions = [args.region] if args.region else all_regions
+        label_mode = cell_type
 
-    regions = [args.region] if args.region else all_regions
     embeddings_dir = os.path.join("GREmLN", "embeddings")
 
     for region in regions:
@@ -146,10 +185,15 @@ def main(args):
         print(f"{'='*60}")
 
         # --- AnnData ---
-        adata = create_anndata(region, cell_type)
+        if data == "SEAAD":
+            adata = _load_seaad_anndata(cell_type)
+        else:
+            adata = create_anndata(region, cell_type)
 
         # --- Gene embeddings ---
-        if cell_type == "Astrocytes":
+        if data == "SEAAD":
+            emb_path = os.path.join(embeddings_dir, f"SEAAD_{cell_type}_gene_embeddings.tsv")
+        elif cell_type == "Astrocytes":
             emb_path = os.path.join(embeddings_dir, f"{region}_gene_embeddings.tsv")
         elif cell_type == "Microglia":
             emb_path = os.path.join(
@@ -215,10 +259,10 @@ def main(args):
         # Microglia Thal column contains CERAD string labels, not numeric Thal stages
         CERAD_STR_TO_INT = {"none": 0, "sparse": 1, "moderate": 2, "frequent": 3}
 
-        if cell_type == "MTG":
+        if label_mode == "MTG":
             thal_info = adata.obs["Thal"].astype(str).str.strip()
             braak_info = adata.obs["Braak"].astype(str).str.strip()
-        elif cell_type == "Microglia":
+        elif label_mode == "Microglia":
             ptau_info = adata.obs["Ptau.Total.Tau..A.U.."]
             raw_thal = adata.obs["Thal"].astype(str).str.strip().str.lower()
             thal_info = raw_thal.map(CERAD_STR_TO_INT)
@@ -231,7 +275,7 @@ def main(args):
             cell_idx = np.where(mask.values if hasattr(mask, "values") else mask)[0]
             base_patient_cell_idx.append(cell_idx)
             base_patient_cell_names.append(adata.obs.index[mask].tolist())
-            if cell_type == "MTG":
+            if label_mode == "MTG":
                 base_thal.append(thal_info[mask].iloc[0])
                 base_braak.append(braak_info[mask].iloc[0])
                 base_ptau.append(None)
@@ -241,14 +285,14 @@ def main(args):
                 base_braak.append(None)
 
         # Drop invalid patients (MTG Reference, Microglia unmapped, etc.)
-        if cell_type == "MTG":
+        if label_mode == "MTG":
             valid_idx = [
                 i
                 for i in range(len(unique_patients))
                 if str(base_thal[i]).strip() != "Reference"
                 and str(base_braak[i]).strip() != "Reference"
             ]
-        elif cell_type == "Microglia":
+        elif label_mode == "Microglia":
             CERAD_VALID = {0, 1, 2, 3}
 
             def _valid(ptau_val, thal_val):
@@ -286,7 +330,7 @@ def main(args):
             thal_folds,
             braak_folds,
         ) = _build_folds(
-            cell_type=cell_type,
+            cell_type=label_mode,
             expression_matrix=expression_matrix,
             scaled_emb=scaled_emb,
             adata_obs=adata.obs,
@@ -301,10 +345,12 @@ def main(args):
         # --- Save ---
         out_dir = os.path.join("data", "model_data")
         os.makedirs(out_dir, exist_ok=True)
-        if cell_type == "Microglia":
+        if data == "SEAAD":
+            out_name = f"SEAAD_{cell_type}_v2_data_{expr_transform}.pkl"
+        elif cell_type == "Microglia":
             out_name = f"{region}_Microglia_v2_data_{expr_transform}.pkl"
         elif cell_type == "MTG":
-            out_name = "MTG_v2_data_{expr_transform}.pkl"
+            out_name = f"MTG_v2_data_{expr_transform}.pkl"
         else:
             out_name = f"{region}_v2_data_{expr_transform}.pkl"
         out_path = os.path.join(out_dir, out_name)
@@ -339,6 +385,14 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Generate v2 data (expression + embedding) for model training"
+    )
+    parser.add_argument(
+        "--data",
+        type=str,
+        default="Atlas",
+        choices=["Atlas", "SEAAD"],
+        help="Dataset. Atlas (default) uses the per-region perCell AnnData; "
+             "SEAAD uses data/SEA_AD_Data/<ct>/<ct>.h5ad with Thal+Braak labels.",
     )
     parser.add_argument(
         "--cell_type",

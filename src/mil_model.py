@@ -54,6 +54,7 @@ class MILModel(nn.Module):
         mil_encoder_layers: int = 2,
         dropout: float = 0.2,
         thal_ordinal: bool = False,
+        n_braak_classes: Optional[int] = None,
     ):
         super().__init__()
         self.cell_input_dim = cell_input_dim
@@ -61,6 +62,7 @@ class MILModel(nn.Module):
         self.mil_attn_dim = mil_attn_dim
         self.thal_ordinal = bool(thal_ordinal)
         self.n_thal_classes = n_thal_classes
+        self.n_braak_classes = n_braak_classes
 
         self.cell_encoder = _build_mlp(
             cell_input_dim, mil_hidden_dim, mil_encoder_layers, dropout
@@ -73,12 +75,18 @@ class MILModel(nn.Module):
         self.ptau_head = nn.Linear(mil_hidden_dim, 1)
         thal_out = (n_thal_classes - 1) if self.thal_ordinal else n_thal_classes
         self.thal_head = nn.Linear(mil_hidden_dim, thal_out)
+        # Optional second classification head for multi-task (Thal + Braak).
+        self.braak_head = (
+            nn.Linear(mil_hidden_dim, n_braak_classes)
+            if n_braak_classes else None
+        )
 
     def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None):
         """
         x: (B, L, G, D) no pooling or (B, L, F) after gene pooling
         mask: optional (B, L) bool, True = valid cell ; False = pad (eval only)
-        Returns: (ptau_pred, thal_logits)
+        Returns: (ptau_pred, thal_logits, braak_logits) — braak_logits is None
+        unless the model was built with n_braak_classes (multi-task).
         """
         if x.dim() == 4:
             b, ell, g, d = x.shape
@@ -107,4 +115,5 @@ class MILModel(nn.Module):
 
         ptau_pred = self.ptau_head(patient_vec).squeeze(-1)
         thal_logits = self.thal_head(patient_vec)
-        return ptau_pred, thal_logits
+        braak_logits = self.braak_head(patient_vec) if self.braak_head is not None else None
+        return ptau_pred, thal_logits, braak_logits

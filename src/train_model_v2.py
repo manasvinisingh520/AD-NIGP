@@ -71,9 +71,12 @@ RANDOM_EMBEDDING_DIM = 16
 # ---------------------------------------------------------------------------
 
 
-def _load_v2_pickle(region: str, cell_type: str, expr_transform: str = "log1p") -> dict:
+def _load_v2_pickle(region: str, cell_type: str, expr_transform: str = "log1p",
+                    dataset: str = "Atlas") -> dict:
     """Load v2 pickle, optionally selecting by expression transform suffix."""
-    if cell_type == "Microglia":
+    if dataset == "SEAAD":
+        base = f"SEAAD_{cell_type}_v2_data"
+    elif cell_type == "Microglia":
         base = f"{region}_Microglia_v2_data"
     elif cell_type == "MTG":
         base = "MTG_v2_data"
@@ -263,10 +266,12 @@ def _build_mil_bags(
     ptau_fold,
     thal_fold,
     thal_to_idx: dict,
+    braak_fold=None,
+    braak_to_idx: dict = None,
 ) -> dict:
-    """Build per-patient cell bags for MIL."""
+    """Build per-patient cell bags for MIL (optionally with per-patient braak)."""
     bags = []
-    ptau_list, thal_list = [], []
+    ptau_list, thal_list, braak_list = [], [], []
     cell_idx = 0
     for pi_idx, (_, cell_names) in enumerate(patient_info):
         n_cells = len(cell_names)
@@ -276,12 +281,17 @@ def _build_mil_bags(
         bags.append(bag.astype(np.float32))
         ptau_list.append(_safe_ptau_scalar(ptau_fold, pi_idx))
         thal_list.append(thal_to_idx[int(thal_fold[pi_idx])])
+        if braak_fold is not None and braak_to_idx is not None:
+            braak_list.append(braak_to_idx[int(braak_fold[pi_idx])])
         cell_idx += n_cells
-    return {
+    out = {
         "cell_bags": bags,
         "ptau": np.log1p(np.array(ptau_list, dtype=np.float32)),
         "thal": np.array(thal_list, dtype=np.int64),
     }
+    if braak_list:
+        out["braak"] = np.array(braak_list, dtype=np.int64)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -532,11 +542,53 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
         args.region,
         getattr(args, "cell_type", "Astrocytes"),
         expr_transform=expr_transform,
+        dataset=getattr(args, "data", "Atlas"),
     )
     raw_folds = _select_folds(data, args.input_type)
     patient_info_folds = data["patient_info_folds"]
     ptau_folds = data["ptau_folds"]
     thal_folds = data["thal_folds"]
+
+    # --- Target selection (thal | braak) ---
+    # The classification pipeline uses the 'thal_folds' slot as the generic target;
+    # for --target braak we swap in the stored braak_folds.
+    target = getattr(args, "target", "thal") or "thal"
+    if target == "braak":
+        braak_folds = data.get("braak_folds")
+        if not braak_folds or not any(
+            len(f) > 0 for f in braak_folds if hasattr(f, "__len__")
+        ):
+            raise SystemExit(
+                "--target braak: this dataset's pickle has no braak_folds "
+                "(only SEA-AD / MTG store Braak)."
+            )
+        thal_folds = braak_folds
+
+    # --- Optional binarization of the target (e.g. --binarize 3 -> {<3:0, >=3:1}) ---
+    binarize = getattr(args, "binarize", None)
+    if binarize is not None:
+        thr = int(binarize)
+        thal_folds = [[0 if int(x) < thr else 1 for x in fold] for fold in thal_folds]
+        out(f"Binarized target '{target}' at threshold {thr} (0: <{thr}, 1: >={thr})")
+    out(f"Classification target: {target}{' (binarized)' if binarize is not None else ''}")
+
+    # --- Multi-task (predict Thal AND Braak jointly; MIL only) ---
+    multitask = bool(getattr(args, "multitask", False))
+    braak_folds = None
+    if multitask:
+        if target == "braak":
+            raise SystemExit("--multitask predicts Thal + Braak; do not also set --target braak.")
+        braak_folds = data.get("braak_folds")
+        if not braak_folds or not any(
+            len(f) > 0 for f in braak_folds if hasattr(f, "__len__")
+        ):
+            raise SystemExit("--multitask needs braak_folds in the pickle (SEA-AD / MTG).")
+        bb = getattr(args, "binarize_braak", None)
+        if bb is not None:
+            braak_folds = [[0 if int(x) < int(bb) else 1 for x in fold] for fold in braak_folds]
+            out(f"Binarized braak at threshold {int(bb)}")
+        out("Multi-task: predicting Thal + Braak jointly (MIL).")
+
     gene_names = data["gene_names"]
     embedding_dim = data["embedding_dim"]
     if args.input_type == "random_embedding":
@@ -564,9 +616,28 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
         patient_info_folds = _merge_folds(patient_info_folds, gs)
         ptau_folds = _merge_folds(ptau_folds, gs)
         thal_folds = _merge_folds(thal_folds, gs)
+        if braak_folds is not None:
+            braak_folds = _merge_folds(braak_folds, gs)
         out(f"Merged {orig_n} -> {n_folds_eval} folds")
 
     n_folds = len(raw_folds)
+
+    # --- TensorBoard writer (per-epoch test F1/loss for neural models) ---
+    if getattr(args, "no_tensorboard", False):
+        writer = NullWriter()
+    else:
+        import datetime as _dt
+        from torch.utils.tensorboard import SummaryWriter
+        _tb_root = os.path.join(getattr(args, "log_base", "runs") or "runs", "tb")
+        _ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+        _tgt = target + ("bin" if binarize is not None else "")
+        tb_dir = os.path.join(
+            _tb_root, f"{_ts}_{args.region}_{args.input_type}_{args.model_type}_{_tgt}"
+        )
+        os.makedirs(tb_dir, exist_ok=True)
+        writer = SummaryWriter(tb_dir)
+        out(f"[tensorboard] logdir: {tb_dir}")
+        out(f"[tensorboard] launch: tensorboard --logdir {_tb_root}  (then open http://localhost:6006)")
 
     # --- Thal encoding ---
     all_thal_labels = []
@@ -581,6 +652,17 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
     idx_to_thal = {i: c for c, i in thal_to_idx.items()}
     n_thal_classes = len(thal_classes)
     out(f"Thal classes: {thal_classes} ({n_thal_classes} classes)")
+
+    # --- Braak encoding (multi-task only) ---
+    braak_to_idx = idx_to_braak = None
+    n_braak_classes = None
+    if multitask:
+        all_braak_int = [int(x) for f in braak_folds for x in f]
+        braak_classes = sorted(set(all_braak_int))
+        braak_to_idx = {c: i for i, c in enumerate(braak_classes)}
+        idx_to_braak = {i: c for c, i in braak_to_idx.items()}
+        n_braak_classes = len(braak_classes)
+        out(f"Braak classes: {braak_classes} ({n_braak_classes} classes)")
 
     # --- Mode selection ---
     use_cell_level = bool(getattr(args, "cell_level", False))
@@ -633,6 +715,8 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
                     ptau_folds[fi],
                     thal_folds[fi],
                     thal_to_idx,
+                    braak_fold=braak_folds[fi] if multitask else None,
+                    braak_to_idx=braak_to_idx,
                 )
             )
         elif use_scvi:
@@ -674,6 +758,9 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
     criterion_thal = nn.CrossEntropyLoss(
         label_smoothing=label_smoothing
     ) if label_smoothing > 0 else nn.CrossEntropyLoss()
+    criterion_braak = (nn.CrossEntropyLoss(label_smoothing=label_smoothing)
+                       if label_smoothing > 0 else nn.CrossEntropyLoss()) if multitask else None
+    braak_weight = float(getattr(args, "braak_weight", 1.0))
 
     device = torch.device(getattr(args, "device", "cpu"))
     out(f"Device: {device}")
@@ -695,6 +782,8 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
     all_seed_results: List[dict] = []
     all_true_labels: List = []
     all_pred_labels: List = []
+    all_braak_true_labels: List = []
+    all_braak_pred_labels: List = []
 
     for seed_idx in range(n_seeds):
         current_seed = base_seed + seed_idx
@@ -802,16 +891,19 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
 
             if use_mil:
                 train_bags = []
-                train_ptau_list, train_thal_list = [], []
+                train_ptau_list, train_thal_list, train_braak_list = [], [], []
                 for i in train_indices:
                     fd = all_fold_data[i]
                     train_bags.extend(fd["cell_bags"])
                     train_ptau_list.extend(fd["ptau"])
                     train_thal_list.extend(fd["thal"])
+                    if multitask:
+                        train_braak_list.extend(fd["braak"])
                 test_fd = all_fold_data[test_fi]
                 test_bags = list(test_fd["cell_bags"])
                 test_ptau = test_fd["ptau"]
                 test_thal = test_fd["thal"]
+                test_braak = test_fd["braak"] if multitask else None
 
                 pca_comp = getattr(args, "pca_components", None)
                 train_bags, test_bags, cell_in = _transform_mil_bags(
@@ -819,16 +911,18 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
                 )
                 train_ptau_arr = np.array(train_ptau_list, dtype=np.float32)
                 train_thal_arr = np.array(train_thal_list, dtype=np.int64)
+                train_braak_arr = np.array(train_braak_list, dtype=np.int64) if multitask else None
 
                 mil_cells = int(getattr(args, "mil_cells_per_patient", 128))
                 train_ds = BagDataset(
                     train_bags, train_ptau_arr, train_thal_arr,
                     train=True, mil_cells_per_patient=mil_cells,
-                    augment_config=train_aug, seed=mil_seed,
+                    augment_config=train_aug, seed=mil_seed, braak=train_braak_arr,
                 )
                 test_ds = BagDataset(
                     test_bags, test_ptau, test_thal,
                     train=False, mil_cells_per_patient=mil_cells, seed=mil_seed,
+                    braak=test_braak,
                 )
                 train_loader = DataLoader(
                     train_ds,
@@ -847,6 +941,7 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
                     mil_encoder_layers=int(getattr(args, "mil_encoder_layers", 2)),
                     dropout=float(getattr(args, "dropout", 0.2)),
                     thal_ordinal=thal_ordinal,
+                    n_braak_classes=n_braak_classes,
                 ).to(device)
 
                 run_eval = evaluate_mil_model
@@ -1021,6 +1116,8 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
 
             # --- Training loop ---
             best_f1 = float("-inf")
+            best_braak_f1 = None
+            best_sel = float("-inf")   # selection metric: combined (thal+braak)/2 if multitask, else thal
             best_loss = float("inf")
             best_epoch = 0
             best_mse, best_mae = 0.0, 0.0
@@ -1057,6 +1154,7 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
                         model, train_loader, criterion_ptau, criterion_thal,
                         optimizer, device,
                         thal_ordinal=thal_ordinal, n_thal_classes=n_thal_classes,
+                        criterion_braak=criterion_braak, braak_weight=braak_weight,
                     )
                 else:
                     run_train(
@@ -1069,17 +1167,33 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
                         gene_cutmix_alpha=gene_cutmix_alpha,
                     )
 
-                test_loss, test_mse, test_mae, test_f1 = run_eval(
+                _eval_kw = dict(thal_ordinal=thal_ordinal, n_thal_classes=n_thal_classes)
+                if is_mil and multitask:
+                    _eval_kw.update(criterion_braak=criterion_braak,
+                                    idx_to_braak=idx_to_braak, braak_weight=braak_weight)
+                test_loss, test_mse, test_mae, test_f1, test_braak_f1 = run_eval(
                     model, test_loader, criterion_ptau, criterion_thal,
-                    device, idx_to_thal,
-                    thal_ordinal=thal_ordinal, n_thal_classes=n_thal_classes,
+                    device, idx_to_thal, **_eval_kw,
                 )
 
-                improved = test_f1 > best_f1 or (
-                    test_f1 == best_f1 and test_loss < best_loss
+                # Selection metric: 1:1 combined (Thal+Braak)/2 for multitask, else Thal.
+                test_sel = ((test_f1 + test_braak_f1) / 2.0
+                            if (multitask and test_braak_f1 is not None) else test_f1)
+
+                _tag = f"seed{current_seed}_fold{test_fi + 1}"
+                writer.add_scalar(f"F1/{_tag}", test_f1, epoch)
+                writer.add_scalar(f"TestLoss/{_tag}", test_loss, epoch)
+                if test_braak_f1 is not None:
+                    writer.add_scalar(f"BraakF1/{_tag}", test_braak_f1, epoch)
+                    writer.add_scalar(f"CombinedF1/{_tag}", test_sel, epoch)
+
+                improved = test_sel > best_sel or (
+                    test_sel == best_sel and test_loss < best_loss
                 )
                 if improved:
+                    best_sel = test_sel
                     best_f1 = test_f1
+                    best_braak_f1 = test_braak_f1
                     best_loss = test_loss
                     best_epoch = epoch
                     best_mse = test_mse
@@ -1113,19 +1227,39 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
             # Final eval for pooled predictions
             model.eval()
             with torch.no_grad():
-                _, _, _, report_f1, fold_true, fold_pred = run_eval(
+                _eval_kw = dict(thal_ordinal=thal_ordinal, n_thal_classes=n_thal_classes,
+                                return_preds=True)
+                if is_mil and multitask:
+                    _eval_kw.update(criterion_braak=criterion_braak,
+                                    idx_to_braak=idx_to_braak, braak_weight=braak_weight)
+                (_, _, _, report_f1, fold_true, fold_pred, report_braak_f1,
+                 fold_braak_true, fold_braak_pred) = run_eval(
                     model, test_loader, criterion_ptau, criterion_thal,
-                    device, idx_to_thal,
-                    thal_ordinal=thal_ordinal, n_thal_classes=n_thal_classes,
-                    return_preds=True,
+                    device, idx_to_thal, **_eval_kw,
                 )
 
-            out(f"    Fold {test_fi + 1} F1={report_f1:.4f} (epoch {best_epoch + 1})")
+            # Combined (1:1) F1 is the primary reported metric for multitask.
+            report_combined = ((report_f1 + report_braak_f1) / 2.0
+                               if report_braak_f1 is not None else report_f1)
+            if report_braak_f1 is not None:
+                out(f"    Fold {test_fi + 1} Combined F1={report_combined:.4f} "
+                    f"(Thal={report_f1:.4f}, Braak={report_braak_f1:.4f}) (epoch {best_epoch + 1})")
+            else:
+                out(f"    Fold {test_fi + 1} F1={report_f1:.4f} (epoch {best_epoch + 1})")
+            writer.add_scalar("BestF1/by_fold", report_combined, current_seed * 100 + test_fi)
+            if report_braak_f1 is not None:
+                writer.add_scalar("BestBraakF1/by_fold", report_braak_f1, current_seed * 100 + test_fi)
+            writer.flush()
+            if fold_braak_true is not None:
+                all_braak_true_labels.extend(fold_braak_true)
+                all_braak_pred_labels.extend(fold_braak_pred)
 
             fold_results.append({
                 "test_fold": test_fi + 1,
                 "seed": current_seed,
-                "best_f1": report_f1,
+                "best_f1": report_combined,       # primary = combined (thal+braak)/2
+                "best_thal_f1": report_f1,
+                "best_braak_f1": report_braak_f1,
                 "best_epoch": best_epoch + 1,
                 "best_test_mse": best_mse,
                 "best_test_mae": best_mae,
@@ -1149,7 +1283,7 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
     grand_mse = float(np.mean(all_mses))
     grand_mae = float(np.mean(all_maes))
 
-    pooled_f1 = (
+    pooled_thal = (
         f1_score(all_true_labels, all_pred_labels, average="weighted")
         if all_true_labels
         else float("nan")
@@ -1158,10 +1292,33 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
     out(f"\n{'#'*60}")
     out(f"Grand Summary: {n_seeds} seeds x {n_folds} folds = {len(all_seed_results)} runs")
     out(f"  input_type={args.input_type}, model_type={args.model_type}")
-    out(f"  Generalized F1: {grand_f1:.4f} +/- {grand_std:.4f}")
-    out(f"  Pooled held-out F1: {pooled_f1:.4f}")
+    if multitask:
+        thal_gen = float(np.mean([r["best_thal_f1"] for r in all_seed_results
+                                  if r.get("best_thal_f1") is not None]))
+        braak_list = [r["best_braak_f1"] for r in all_seed_results
+                      if r.get("best_braak_f1") is not None]
+        braak_gen = float(np.mean(braak_list)) if braak_list else float("nan")
+        pooled_braak = (f1_score(all_braak_true_labels, all_braak_pred_labels, average="weighted")
+                        if all_braak_true_labels else float("nan"))
+        pooled_combined = (pooled_thal + pooled_braak) / 2.0
+        # grand_f1 here is the mean of per-fold combined (1:1) F1.
+        out(f"  Combined (1:1) Generalized F1: {grand_f1:.4f} +/- {grand_std:.4f}")
+        out(f"    Thal Generalized F1:  {thal_gen:.4f}")
+        out(f"    Braak Generalized F1: {braak_gen:.4f}")
+        out(f"  Combined Pooled F1: {pooled_combined:.4f} "
+            f"(Thal {pooled_thal:.4f}, Braak {pooled_braak:.4f})")
+        writer.add_scalar("BestBraakF1/generalized_mean", braak_gen, 0)
+        writer.add_scalar("CombinedF1/generalized_mean", grand_f1, 0)
+    else:
+        out(f"  Thal Generalized F1: {grand_f1:.4f} +/- {grand_std:.4f}")
+        out(f"  Thal Pooled held-out F1: {pooled_thal:.4f}")
     out(f"  Avg MSE: {grand_mse:.4f}, Avg MAE: {grand_mae:.4f}")
     out(f"{'#'*60}")
+
+    writer.add_scalar("BestF1/generalized_mean", grand_f1, 0)
+    writer.add_scalar("BestF1/pooled", pooled_thal, 0)
+    writer.flush()
+    writer.close()
 
     return grand_f1, grand_mse, grand_mae, all_seed_results
 
@@ -1174,10 +1331,37 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Unified training: expression vs embedding experiment framework"
     )
-    parser.add_argument("--region", type=str, required=True)
+    parser.add_argument("--region", type=str, default=None,
+                        help="Region/file stem. Required for Atlas; ignored for --data SEAAD "
+                             "(defaults to SEAAD_<cell_type> for run naming).")
+    parser.add_argument(
+        "--data", type=str, default="Atlas", choices=["Atlas", "SEAAD"],
+        help="Dataset. SEAAD loads data/model_data/SEAAD_<cell_type>_v2_data_*.pkl.",
+    )
     parser.add_argument(
         "--cell_type", type=str, default="Astrocytes",
         choices=["Astrocytes", "Microglia", "MTG"],
+    )
+    parser.add_argument(
+        "--target", type=str, default="thal", choices=["thal", "braak"],
+        help="Classification target. 'braak' requires braak_folds in the pickle (SEA-AD/MTG).",
+    )
+    parser.add_argument(
+        "--binarize", type=int, default=None, metavar="THRESH",
+        help="Binarize the target: labels < THRESH -> 0, >= THRESH -> 1 "
+             "(e.g. --binarize 3 for Thal 0-2 vs 3-5).",
+    )
+    parser.add_argument(
+        "--multitask", action="store_true",
+        help="MIL only: predict Thal AND Braak jointly (shared encoder, two heads, joint loss).",
+    )
+    parser.add_argument(
+        "--binarize_braak", type=int, default=None, metavar="THRESH",
+        help="With --multitask: binarize the Braak head at THRESH (e.g. 4 for Braak 0-III vs IV-VI).",
+    )
+    parser.add_argument(
+        "--braak_weight", type=float, default=1.0,
+        help="With --multitask: weight of the Braak loss term (default 1.0).",
     )
     parser.add_argument(
         "--input_type", type=str, required=True,
@@ -1274,6 +1458,16 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
+
+    # Region resolution: SEA-AD needs no region (file stem is SEAAD_<ct>); Atlas requires one.
+    if args.data == "SEAAD":
+        if not args.region:
+            args.region = f"SEAAD_{args.cell_type}"
+    elif not args.region:
+        parser.error("--region is required unless --data SEAAD")
+
+    if args.multitask and args.model_type != "mil":
+        parser.error("--multitask is only supported with --model_type mil")
 
     # Validate input_type / model_type combos
     if args.input_type == "expression" and args.model_type in EMBEDDING_MODELS:

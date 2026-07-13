@@ -23,12 +23,12 @@ if str(_script_dir) not in sys.path:
     sys.path.insert(0, str(_script_dir))
 from utils import aggregate_cells_into_pseudobulk
 
-MTG_DIR = Path("data/SEA_AD_Data/MTG")
-INPUT_H5AD = MTG_DIR / "MTG_AnnData.h5ad"
+MTG_DIR = Path("data/SEA_AD_Data/Astrocytes")
+INPUT_H5AD = MTG_DIR / "Astrocytes.h5ad"
 GRN_DIR = Path("data/GRN")
-PATIENT_COL = "Donor ID"  # fallback to SampleName if missing
+PATIENT_COL = "donor_id"  # fallback to SampleName if missing
 TARGET_CELLS_PER_BIN = 100
-MIN_CELLS_PER_PATIENT = 80
+#MIN_CELLS_PER_PATIENT = 80
 SEED = 100
 # Toronto TF list (HGNC symbol); try these paths
 TFS_CSV_CANDIDATES = [
@@ -62,8 +62,8 @@ def main():
         sys.exit(1)
 
     GRN_DIR.mkdir(parents=True, exist_ok=True)
-    out_anndata = GRN_DIR / "MTG_pseudobulk_AnnData.h5ad"
-    out_matrix = GRN_DIR / "MTG_matrix.csv"
+    out_anndata = GRN_DIR / "Astrocytes_pseudobulk_AnnData.h5ad"
+    out_matrix = GRN_DIR / "Astrocytes_matrix.csv"
     out_mapping = GRN_DIR / "MTG_patient_mapping.csv"
     out_tfs = GRN_DIR / "MTG_TFs.txt"
 

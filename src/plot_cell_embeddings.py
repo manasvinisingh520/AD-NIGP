@@ -22,17 +22,38 @@ from utils import create_color_mapping, get_grn_file_paths
 # DATA_DEFAULT_REGION values are the single-region *file stems*.
 DATA_REGIONS = {
     "Atlas": ["EC", "ITG", "PFC", "V1", "V2", "CrossRegion"],
-    "SEAAD": ["MTG"],
+    "SEAAD": ["SEAAD", "MTG"],   # SEAAD = new cell-type split; MTG = old all-nuclei
     "ROSMAP": ["ROSMAP"],
 }
 DATA_DEFAULT_REGION = {"Atlas": "V2", "SEAAD": "MTG", "ROSMAP": "ROSMAP_Microglia"}
+DATA_DEFAULT_CELL_TYPE = {"ROSMAP": "Microglia", "SEAAD": "Astrocytes", "Atlas": "Astrocytes"}
+
+
+def _embedding_stem(data, cell_type, region):
+    """Resolve the <stem> in <stem>_cell_embeddings.tsv from data + cell_type (+ Atlas region).
+
+    ROSMAP -> ROSMAP_<ct>; SEAAD -> SEAAD_<ct>; Atlas -> <region> (astro) or <region>_Microglia.
+    """
+    ct = cell_type or DATA_DEFAULT_CELL_TYPE.get(data)
+    if data == "ROSMAP":
+        return f"ROSMAP_{ct}"
+    if data == "SEAAD":
+        return f"SEAAD_{ct}"
+    if data == "Atlas":
+        reg = region or "V2"
+        return f"{reg}_Microglia" if ct == "Microglia" else reg
+    return region
 
 parser = argparse.ArgumentParser(description='Plot cell embeddings using UMAP visualization.')
 parser.add_argument('--data', type=str, default='Atlas', choices=['Atlas', 'SEAAD', 'ROSMAP'],
                     help='Dataset to plot: Atlas (default), SEAAD (=MTG), or ROSMAP. Sets the default '
                          'region and, with --combine_all, restricts to that dataset\'s regions.')
 parser.add_argument('--region', type=str, default=None,
-                    help='Region to process. Default depends on --data (Atlas: V2, SEAAD: MTG).')
+                    help='Region. For Atlas the anatomical region (EC/ITG/PFC/V1/V2); otherwise a '
+                         'full embedding stem. Default depends on --data.')
+parser.add_argument('--cell_type', type=str, default=None, choices=['Astrocytes', 'Microglia'],
+                    help='Cell type; resolves the embedding stem for all datasets '
+                         '(ROSMAP_<ct>, SEAAD_<ct>, or Atlas <region>[_Microglia]).')
 parser.add_argument('--embeddings_dir', type=str, default=os.path.join('GREmLN', 'embeddings'),
                     help='Directory of *_cell_embeddings.tsv (default GREmLN/embeddings; use '
                          'pseudobulk_embeddings for the raw-pseudobulk UMAP embeddings).')
@@ -46,8 +67,8 @@ parser.add_argument('--color_by', type=str, default='cluster',
                              'sex', 'individual', 'cell_subtype', 'cell_subtype_dominant', 'leiden'],
                     help='Color embeddings by: cluster (KMeans on UMAP), leiden (Leiden on the '
                          'raw embeddings), cell_type, region, condition, batch, sex, individual, '
-                         'cell_subtype (ROSMAP; continuous subtype fraction), or '
-                         'cell_subtype_dominant (ROSMAP; categorical dominant subtype per bin).')
+                         'cell_subtype (ROSMAP/SEA-AD; continuous subtype fraction), or '
+                         'cell_subtype_dominant (ROSMAP/SEA-AD; categorical dominant subtype per bin).')
 parser.add_argument('--leiden_resolution', type=float, default=1.0,
                     help='Leiden resolution for --color_by leiden (default 1.0; higher = more clusters).')
 parser.add_argument('--leiden_neighbors', type=int, default=15,
@@ -69,11 +90,14 @@ parser.add_argument('--outdir', type=str, default=os.path.join('images', 'cell_e
                     help='Directory for saved plots (default: images/cell_embeddings).')
 args = parser.parse_args()
 
-# Resolve default region from --data when not given explicitly
-if args.region is None:
+# Resolve the embedding stem: --cell_type drives it (+ --data / Atlas --region);
+# otherwise use --region as-is, else the dataset default.
+if args.cell_type is not None:
+    args.region = _embedding_stem(args.data, args.cell_type, args.region)
+elif args.region is None:
     args.region = DATA_DEFAULT_REGION.get(args.data)
     if args.region is None:
-        parser.error(f"No embeddings available for --data {args.data} yet; pass --region explicitly.")
+        parser.error(f"No default for --data {args.data}; pass --region or --cell_type.")
 
 
 def load_cell_embeddings(embeddings_path):
@@ -140,7 +164,10 @@ def _mapping_path(region, cell_type):
     if region == "ROSMAP":
         ct = cell_type or "Microglia"
         return os.path.join("data", "GRN", "ROSMAP", ct, f"{ct}_patient_mapping.csv")
-    if region == "MTG":  # SEA-AD
+    if region == "SEAAD":  # new cell-type-split SEA-AD
+        ct = cell_type or "Astrocytes"
+        return os.path.join("data", "GRN", "SEAAD", ct, f"{ct}_patient_mapping.csv")
+    if region == "MTG":  # SEA-AD (old all-nuclei)
         return os.path.join("data", "GRN", "MTG", "MTG_patient_mapping.csv")
     sub = "Microglia" if cell_type == "Microglia" else "Astrocytes"
     stem = f"{region}_Microglia" if cell_type == "Microglia" else f"{region}_Astrocytes"
@@ -153,10 +180,10 @@ def _mapping_path(region, cell_type):
 
 # Default batch (technical) column per dataset. Atlas Astrocytes falls back to the
 # metadata xlsx 'Flowcell' (batch is not kept in the astro pseudobulk obs).
-BATCH_COL_DEFAULTS = {"MTG": "batch_vendor_name", "ROSMAP": "batch"}   # per-dataset batch column
+BATCH_COL_DEFAULTS = {"MTG": "batch_vendor_name", "SEAAD": "batch_vendor_name", "ROSMAP": "batch"}   # per-dataset batch column
 # For --color_by condition: use this obs column as the condition (SEA-AD -> ADNC),
 # instead of the patient_mapping 'condition' column, for regions listed here.
-CONDITION_OBS_COL = {"MTG": "Overall AD neuropathological Change"}
+CONDITION_OBS_COL = {"MTG": "Overall AD neuropathological Change", "SEAAD": "ADNC"}
 # Severity color ramp for SEA-AD ADNC categories.
 ADNC_COLORS = {"Not AD": "green", "Low": "lightgreen", "Intermediate": "orange",
                "High": "red", "Reference": "lightgray"}
@@ -242,9 +269,9 @@ def _batch_lut(region, cell_type, batch_col=None):
     import anndata as ad
     lut, col = {}, batch_col or _default_batch_col(region, cell_type)
 
-    if region == "ROSMAP":
-        ct = cell_type or "Microglia"
-        anndata_file = os.path.join("data", "GRN", "ROSMAP", ct, f"{ct}_pseudobulk_AnnData.h5ad")
+    if region in ("ROSMAP", "SEAAD"):
+        ct = cell_type or ("Astrocytes" if region == "SEAAD" else "Microglia")
+        anndata_file = os.path.join("data", "GRN", region, ct, f"{ct}_pseudobulk_AnnData.h5ad")
     else:
         try:
             _, _, anndata_file, *_ = get_grn_file_paths(region, cell_type=cell_type or "Astrocytes", data_dir="data")
@@ -263,7 +290,7 @@ def _batch_lut(region, cell_type, batch_col=None):
             return lut, col
 
     # Atlas Astrocytes fallback: xlsx column (default Flowcell) keyed by SampleName (cached)
-    if region != "ROSMAP" and cell_type in (None, "Astrocytes"):
+    if region not in ("ROSMAP", "SEAAD") and cell_type in (None, "Astrocytes"):
         fcol = batch_col or col or "Flowcell"
         lut = _atlas_astro_batch_map(fcol)
         if lut:
@@ -299,9 +326,9 @@ def _obs_lut(region, cell_type, col):
     import anndata as ad
     if not col:
         return {}
-    if region == "ROSMAP":
-        ct = cell_type or "Microglia"
-        anndata_file = os.path.join("data", "GRN", "ROSMAP", ct, f"{ct}_pseudobulk_AnnData.h5ad")
+    if region in ("ROSMAP", "SEAAD"):
+        ct = cell_type or ("Astrocytes" if region == "SEAAD" else "Microglia")
+        anndata_file = os.path.join("data", "GRN", region, ct, f"{ct}_pseudobulk_AnnData.h5ad")
     else:
         try:
             _, _, anndata_file, *_ = get_grn_file_paths(region, cell_type=cell_type or "Astrocytes", data_dir="data")
@@ -312,17 +339,18 @@ def _obs_lut(region, cell_type, col):
         if col in obs.columns and "_sample_id" in obs.columns:
             return dict(zip(obs["_sample_id"].astype(str), obs[col].astype(str)))
     # Atlas Astrocytes fallback: metadata xlsx keyed by SampleName (cached)
-    if region != "ROSMAP" and cell_type in (None, "Astrocytes"):
+    if region not in ("ROSMAP", "SEAAD") and cell_type in (None, "Astrocytes"):
         return _atlas_astro_batch_map(col)
     return {}
 
 
 # per-attribute obs column name, keyed by parsed region ('sex' falls back to 'Sex')
 _ATTR_COLS = {
-    "sex": {"ROSMAP": "msex", "MTG": "Sex"},
+    "sex": {"ROSMAP": "msex", "MTG": "Sex", "SEAAD": "sex"},
     "cell_subtype": {"ROSMAP": "cell_type_high_resolution"},   # ROSMAP only
 }
-_SEX_LABELS = {"0": "Female", "1": "Male", "0.0": "Female", "1.0": "Male"}
+_SEX_LABELS = {"0": "Female", "1": "Male", "0.0": "Female", "1.0": "Male",
+               "female": "Female", "male": "Male"}
 
 
 def _attr_col(attr, region, cell_type):
@@ -330,11 +358,23 @@ def _attr_col(attr, region, cell_type):
     return m.get(region, "Sex") if attr == "sex" else m.get(region)
 
 
-def _rosmap_subtype_composition(cell_type):
-    """DataFrame of per-bin subtype composition (sidecar), or None if missing."""
+# Datasets that have a per-bin dominant-subtype sidecar (region -> data/GRN/<dir>).
+_SUBTYPE_DATASET_DIR = {"ROSMAP": "ROSMAP", "SEAAD": "SEAAD"}
+
+
+def _subtype_sidecar_path(region, cell_type):
+    """Path to the <ct>_bin_dominant_subtype.csv sidecar for this region, or None."""
+    ds = _SUBTYPE_DATASET_DIR.get(region)
+    if ds is None:
+        return None
     ct = cell_type or "Microglia"
-    path = os.path.join("data", "GRN", "ROSMAP", ct, f"{ct}_bin_dominant_subtype.csv")
-    return pd.read_csv(path) if os.path.exists(path) else None
+    return os.path.join("data", "GRN", ds, ct, f"{ct}_bin_dominant_subtype.csv")
+
+
+def _subtype_composition(region, cell_type):
+    """DataFrame of per-bin subtype composition (sidecar), or None if missing."""
+    path = _subtype_sidecar_path(region, cell_type)
+    return pd.read_csv(path) if path and os.path.exists(path) else None
 
 
 _SUBTYPE_META = {"_sample_id", "dominant_subtype", "dominant_frac", "n_cells", "n_subtypes"}
@@ -344,23 +384,23 @@ def load_subtype_fraction(cell_names, cell_labels, subtype=None):
     """Per-bin fraction of a subtype (continuous). Default = the dataset's most common
     dominant subtype. Returns (fractions_list, subtype_name_used)."""
     luts, chosen = {}, set()
-    for ct in {_parse_region_celltype(l)[1] for l in cell_labels}:
-        df = _rosmap_subtype_composition(ct)
+    for region, ct in {_parse_region_celltype(l) for l in cell_labels}:
+        df = _subtype_composition(region, ct)
         if df is None:
-            luts[ct] = None
+            luts[(region, ct)] = None
             continue
         st = subtype or df["dominant_subtype"].mode().iloc[0]
         sub_cols = [c for c in df.columns if c not in _SUBTYPE_META]
         if st not in sub_cols:
-            print(f"  subtype '{st}' not in {ct} sidecar; available: {sub_cols}")
-            luts[ct] = {}
+            print(f"  subtype '{st}' not in {region}/{ct} sidecar; available: {sub_cols}")
+            luts[(region, ct)] = {}
             continue
         chosen.add(st)
-        luts[ct] = dict(zip(df["_sample_id"].astype(str), df[st]))
+        luts[(region, ct)] = dict(zip(df["_sample_id"].astype(str), df[st]))
     fracs = []
     for name, lab in zip(cell_names, cell_labels):
         region, ct = _parse_region_celltype(lab)
-        lut = luts.get(ct) if region == "ROSMAP" else None
+        lut = luts.get((region, ct))
         fracs.append(lut.get(name) if lut else None)
     used = " / ".join(sorted(chosen)) if chosen else (subtype or "NA")
     n = sum(f is not None for f in fracs)
@@ -368,12 +408,11 @@ def load_subtype_fraction(cell_names, cell_labels, subtype=None):
     return fracs, used
 
 
-def _rosmap_dominant_subtype_lut(cell_type):
+def _dominant_subtype_lut(region, cell_type):
     """{_sample_id -> dominant subtype per bin} from the sidecar built by
     src/build_bin_dominant_subtype.py (majority vote over each bin's raw cells)."""
-    ct = cell_type or "Microglia"
-    path = os.path.join("data", "GRN", "ROSMAP", ct, f"{ct}_bin_dominant_subtype.csv")
-    if not os.path.exists(path):
+    path = _subtype_sidecar_path(region, cell_type)
+    if not path or not os.path.exists(path):
         print(f"  (dominant-subtype sidecar missing: {path}; run src/build_bin_dominant_subtype.py)")
         return {}
     df = pd.read_csv(path)
@@ -383,16 +422,16 @@ def _rosmap_dominant_subtype_lut(cell_type):
 def load_attr_labels(cell_names, cell_labels, attr):
     """Per-bin values of an obs attribute ('sex' or 'cell_subtype'), aligned to cell_names.
 
-    For ROSMAP 'cell_subtype' this uses the DOMINANT subtype per bin (majority vote),
-    not the pseudobulk obs (which only stores the first cell's subtype).
+    For ROSMAP/SEA-AD 'cell_subtype' this uses the DOMINANT subtype per bin (majority
+    vote), not the pseudobulk obs (which only stores the first cell's subtype).
     """
     lut_cache, labels, cols = {}, [], set()
     for name, lab in zip(cell_names, cell_labels):
         region, cell_type = _parse_region_celltype(lab)
-        if attr == "cell_subtype" and region == "ROSMAP":
+        if attr == "cell_subtype" and region in _SUBTYPE_DATASET_DIR:
             key = (region, cell_type, "dominant")
             if key not in lut_cache:
-                lut_cache[key] = _rosmap_dominant_subtype_lut(cell_type)
+                lut_cache[key] = _dominant_subtype_lut(region, cell_type)
                 cols.add("dominant_subtype")
         else:
             col = _attr_col(attr, region, cell_type)
@@ -827,6 +866,8 @@ if args.save:
     suffix = args.color_by
     if args.color_by == 'cell_subtype' and args.subtype:
         suffix += "_" + args.subtype.replace(" ", "")
+    if args.color_by == 'leiden':
+        suffix += f"_res{args.leiden_resolution}"
     fname = f"{base}_{suffix}.png".lower()
     out_path = os.path.join(args.outdir, fname)
     plt.savefig(out_path, dpi=150, bbox_inches='tight')

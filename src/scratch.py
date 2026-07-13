@@ -9,8 +9,7 @@ import seaborn as sns
 # load the sea-ad astrocyte cell counts
 sea_ad = ad.read_h5ad('data/SEA_AD_Data/Astrocytes/Astrocytes.h5ad')
 print("done reading")
-print(sea_ad.obs.head())
-print(sea_ad.X.shape)
+print(sea_ad.obs.columns)
 
 """
 cell_type_ontology_term_id
@@ -28,7 +27,3 @@ disease
 sex
 self_reported_ethnicity
 """
-
-#print first 5 of columns above in sea_ad.obs
-cols = ['Subclass']
-print(sea_ad.obs[cols].head())

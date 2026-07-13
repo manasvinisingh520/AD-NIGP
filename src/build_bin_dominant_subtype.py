@@ -1,16 +1,24 @@
 """
-Compute the DOMINANT cell subtype (cell_type_high_resolution) per ROSMAP pseudobulk bin.
+Compute the DOMINANT cell subtype per pseudobulk bin (ROSMAP or SEA-AD).
 
 A pseudobulk bin mixes ~cells_per_bin cells, so its stored subtype is just the first
 cell's. This replays the exact binning from aggregate_cells_into_pseudobulk (contiguous,
 in-order chunks per patient; the number of bins per patient is read from the pseudobulk
 _sample_ids) and majority-votes the subtype in each bin.
 
-Writes a sidecar CSV: data/GRN/ROSMAP/<CellType>/<CellType>_bin_dominant_subtype.csv
-with columns: _sample_id, dominant_subtype, dominant_frac, n_cells, n_subtypes.
+Datasets (config-driven, --dataset):
+  ROSMAP: raw data/ROSMAP_Data/<ct>.h5ad, id=individualID, subtype=cell_type_high_resolution,
+          pseudobulk data/GRN/ROSMAP/<ct>/... , no cell pre-filter.
+  SEAAD:  raw data/SEA_AD_Data/<ct>/<ct>.h5ad, id=donor_id, subtype=Supertype,
+          pseudobulk data/GRN/SEAAD/<ct>/... , keep only cells whose ADNC maps to 1-4
+          (the same filter the GRN builder applied before pseudobulking).
+
+Writes a sidecar CSV: data/GRN/<DATASET>/<CellType>/<CellType>_bin_dominant_subtype.csv
+with columns: _sample_id, dominant_subtype, dominant_frac, n_cells, n_subtypes, <per-subtype fractions>.
 
 Usage:
-  python src/build_bin_dominant_subtype.py --cell-type Microglia
+  python src/build_bin_dominant_subtype.py --dataset ROSMAP --cell-type Microglia
+  python src/build_bin_dominant_subtype.py --dataset SEAAD  --cell-type Astrocytes
 """
 import argparse
 import math
@@ -19,14 +27,35 @@ import os
 import anndata as ad
 import pandas as pd
 
-SUBTYPE_COL = "cell_type_high_resolution"
-ID_COL = "individualID"
+# ADNC categories the SEA-AD GRN builder keeps (Reference/Neurotypical dropped).
+SEAAD_ADNC_KEEP = {"Not AD", "Low", "Intermediate", "High"}
+
+DATASETS = {
+    "ROSMAP": {
+        "raw": "data/ROSMAP_Data/{ct}.h5ad",
+        "grn": "data/GRN/ROSMAP/{ct}",
+        "id_col": "individualID",
+        "subtype_col": "cell_type_high_resolution",
+        "adnc_filter": False,
+    },
+    "SEAAD": {
+        "raw": "data/SEA_AD_Data/{ct}/{ct}.h5ad",
+        "grn": "data/GRN/SEAAD/{ct}",
+        "id_col": "donor_id",
+        "subtype_col": "Supertype",
+        "adnc_filter": True,
+    },
+}
 
 
-def build(cell_type):
-    raw_path = f"data/ROSMAP_Data/{cell_type}.h5ad"
-    pb_path = f"data/GRN/ROSMAP/{cell_type}/{cell_type}_pseudobulk_AnnData.h5ad"
-    out = f"data/GRN/ROSMAP/{cell_type}/{cell_type}_bin_dominant_subtype.csv"
+def build(dataset, cell_type):
+    cfg = DATASETS[dataset]
+    ct = cell_type
+    raw_path = cfg["raw"].format(ct=ct)
+    grn_dir = cfg["grn"].format(ct=ct)
+    pb_path = os.path.join(grn_dir, f"{ct}_pseudobulk_AnnData.h5ad")
+    out = os.path.join(grn_dir, f"{ct}_bin_dominant_subtype.csv")
+    id_col, subtype_col = cfg["id_col"], cfg["subtype_col"]
 
     # Bins per patient, in pseudobulk (== raw first-appearance) patient order
     pb = ad.read_h5ad(pb_path, backed="r").obs
@@ -35,13 +64,19 @@ def build(cell_type):
     binno = sid.str.rsplit("_bin", n=1).str[1].astype(int)
     num_bins = binno.groupby(patient).max()
     patient_order = list(dict.fromkeys(patient.tolist()))
-    print(f"{cell_type}: {len(pb)} bins across {len(patient_order)} patients")
+    print(f"{dataset} {ct}: {len(pb)} bins across {len(patient_order)} patients")
 
-    # Raw per-cell subtypes, grouped by patient preserving original row order
-    raw = ad.read_h5ad(raw_path, backed="r").obs[[ID_COL, SUBTYPE_COL]].copy()
-    raw[ID_COL] = raw[ID_COL].astype(str)
-    raw[SUBTYPE_COL] = raw[SUBTYPE_COL].astype(str)
-    groups = {p: g[SUBTYPE_COL].tolist() for p, g in raw.groupby(ID_COL, sort=False)}
+    # Raw per-cell subtypes, grouped by patient preserving original row order.
+    cols = [id_col, subtype_col] + (["ADNC"] if cfg["adnc_filter"] else [])
+    raw = ad.read_h5ad(raw_path, backed="r").obs[cols].copy()
+    if cfg["adnc_filter"]:
+        keep = raw["ADNC"].astype(str).isin(SEAAD_ADNC_KEEP)
+        dropped = len(raw) - int(keep.sum())
+        raw = raw[keep]
+        print(f"  ADNC filter: kept {len(raw)} cells, dropped {dropped} (Reference/unmapped)")
+    raw[id_col] = raw[id_col].astype(str)
+    raw[subtype_col] = raw[subtype_col].astype(str)
+    groups = {p: g[subtype_col].tolist() for p, g in raw.groupby(id_col, sort=False)}
 
     rows, mismatches = [], 0
     for p in patient_order:
@@ -84,9 +119,13 @@ def build(cell_type):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--dataset", default="ROSMAP", choices=list(DATASETS.keys()),
+                    help="Dataset (default ROSMAP).")
     ap.add_argument("--cell-type", default="Microglia")
-    build(ap.parse_args().cell_type)
+    args = ap.parse_args()
+    build(args.dataset, args.cell_type)
 
 
 if __name__ == "__main__":

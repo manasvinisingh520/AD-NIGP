@@ -502,8 +502,10 @@ def params_to_namespace(
     quiet: bool = True,
     no_online_augment: bool = False,
     attention_heads: int = 1,
+    data: str = "Atlas",
 ) -> SimpleNamespace:
     return SimpleNamespace(
+        data=data,
         region=region,
         cell_type=cell_type,
         input_type=p.input_type,
@@ -864,7 +866,7 @@ def run_optuna_sampler(args: argparse.Namespace) -> None:
         trial.set_user_attr("source", "optuna")
         exp_id = f"autosearch_{args.study_name}_t{trial.number}"
         ns = params_to_namespace(
-            p, region=args.region, cell_type=args.cell_type,
+            p, region=args.region, cell_type=args.cell_type, data=args.data,
             exp_id=exp_id, log_base=args.log_base, epochs=args.epochs,
             patience=args.patience, device=device, seed=args.seed,
             quiet=not args.verbose, no_online_augment=args.no_online_augment,
@@ -930,7 +932,7 @@ def run_random_sampler(args: argparse.Namespace) -> None:
         p = suggest_trial_random(rng, fixed_input_type=fixed_it)
         exp_id = f"autosearch_{args.study_name}_r{i}"
         ns = params_to_namespace(
-            p, region=args.region, cell_type=args.cell_type,
+            p, region=args.region, cell_type=args.cell_type, data=args.data,
             exp_id=exp_id, log_base=args.log_base, epochs=args.epochs,
             patience=args.patience, device=device, seed=args.seed,
             quiet=not args.verbose, no_online_augment=args.no_online_augment,
@@ -1053,7 +1055,7 @@ def run_llm_sampler(args: argparse.Namespace) -> None:
             p = trial_params_from_llm_dict(raw_cfg, fixed_input_type=fixed_it)
             exp_id = f"autosearch_llm_{args.study_name}_t{trial_id}"
             ns = params_to_namespace(
-                p, region=args.region, cell_type=args.cell_type,
+                p, region=args.region, cell_type=args.cell_type, data=args.data,
                 exp_id=exp_id, log_base=args.log_base, epochs=args.epochs,
                 patience=args.patience, device=device, seed=args.seed,
                 quiet=not args.verbose, no_online_augment=args.no_online_augment,
@@ -1098,6 +1100,9 @@ def main() -> None:
     parser.add_argument("--cell_type", type=str, nargs="+", default=["Astrocytes"],
                         choices=["Astrocytes", "Microglia", "MTG"],
                         help="One or more cell types (runs sequentially per type).")
+    parser.add_argument("--data", type=str, default="Atlas", choices=["Atlas", "SEAAD"],
+                        help="Dataset. SEAAD loads SEAAD_<cell_type>_v2_data_*.pkl; "
+                             "pass any --region label (used only for study/db naming).")
     parser.add_argument("--input_type", type=str, nargs="+", default=None,
                         choices=sorted(INPUT_TYPES),
                         help="One or more input types to fix; omit to search all three.")

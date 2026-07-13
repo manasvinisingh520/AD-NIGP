@@ -33,10 +33,11 @@ def pseudobulk_registry():
     reg = []
     for ct in ["Astrocytes", "Microglia"]:                       # ROSMAP
         reg.append((f"ROSMAP_{ct}", f"data/GRN/ROSMAP/{ct}/{ct}_pseudobulk_AnnData.h5ad"))
-    reg.append(("MTG", "data/GRN/MTG/MTG_AnnData.h5ad"))         # SEA-AD
+    for ct in ["Astrocytes", "Microglia"]:                       # SEA-AD
+        reg.append((f"SEAAD_{ct}", f"data/GRN/SEAAD/{ct}/{ct}_pseudobulk_AnnData.h5ad"))
     for r in ["EC", "ITG", "PFC", "V1", "V2"]:                   # Atlas astrocytes
         reg.append((r, f"data/GRN/Astrocytes/{r}_AnnData.h5ad"))
-    for r in ["EC", "ITG", "PFC", "V1", "V2", "CrossRegion"]:    # Atlas microglia
+    for r in ["ITG", "PFC", "CrossRegion"]:    # Atlas microglia
         reg.append((f"{r}_Microglia", f"data/GRN/Microglia/{r}_Microglia_AnnData.h5ad"))
     return [(s, p) for s, p in reg if os.path.exists(p)]
 

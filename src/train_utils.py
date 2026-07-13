@@ -206,10 +206,17 @@ class BagDataset(Dataset):
         mil_cells_per_patient: int,
         augment_config: Optional[EmbeddingAugmentConfig] = None,
         seed: int = 0,
+        braak: Optional[np.ndarray] = None,
     ):
         self.cell_bags = [np.asarray(b, dtype=np.float32) for b in cell_bags]
         self.ptau = np.asarray(ptau, dtype=np.float32)
         self.thal = np.asarray(thal, dtype=np.int64)
+        # -1 sentinel when braak is not used (single-task); ignored in loss/eval.
+        self.braak = (
+            np.asarray(braak, dtype=np.int64)
+            if braak is not None
+            else np.full(len(self.thal), -1, dtype=np.int64)
+        )
         self.train = train
         self.K = int(mil_cells_per_patient)
         self.augment_config = augment_config or EmbeddingAugmentConfig()
@@ -236,14 +243,14 @@ class BagDataset(Dataset):
             x = torch.stack(cells)
         else:
             x = torch.from_numpy(bag)
-        return x, self.ptau[idx], self.thal[idx]
+        return x, self.ptau[idx], self.thal[idx], self.braak[idx]
 
 
 def collate_mil_eval(
-    batch: List[Tuple[torch.Tensor, float, int]],
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.LongTensor]:
+    batch: List[Tuple[torch.Tensor, float, int, int]],
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.LongTensor, torch.LongTensor]:
     """Pad variable-length bags for eval."""
-    bags, ptaus, thals = zip(*batch)
+    bags, ptaus, thals, braaks = zip(*batch)
     max_l = max(b.shape[0] for b in bags)
     bsz = len(bags)
     feat_shape = bags[0].shape[1:]
@@ -253,7 +260,8 @@ def collate_mil_eval(
         L = bag.shape[0]
         out[i, :L] = bag
         mask[i, :L] = True
-    return out, mask, torch.tensor(ptaus, dtype=torch.float32), torch.tensor(thals, dtype=torch.long)
+    return (out, mask, torch.tensor(ptaus, dtype=torch.float32),
+            torch.tensor(thals, dtype=torch.long), torch.tensor(braaks, dtype=torch.long))
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +270,9 @@ def collate_mil_eval(
 
 class NullWriter:
     def add_scalar(self, *a, **kw):
+        pass
+
+    def flush(self):
         pass
 
     def close(self):
@@ -534,8 +545,11 @@ def evaluate_standard(
             f1,
             thal_targets_labels,
             thal_preds_labels,
+            None,  # braak_f1
+            None,  # braak_true_labels
+            None,  # braak_pred_labels — standard models are single-task
         )
-    return total_loss / max(len(dataloader), 1), mse, mae, f1
+    return total_loss / max(len(dataloader), 1), mse, mae, f1, None
 
 
 def evaluate_mil_model(
@@ -549,23 +563,33 @@ def evaluate_mil_model(
     thal_ordinal: bool = False,
     n_thal_classes: Optional[int] = None,
     return_preds: bool = False,
+    criterion_braak: Optional[nn.Module] = None,
+    idx_to_braak: Optional[dict] = None,
+    braak_weight: float = 1.0,
 ):
-    """MIL evaluation (padded bags with mask)."""
+    """MIL evaluation (padded bags with mask).
+
+    When idx_to_braak is provided (multi-task), also returns the weighted Braak F1
+    as an extra trailing value.
+    """
     model.eval()
     total_loss = 0.0
     ptau_preds, ptau_targets = [], []
     thal_preds_list, thal_targets_list = [], []
+    braak_preds_list, braak_targets_list = [], []
     criterion_ordinal = nn.BCEWithLogitsLoss() if thal_ordinal else None
+    multitask = idx_to_braak is not None
 
     with torch.no_grad():
         for batch in dataloader:
-            bags, mask, ptau, thal = batch
+            bags, mask, ptau, thal, braak = batch
             bags = bags.to(device)
             mask = mask.to(device)
             ptau = ptau.to(device)
             thal = thal.to(device)
+            braak = braak.to(device)
 
-            ptau_pred, thal_pred = model(bags, mask=mask)
+            ptau_pred, thal_pred, braak_pred = model(bags, mask=mask)
 
             if thal_ordinal and n_thal_classes:
                 thal_cls = ordinal_logits_to_class(thal_pred)
@@ -579,6 +603,8 @@ def evaluate_mil_model(
             else:
                 loss_thal = criterion_thal(thal_pred, thal)
             loss = loss_thal
+            if multitask and criterion_braak is not None and braak_pred is not None:
+                loss = loss + braak_weight * criterion_braak(braak_pred, braak)
             if criterion_ptau is not None:
                 loss = loss + criterion_ptau(ptau_pred, ptau)
             total_loss += loss.item()
@@ -587,6 +613,9 @@ def evaluate_mil_model(
             ptau_targets.extend(ptau.cpu().numpy())
             thal_preds_list.extend(thal_cls.cpu().numpy())
             thal_targets_list.extend(thal.cpu().numpy())
+            if multitask and braak_pred is not None:
+                braak_preds_list.extend(torch.argmax(braak_pred, dim=1).cpu().numpy())
+                braak_targets_list.extend(braak.cpu().numpy())
 
     thal_preds_labels = [idx_to_thal[int(i)] for i in thal_preds_list]
     thal_targets_labels = [idx_to_thal[int(i)] for i in thal_targets_list]
@@ -599,6 +628,13 @@ def evaluate_mil_model(
     mae = mean_absolute_error(y_t, y_p)
     f1 = f1_score(thal_targets_labels, thal_preds_labels, average="weighted")
 
+    braak_f1 = None
+    braak_true_labels = braak_pred_labels = None
+    if multitask and braak_preds_list:
+        braak_true_labels = [idx_to_braak[int(i)] for i in braak_targets_list]
+        braak_pred_labels = [idx_to_braak[int(i)] for i in braak_preds_list]
+        braak_f1 = f1_score(braak_true_labels, braak_pred_labels, average="weighted")
+
     if return_preds:
         return (
             total_loss / max(len(dataloader), 1),
@@ -607,8 +643,11 @@ def evaluate_mil_model(
             f1,
             thal_targets_labels,
             thal_preds_labels,
+            braak_f1,
+            braak_true_labels,
+            braak_pred_labels,
         )
-    return total_loss / max(len(dataloader), 1), mse, mae, f1
+    return total_loss / max(len(dataloader), 1), mse, mae, f1, braak_f1
 
 
 def train_epoch_mil(
@@ -621,20 +660,27 @@ def train_epoch_mil(
     *,
     thal_ordinal: bool = False,
     n_thal_classes: Optional[int] = None,
+    criterion_braak: Optional[nn.Module] = None,
+    braak_weight: float = 1.0,
 ) -> Tuple[float, float, float]:
-    """MIL training epoch (fixed-size bags, no mask needed)."""
+    """MIL training epoch (fixed-size bags, no mask needed).
+
+    If criterion_braak is given, adds braak_weight * CE(braak) for multi-task
+    (Thal + Braak) training.
+    """
     model.train()
     total_loss = 0.0
     ptau_losses, thal_losses = [], []
     criterion_ordinal = nn.BCEWithLogitsLoss() if thal_ordinal else None
 
-    for bags, ptau, thal in dataloader:
+    for bags, ptau, thal, braak in dataloader:
         bags = bags.to(device)
         ptau = ptau.to(device)
         thal = thal.to(device)
+        braak = braak.to(device)
 
         optimizer.zero_grad()
-        ptau_pred, thal_pred = model(bags)
+        ptau_pred, thal_pred, braak_pred = model(bags)
 
         if thal_ordinal and n_thal_classes:
             loss_thal = criterion_ordinal(
@@ -644,6 +690,8 @@ def train_epoch_mil(
             loss_thal = criterion_thal(thal_pred, thal)
 
         loss = loss_thal
+        if criterion_braak is not None and braak_pred is not None:
+            loss = loss + braak_weight * criterion_braak(braak_pred, braak)
         if criterion_ptau is not None:
             loss_ptau = criterion_ptau(ptau_pred, ptau)
             loss = loss + loss_ptau
