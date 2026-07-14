@@ -74,12 +74,10 @@ RANDOM_EMBEDDING_DIM = 16
 def _load_v2_pickle(region: str, cell_type: str, expr_transform: str = "log1p",
                     dataset: str = "Atlas") -> dict:
     """Load v2 pickle, optionally selecting by expression transform suffix."""
-    if dataset == "SEAAD":
-        base = f"SEAAD_{cell_type}_v2_data"
+    if dataset in ("SEAAD", "ROSMAP"):
+        base = f"{dataset}_{cell_type}_v2_data"
     elif cell_type == "Microglia":
         base = f"{region}_Microglia_v2_data"
-    elif cell_type == "MTG":
-        base = "MTG_v2_data"
     else:
         base = f"{region}_v2_data"
 
@@ -560,7 +558,7 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
         ):
             raise SystemExit(
                 "--target braak: this dataset's pickle has no braak_folds "
-                "(only SEA-AD / MTG store Braak)."
+                "(only SEA-AD / ROSMAP store Braak)."
             )
         thal_folds = braak_folds
 
@@ -582,7 +580,7 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
         if not braak_folds or not any(
             len(f) > 0 for f in braak_folds if hasattr(f, "__len__")
         ):
-            raise SystemExit("--multitask needs braak_folds in the pickle (SEA-AD / MTG).")
+            raise SystemExit("--multitask needs braak_folds in the pickle (SEA-AD / ROSMAP).")
         bb = getattr(args, "binarize_braak", None)
         if bb is not None:
             braak_folds = [[0 if int(x) < int(bb) else 1 for x in fold] for fold in braak_folds]
@@ -1335,16 +1333,16 @@ if __name__ == "__main__":
                         help="Region/file stem. Required for Atlas; ignored for --data SEAAD "
                              "(defaults to SEAAD_<cell_type> for run naming).")
     parser.add_argument(
-        "--data", type=str, default="Atlas", choices=["Atlas", "SEAAD"],
-        help="Dataset. SEAAD loads data/model_data/SEAAD_<cell_type>_v2_data_*.pkl.",
+        "--data", type=str, default="Atlas", choices=["Atlas", "SEAAD", "ROSMAP"],
+        help="Dataset. SEAAD/ROSMAP load data/model_data/<DATA>_<cell_type>_v2_data_*.pkl.",
     )
     parser.add_argument(
         "--cell_type", type=str, default="Astrocytes",
-        choices=["Astrocytes", "Microglia", "MTG"],
+        choices=["Astrocytes", "Microglia"],
     )
     parser.add_argument(
         "--target", type=str, default="thal", choices=["thal", "braak"],
-        help="Classification target. 'braak' requires braak_folds in the pickle (SEA-AD/MTG).",
+        help="Classification target. 'braak' requires braak_folds in the pickle (SEA-AD/ROSMAP).",
     )
     parser.add_argument(
         "--binarize", type=int, default=None, metavar="THRESH",
@@ -1459,12 +1457,12 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # Region resolution: SEA-AD needs no region (file stem is SEAAD_<ct>); Atlas requires one.
-    if args.data == "SEAAD":
+    # Region resolution: SEAAD/ROSMAP need no region (stem is <DATA>_<ct>); Atlas requires one.
+    if args.data in ("SEAAD", "ROSMAP"):
         if not args.region:
-            args.region = f"SEAAD_{args.cell_type}"
+            args.region = f"{args.data}_{args.cell_type}"
     elif not args.region:
-        parser.error("--region is required unless --data SEAAD")
+        parser.error("--region is required unless --data SEAAD/ROSMAP")
 
     if args.multitask and args.model_type != "mil":
         parser.error("--multitask is only supported with --model_type mil")

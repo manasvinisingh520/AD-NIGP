@@ -12,7 +12,8 @@ REGION_TO_TAB = {
 }
 
 # Valid region choices
-REGIONS = list(REGION_TO_TAB.keys())
+ASTRO_REGIONS = list(REGION_TO_TAB.keys())
+MICRO_REGIONS = ["CrossRegion", "ITG", "PFC"]
 
 # Default file naming patterns
 ASTROCYTES_BASE_PREFIX = "2025-10-22_Astrocytes_{region}"
@@ -31,6 +32,15 @@ ROSMAP_DATA_DIR = "data/ROSMAP_Data"
 ROSMAP_CELL_TYPES = {"Astrocytes", "Microglia"}
 ROSMAP_CONDITION_COL = "braaksc" # 0: 1, 1,2: 2, 3,4: 3, 5,6: 4
 ROSMAP_PATIENT_COL = "individualID"
+
+
+MICROGLIA_DATE_PREFIX = "2025-12-27"
+ASTRO_DATE_PREFIX = "2025-11-16"
+
+# --- Ordinal maps for the h5ad datasets (string stage -> int) ---
+_SEAAD_THAL = {f"Thal {i}": i for i in range(6)}
+_SEAAD_BRAAK = {"Braak 0": 0, "Braak I": 1, "Braak II": 2, "Braak III": 3,
+                "Braak IV": 4, "Braak V": 5, "Braak VI": 6}
 
 ## EC genes from paper
 GENES_FROM_PAPER = {}

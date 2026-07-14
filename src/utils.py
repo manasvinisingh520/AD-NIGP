@@ -1068,19 +1068,25 @@ def get_top_dge_union_genes(region="EC", cell_type="Astrocytes", top_k=5, dge_re
     return sorted_genes[:top_k]
 
 
+def coerce_numeric_series(s):
+    """Coerce a Series to numeric: strip, map '90+' -> 90, invalid -> NaN."""
+    return pd.to_numeric(
+        s.astype(str).str.strip().replace("90+", "90"),
+        errors="coerce",
+    )
+
+
+# Back-compat alias (ROSMAP_EDA and older call sites)
+_coerce_numeric_series = coerce_numeric_series
+
+
 def map_rosmap_condition(adata, condition_col):
     """Map ROSMAP condition column to Atlas-compatible condition column."""
     if condition_col not in adata.obs.columns:
         raise ValueError(f"Condition column '{condition_col}' not in adata.obs. Available: {list(adata.obs.columns)}")
     # coerce condition_col to numeric
-    adata.obs[condition_col] = _coerce_numeric_series(adata.obs[condition_col])
+    adata.obs[condition_col] = coerce_numeric_series(adata.obs[condition_col])
     # braaksc: 0: 1, 1,2: 2, 3,4: 3, 5,6: 4; drop cells with nan
     adata.obs["dge_condition"] = adata.obs[condition_col].map({0: 1, 1: 2, 2: 2, 3: 3, 4: 3, 5: 4, 6: 4})
     adata = adata[adata.obs["dge_condition"].notna()].copy()
     return adata
-
-def _coerce_numeric_series(s):
-    return pd.to_numeric(
-        s.astype(str).str.strip().replace("90+", "90"),
-        errors="coerce",
-    )

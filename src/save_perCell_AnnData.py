@@ -1,31 +1,142 @@
 """
-Script to create, filter, and save AnnData object for a given region.
-Supports Astrocytes (MTX + Excel metadata) and Microglia (MTX + per-region CSV metadata).
+Create, filter, and save a per-cell AnnData for the model pipeline, for any
+dataset / cell type, with standardized obs columns (SampleName, Thal, Braak).
+
+Supported:
+  Atlas  Astrocytes  – MTX + Excel metadata (per region: EC/ITG/PFC/V1/V2)
+  Atlas  Microglia   – MTX + per-region CSV  (CrossRegion/ITG/PFC)
+  SEAAD  Astro/Micro – data/SEA_AD_Data/<ct>/<ct>.h5ad  (counts in .raw.X)
+  ROSMAP Astro/Micro – data/ROSMAP_Data/<ct>.h5ad       (counts in layers['counts'])
+
+Output: data/model_data/<stem>_AnnData_perCell.h5ad
+  Atlas: <region>[_Microglia]_AnnData_perCell.h5ad   (unchanged naming)
+  SEAAD/ROSMAP: <DATA>_<CellType>_AnnData_perCell.h5ad
+
+Usage:
+  python src/save_perCell_AnnData.py -data Atlas  -cell_type Astrocytes -region EC
+  python src/save_perCell_AnnData.py -data SEAAD  -cell_type Microglia
+  python src/save_perCell_AnnData.py -data ROSMAP -cell_type Astrocytes
 """
 
 import argparse
 import os
+
+import anndata as ad
+import numpy as np
 import pandas as pd
-from pathlib import Path
+
 from utils import (
     read_mtx_file,
     create_anndata_object,
     read_excel_columns,
     get_region_file_paths,
+    coerce_numeric_series,
 )
-from config import REGIONS, DATA_DIR, REGION_TO_TAB, METADATA_DATE_PREFIX
+from config import (
+    ASTRO_REGIONS, MICRO_REGIONS, DATA_DIR, REGION_TO_TAB,
+    _SEAAD_THAL, _SEAAD_BRAAK, MICROGLIA_DATE_PREFIX, ASTRO_DATE_PREFIX,
+)
 
-MICROGLIA_DATE_PREFIX = "2025-12-27"
-MICROGLIA_REGIONS = ["CrossRegion", "ITG", "PFC"]
+# DATA_DIR is Atlas-specific (e.g. data/AtlasData); SEAAD/ROSMAP live under the base data dir.
+BASE_DATA_DIR = os.path.dirname(DATA_DIR) or "data"
+
+# Where built per-cell AnnData objects are written / loaded from.
+PERCELL_DIR = os.path.join("data", "model_data", "perCell_AnnData")
+
+# h5ad-based datasets: path, counts source, patient/target columns, drop rules.
+# 'thal'/'braak' = (obs_column, mapping_or_None); None mapping -> coerce numeric.
+H5AD_CONFIG = {
+    "SEAAD": {
+        "path": lambda ct: os.path.join(BASE_DATA_DIR, "SEA_AD_Data", ct, f"{ct}.h5ad"),
+        "counts": "raw",                       # X is log-normalized; counts in .raw.X
+        "patient_col": "donor_id",
+        "thal": ("Thal phase", _SEAAD_THAL),
+        "braak": ("Braak stage", _SEAAD_BRAAK),
+        "drop": [("ADNC", {"Reference"})],     # drop neurotypical Reference cells
+    },
+    "ROSMAP": {
+        "path": lambda ct: os.path.join(BASE_DATA_DIR, "ROSMAP_Data", f"{ct}.h5ad"),
+        "counts": "layer:counts",
+        "patient_col": "individualID",
+        # CERAD (neuritic-plaque) ~ Thal (amyloid); braaksc (tau) ~ Braak.
+        "thal": ("ceradsc", None),
+        "braak": ("braaksc", None),
+        "drop": [],
+    },
+}
 
 
+def _map_target(series: pd.Series, mapping):
+    """String-stage -> int via `mapping`, or coerce to numeric when mapping is None."""
+    if mapping is not None:
+        return series.astype(str).str.strip().map(mapping)
+    return coerce_numeric_series(series)
+
+
+def _stringify_obs(df: pd.DataFrame) -> pd.DataFrame:
+    """Cast object/category columns to str so h5ad write does not choke on mixed types."""
+    for col in df.columns:
+        if df[col].dtype == object or isinstance(df[col].dtype, pd.CategoricalDtype):
+            df[col] = df[col].astype(str)
+    return df
+
+
+# ---------------------------------------------------------------------------
+# h5ad datasets (SEAAD, ROSMAP)
+# ---------------------------------------------------------------------------
+def _load_h5ad_perCell(data: str, cell_type: str) -> ad.AnnData:
+    cfg = H5AD_CONFIG[data]
+    path = cfg["path"](cell_type)
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"{data} {cell_type} AnnData not found: {path}")
+    print(f"Reading {path} ...")
+    a = ad.read_h5ad(path)
+
+    # counts source
+    src = cfg["counts"]
+    if src == "raw":
+        if a.raw is None:
+            raise ValueError(f"{data}: expected raw counts in .raw.X but .raw is None")
+        counts, var = a.raw.X, a.raw.var.copy()
+    elif src.startswith("layer:"):
+        layer = src.split(":", 1)[1]
+        if layer not in a.layers:
+            raise ValueError(f"{data}: layer '{layer}' not found. Have: {list(a.layers.keys())}")
+        counts, var = a.layers[layer], a.var.copy()
+    else:
+        counts, var = a.X, a.var.copy()
+
+    b = ad.AnnData(X=counts, obs=a.obs.copy(), var=var)
+
+    # standardized target columns
+    b.obs["SampleName"] = b.obs[cfg["patient_col"]].astype(str)
+    b.obs["Thal"] = _map_target(b.obs[cfg["thal"][0]], cfg["thal"][1])
+    if cfg["braak"]:
+        b.obs["Braak"] = _map_target(b.obs[cfg["braak"][0]], cfg["braak"][1])
+
+    # drop invalid / reference cells
+    keep = b.obs["Thal"].notna()
+    for col, bad in cfg["drop"]:
+        keep &= ~b.obs[col].astype(str).isin(bad)
+    n_drop = int((~keep).sum())
+    b = b[keep.values].copy()
+    b.obs["Thal"] = b.obs["Thal"].astype(int)
+    if "Braak" in b.obs:
+        b.obs["Braak"] = _map_target(b.obs["Braak"], None)  # ensure numeric; NaNs allowed
+    b.obs = _stringify_obs(b.obs)
+    print(f"  {b.n_obs} cells (dropped {n_drop}), {b.obs['SampleName'].nunique()} donors")
+    return b
+
+
+# ---------------------------------------------------------------------------
+# Atlas (MTX + external metadata) — Astrocytes (Excel) / Microglia (CSV)
+# ---------------------------------------------------------------------------
 def _load_metadata_microglia(region, cell_names):
-    """Load Microglia per-region CSV and align to MTX cell order."""
+    """Load Atlas Microglia per-region CSV and align to MTX cell order."""
     metadata_path = os.path.join(DATA_DIR, f"{MICROGLIA_DATE_PREFIX}_Microglia_{region}_metadata.csv")
     if not os.path.exists(metadata_path):
         raise FileNotFoundError(f"Microglia metadata not found: {metadata_path}")
     metadata = pd.read_csv(metadata_path)
-    # Standardize column names
     rename = {}
     if "Donor ID" in metadata.columns:
         rename["Donor ID"] = "Donor_ID"
@@ -33,11 +144,8 @@ def _load_metadata_microglia(region, cell_names):
         rename["Pathology Stage"] = "Pathology_Stage"
     if rename:
         metadata = metadata.rename(columns=rename)
-    # SampleName for compatibility with create_data / train_model
     if "SampleName" not in metadata.columns and "Donor_ID" in metadata.columns:
         metadata["SampleName"] = metadata["Donor_ID"].astype(str)
-    # Thal / Ptau: map to names expected by create_data (Thal, Ptau.Total.Tau..A.U..)
-    # Microglia may use CERAD (category) for Thal and Braak (category) for tau
     if "Thal" not in metadata.columns:
         for c in ["CERAD", "thal", "THAL", "Thal_phase"]:
             if c in metadata.columns:
@@ -50,18 +158,14 @@ def _load_metadata_microglia(region, cell_names):
             if c not in metadata.columns:
                 continue
             if c == "Braak":
-                # Braak categories I, II, V, VI -> 2, 3, 5, 6 for regression
                 braak_map = {"I": 2, "II": 3, "V": 5, "VI": 6}
                 s = metadata["Braak"].astype(str).str.strip().str.upper()
-                metadata["Ptau.Total.Tau..A.U.."] = s.replace(braak_map)
-                metadata["Ptau.Total.Tau..A.U.."] = pd.to_numeric(metadata["Ptau.Total.Tau..A.U.."], errors="coerce")
+                metadata["Ptau.Total.Tau..A.U.."] = pd.to_numeric(s.replace(braak_map), errors="coerce")
                 break
-            else:
-                metadata["Ptau.Total.Tau..A.U.."] = pd.to_numeric(metadata[c], errors="coerce")
-                break
+            metadata["Ptau.Total.Tau..A.U.."] = pd.to_numeric(metadata[c], errors="coerce")
+            break
         if "Ptau.Total.Tau..A.U.." not in metadata.columns:
             raise ValueError(f"Microglia metadata must have 'Ptau.Total.Tau..A.U..' or 'Braak'. Found: {list(metadata.columns)}")
-    # Align to cell_names: by cell_annotation column or by order
     cell_col = None
     for col in ["cell_annotation", "Cell", "Unnamed: 0", "cell"]:
         if col in metadata.columns and metadata[col].isin(cell_names).all():
@@ -74,127 +178,140 @@ def _load_metadata_microglia(region, cell_names):
         metadata.index = cell_names
     else:
         raise ValueError(
-            f"Microglia metadata rows ({len(metadata)}) must match cell count ({len(cell_names)}). "
-            "Ensure CSV has a column matching MTX cell order or cell IDs."
+            f"Microglia metadata rows ({len(metadata)}) must match cell count ({len(cell_names)})."
         )
-    # Filter: drop rows with missing Thal. For Astrocytes we also drop Thal == "unk".
-    # Microglia CERAD has "none", "sparse", "frequent", "moderate" (all kept).
     valid = metadata["Thal"].notna() & (metadata["Thal"].astype(str).str.strip().str.lower() != "unk")
     metadata = metadata[valid].copy()
-    # Ensure object/category columns are string so h5ad write doesn't fail (e.g. Braak mixed types)
-    for col in metadata.columns:
-        if metadata[col].dtype == object or isinstance(metadata[col].dtype, pd.CategoricalDtype):
-            metadata[col] = metadata[col].astype(str)
-    return metadata
+    return _stringify_obs(metadata)
 
 
-def create_and_save_anndata(region, output_dir="data/model_data", date_prefix="2025-11-16", cell_type="Astrocytes"):
+def _load_atlas_perCell(region, cell_type):
+    """Build an Atlas per-cell AnnData from MTX + external metadata.
 
-    print(f"\n{'='*60}")
-    print(f"Processing region: {region} ({cell_type})")
-    print(f"{'='*60}")
-
-    is_microglia = cell_type == "Microglia"
-    if is_microglia:
-        date_prefix = MICROGLIA_DATE_PREFIX
-        base_prefix = f"{date_prefix}_Microglia_{region}"
-    else:
-        base_prefix = f"{date_prefix}_Astrocytes_{region}"
-
+    This is the single source-of-truth builder for Atlas per-cell objects; the model
+    pipeline (create_data.create_anndata) delegates here rather than duplicating it.
+    """
+    is_micro = cell_type == "Microglia"
+    date_prefix = MICROGLIA_DATE_PREFIX if is_micro else ASTRO_DATE_PREFIX
+    base_prefix = f"{date_prefix}_Microglia_{region}" if is_micro else f"{date_prefix}_Astrocytes_{region}"
     mtx_path, row_annotation_path, col_annotation_path = get_region_file_paths(
-        region,
-        data_dir=DATA_DIR,
-        base_prefix=base_prefix
+        region, data_dir=DATA_DIR, base_prefix=base_prefix
     )
+    matrix, gene_names, cell_names = read_mtx_file(
+        mtx_path=str(mtx_path), row_annotation_path=str(row_annotation_path),
+        col_annotation_path=str(col_annotation_path), transpose=False,
+    )
+    print(f"Loaded matrix shape: {matrix.shape} (genes × cells)")
 
-    if is_microglia:
-        # Load MTX first to get cell_names for metadata alignment
-        matrix, gene_names, cell_names = read_mtx_file(
-            mtx_path=str(mtx_path),
-            row_annotation_path=str(row_annotation_path),
-            col_annotation_path=str(col_annotation_path),
-            transpose=False
-        )
-        print(f"Loaded matrix shape: {matrix.shape} (genes × cells)")
+    if is_micro:
         filtered_metadata = _load_metadata_microglia(region, cell_names)
-        # Filter matrix to valid cells (same order as filtered_metadata)
-        valid_cell_names = filtered_metadata.index.tolist()
-        cell_indices = [i for i, c in enumerate(cell_names) if c in valid_cell_names]
-        cell_names = [cell_names[i] for i in cell_indices]
-        matrix = matrix[:, cell_indices]
-        print(f"Loaded metadata: {filtered_metadata.shape}, filtered to Thal != 'unk'")
+        valid = set(filtered_metadata.index.tolist())
+        idx = [i for i, c in enumerate(cell_names) if c in valid]
     else:
-        metadata_path = os.path.join(DATA_DIR, f"{date_prefix}_Astrocytes_metadata.xlsx")
-        tab_index = REGION_TO_TAB.get(region)
         metadata = read_excel_columns(
-            metadata_path,
-            columns=['cell_annotation', 'Path..Group.', 'SampleName', 'percent.mito', 'RIN', 'Total.Genes.Detected', 'Thal', 'Ptau.Total.Tau..A.U..'],
-            sheet_name=tab_index
+            os.path.join(DATA_DIR, f"{date_prefix}_Astrocytes_metadata.xlsx"),
+            columns=['cell_annotation', 'Path..Group.', 'SampleName', 'percent.mito',
+                     'RIN', 'Total.Genes.Detected', 'Thal', 'Ptau.Total.Tau..A.U..'],
+            sheet_name=REGION_TO_TAB.get(region),
         )
-        print(f"Loaded metadata: {metadata.shape}")
-
-        matrix, gene_names, cell_names = read_mtx_file(
-            mtx_path=str(mtx_path),
-            row_annotation_path=str(row_annotation_path),
-            col_annotation_path=str(col_annotation_path),
-            transpose=False
+        valid_mask = (metadata["Thal"] != "unk").fillna(False)
+        valid = set(metadata.loc[valid_mask, "cell_annotation"].tolist())
+        idx = [i for i, c in enumerate(cell_names) if c in valid]
+    cell_names = [cell_names[i] for i in idx]
+    matrix = matrix[:, idx]
+    if not is_micro:
+        filtered_metadata = _stringify_obs(
+            metadata[metadata["cell_annotation"].isin(cell_names)]
+            .set_index("cell_annotation").reindex(cell_names)
         )
-        print(f"Loaded matrix shape: {matrix.shape} (genes × cells)")
 
-        valid_cell_mask = (metadata["Thal"] != "unk").fillna(False)
-        valid_cell_names = metadata.loc[valid_cell_mask, "cell_annotation"].tolist()
-        cell_indices = [i for i, c in enumerate(cell_names) if c in valid_cell_names]
-        cell_names = [cell_names[i] for i in cell_indices]
-        matrix = matrix[:, cell_indices]
-        filtered_metadata = metadata[metadata["cell_annotation"].isin(cell_names)].set_index("cell_annotation").reindex(cell_names)
-
-    # Keep gene names as from MTX (symbols). create_data converts to Ensembl when loading embeddings.
     adata = create_anndata_object(
-        matrix=matrix,
-        gene_names=gene_names,
-        cell_names=cell_names,
-        transpose=True,
-        obs=filtered_metadata,
+        matrix=matrix, gene_names=gene_names, cell_names=cell_names,
+        transpose=True, obs=filtered_metadata,
     )
     if adata is None:
-        raise ImportError("Failed to create AnnData object. Make sure anndata is installed.")
+        raise ImportError("Failed to create AnnData object.")
+    return adata
 
-    print(f"AnnData object created: {adata.shape} (cells × genes)")
 
-    output_filename = f"{region}_Microglia_AnnData_perCell.h5ad" if is_microglia else f"{region}_AnnData_perCell.h5ad"
-    output_path = os.path.join(output_dir, output_filename)
+# ---------------------------------------------------------------------------
+def _percell_stem(data, cell_type, region):
+    """Output/file stem for a dataset/cell-type (Atlas keeps legacy per-region naming)."""
+    if data == "Atlas":
+        return f"{region}_Microglia" if cell_type == "Microglia" else region
+    return f"{data}_{cell_type}"
+
+
+def build_anndata(data, cell_type, region=None):
+    """Single source-of-truth builder: return a standardized per-cell AnnData
+    (obs has SampleName / Thal / Braak) for any dataset & cell type.
+
+    Consumed by create_data / create_data_v2 so the build logic lives in one place.
+    """
+    if data == "Atlas":
+        return _load_atlas_perCell(region, cell_type)
+    return _load_h5ad_perCell(data, cell_type)
+
+
+def percell_path(data, cell_type, region=None):
+    """Path to the pre-built per-cell AnnData for a dataset/cell type."""
+    return os.path.join(PERCELL_DIR, f"{_percell_stem(data, cell_type, region)}_AnnData_perCell.h5ad")
+
+
+def load_percell_anndata(data, cell_type, region=None):
+    """Load a pre-built per-cell AnnData (produced by build/save). Fast path for the
+    model pipeline — no rebuild from source."""
+    path = percell_path(data, cell_type, region)
+    if not os.path.exists(path):
+        cmd = f"python src/save_perCell_AnnData.py -data {data} -cell_type {cell_type}"
+        if data == "Atlas":
+            cmd += f" -region {region}"
+        raise FileNotFoundError(f"Per-cell AnnData not found: {path}\nBuild it with:\n  {cmd}")
+    print(f"Loading per-cell AnnData: {path}")
+    return ad.read_h5ad(path)
+
+
+def create_and_save_anndata(data, cell_type, region=None, output_dir=PERCELL_DIR):
+    print(f"\n{'='*60}\nProcessing: data={data} cell_type={cell_type} region={region}\n{'='*60}")
+
+    adata = build_anndata(data, cell_type, region)
+    stem = _percell_stem(data, cell_type, region)
+
+    print(f"AnnData created: {adata.shape} (cells × genes)")
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, f"{stem}_AnnData_perCell.h5ad")
     adata.write_h5ad(output_path)
-    print(f"Successfully saved AnnData object to {output_path}")
+    print(f"Saved -> {output_path}")
     return output_path
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Create and save per-cell AnnData for a region (Astrocytes or Microglia)",
+        description="Create and save a per-cell AnnData for any dataset / cell type.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("-region", type=str, required=True, help="Region name (e.g. EC, ITG, CrossRegion for Microglia)")
-    parser.add_argument("-cell_type", type=str, default="Astrocytes", choices=["Astrocytes", "Microglia"],
-                        help="Cell type (default: Astrocytes)")
-    parser.add_argument("-output_dir", type=str, default="data/model_data", help="Output directory for .h5ad file")
+    parser.add_argument("-data", type=str, default="Atlas", choices=["Atlas", "SEAAD", "ROSMAP"],
+                        help="Dataset (default: Atlas).")
+    parser.add_argument("-cell_type", type=str, default="Astrocytes",
+                        choices=["Astrocytes", "Microglia"], help="Cell type (default: Astrocytes).")
+    parser.add_argument("-region", type=str, default=None,
+                        help="Region — required for Atlas (EC/ITG/PFC/V1/V2 or CrossRegion for Microglia); "
+                             "ignored for SEAAD/ROSMAP.")
+    parser.add_argument("-output_dir", type=str, default=PERCELL_DIR,
+                        help=f"Output directory for the .h5ad file (default: {PERCELL_DIR}).")
     args = parser.parse_args()
 
-    region = args.region
-    cell_type = args.cell_type
-    if cell_type == "Astrocytes" and region not in REGIONS:
-        parser.error(f"Astrocytes region must be one of {REGIONS}")
-    if cell_type == "Microglia" and region not in MICROGLIA_REGIONS:
-        parser.error(f"Microglia region must be one of {MICROGLIA_REGIONS}")
+    if args.data == "Atlas":
+        if not args.region:
+            parser.error("-region is required for -data Atlas")
+        if args.cell_type == "Astrocytes" and args.region not in ASTRO_REGIONS:
+            parser.error(f"Atlas Astrocytes region must be one of {ASTRO_REGIONS}")
+        if args.cell_type == "Microglia" and args.region not in MICRO_REGIONS:
+            parser.error(f"Atlas Microglia region must be one of {MICRO_REGIONS}")
 
-    try:
-        create_and_save_anndata(
-            region=region,
-            output_dir=args.output_dir,
-            cell_type=cell_type,
-        )
-    except Exception as e:
-        print(f"\nError: {e}")
-        raise
+    create_and_save_anndata(
+        data=args.data, cell_type=args.cell_type, region=args.region, output_dir=args.output_dir,
+    )
 
 
 if __name__ == "__main__":

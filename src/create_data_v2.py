@@ -1,10 +1,10 @@
 """Generate v2 data pickles containing BOTH expression-only and embedding-scaled
 representations per fold, with identical patient splits.
 
-For each region the output is a single dict-pickle:
-    data/model_data/{region}_v2_data.pkl   (Astrocytes)
-    data/model_data/{region}_Microglia_v2_data.pkl
-    data/model_data/MTG_v2_data.pkl
+Output dict-pickles:
+    data/model_data/{region}_v2_data.pkl            (Atlas Astrocytes)
+    data/model_data/{region}_Microglia_v2_data.pkl  (Atlas Microglia)
+    data/model_data/{SEAAD,ROSMAP}_{ct}_v2_data.pkl (staging datasets)
 
 Keys:
     expression_folds   – list[np.ndarray (n_cells, n_genes)] float16
@@ -15,10 +15,9 @@ Keys:
     embedding_dim      – int (D)
 
 Usage:
-    python src/create_data_v2.py --cell_type Astrocytes
-    python src/create_data_v2.py --cell_type Microglia
-    python src/create_data_v2.py --cell_type MTG
     python src/create_data_v2.py --cell_type Astrocytes --region EC
+    python src/create_data_v2.py --data SEAAD  --cell_type Microglia
+    python src/create_data_v2.py --data ROSMAP --cell_type Astrocytes
 """
 
 from __future__ import annotations
@@ -32,45 +31,12 @@ from collections import defaultdict
 import numpy as np
 from sklearn.model_selection import KFold, StratifiedKFold
 
-from create_data import (
-    create_anndata,
-    load_gene_embeddings,
-)
+from create_data import load_gene_embeddings
+from save_perCell_AnnData import load_percell_anndata
 from utils import scale_embeddings
 
 N_FOLDS = 8
 TARGET_DIMS = 16
-
-
-def _load_seaad_anndata(cell_type):
-    """Per-cell SEA-AD AnnData adapted to the model pipeline's conventions.
-
-    Uses raw integer counts (.raw.X) as X (X itself is log-normalized), exposes the
-    donor id as 'SampleName' and numeric 'Thal'/'Braak' labels (from 'Thal phase' /
-    'Braak stage'), and drops Reference / unmapped cells. This lets SEA-AD flow
-    through the same MTG label/fold logic (Thal + Braak).
-    """
-    import anndata as ad
-
-    path = os.path.join("data", "SEA_AD_Data", cell_type, f"{cell_type}.h5ad")
-    a = ad.read_h5ad(path)
-    counts = a.raw.X if a.raw is not None else a.X
-    var = (a.raw.var if a.raw is not None else a.var).copy()
-    b = ad.AnnData(X=counts, obs=a.obs.copy(), var=var)
-
-    b.obs["SampleName"] = b.obs["donor_id"].astype(str)
-    THAL = {f"Thal {i}": i for i in range(6)}
-    BRAAK = {"Braak 0": 0, "Braak I": 1, "Braak II": 2, "Braak III": 3,
-             "Braak IV": 4, "Braak V": 5, "Braak VI": 6}
-    b.obs["Thal"] = b.obs["Thal phase"].astype(str).map(THAL)
-    b.obs["Braak"] = b.obs["Braak stage"].astype(str).map(BRAAK)
-    keep = b.obs["Thal"].notna() & b.obs["Braak"].notna()
-    b = b[keep.values].copy()
-    b.obs["Thal"] = b.obs["Thal"].astype(int)
-    b.obs["Braak"] = b.obs["Braak"].astype(int)
-    print(f"  SEA-AD {cell_type}: {b.n_obs} cells (Reference/unmapped dropped), "
-          f"{b.obs['SampleName'].nunique()} donors")
-    return b
 
 
 def _build_folds(
@@ -88,7 +54,7 @@ def _build_folds(
     """Split patients into N_FOLDS folds and return per-fold data."""
     n_patients = len(unique_patients)
 
-    if cell_type == "MTG":
+    if cell_type == "staging":
         strat_thal = [str(base_thal[i]).strip() for i in range(n_patients)]
         strat_braak = [str(base_braak[i]).strip() for i in range(n_patients)]
         fold_splits = None
@@ -99,7 +65,7 @@ def _build_folds(
             try:
                 kf = StratifiedKFold(n_splits=N_FOLDS, shuffle=True, random_state=42)
                 fold_splits = list(kf.split(range(n_patients), strat_labels))
-                print(f"  Using StratifiedKFold ({label_name}) for MTG folds.")
+                print(f"  Using StratifiedKFold ({label_name}) for staging folds.")
                 break
             except ValueError:
                 continue
@@ -125,7 +91,7 @@ def _build_folds(
             for i in fold_patient_indices
         ]
 
-        if cell_type == "MTG":
+        if cell_type == "staging":
             fold_thal = [base_thal[i] for i in fold_patient_indices]
             fold_braak = [base_braak[i] for i in fold_patient_indices]
             fold_ptau = []
@@ -160,18 +126,16 @@ def main(args):
     cell_type = args.cell_type
     data = getattr(args, "data", "Atlas")
 
-    if data == "SEAAD":
+    if data in ("SEAAD", "ROSMAP"):
         if cell_type not in ("Astrocytes", "Microglia"):
-            raise ValueError("--data SEAAD requires --cell_type Astrocytes or Microglia")
-        regions = ["SEAAD"]
-        label_mode = "MTG"          # SEA-AD (MTG region): Thal + Braak labels
+            raise ValueError(f"--data {data} requires --cell_type Astrocytes or Microglia")
+        regions = [data]
+        label_mode = "staging"      # Thal + Braak staging labels (loaded from perCell)
     else:
         if cell_type == "Astrocytes":
             all_regions = ["EC", "ITG", "PFC", "V2", "V1"]
         elif cell_type == "Microglia":
             all_regions = ["CrossRegion", "ITG", "PFC"]
-        elif cell_type == "MTG":
-            all_regions = ["MTG"]
         else:
             raise ValueError(f"Invalid cell type: {cell_type}")
         regions = [args.region] if args.region else all_regions
@@ -184,25 +148,16 @@ def main(args):
         print(f"Region: {region}, cell_type: {cell_type}")
         print(f"{'='*60}")
 
-        # --- AnnData ---
-        if data == "SEAAD":
-            adata = _load_seaad_anndata(cell_type)
-        else:
-            adata = create_anndata(region, cell_type)
+        # --- AnnData (all datasets load their pre-built perCell object) ---
+        adata = load_percell_anndata(data, cell_type, region)
 
         # --- Gene embeddings ---
-        if data == "SEAAD":
-            emb_path = os.path.join(embeddings_dir, f"SEAAD_{cell_type}_gene_embeddings.tsv")
+        if data in ("SEAAD", "ROSMAP"):
+            emb_path = os.path.join(embeddings_dir, f"{data}_{cell_type}_gene_embeddings.tsv")
         elif cell_type == "Astrocytes":
             emb_path = os.path.join(embeddings_dir, f"{region}_gene_embeddings.tsv")
-        elif cell_type == "Microglia":
-            emb_path = os.path.join(
-                embeddings_dir, f"{region}_Microglia_gene_embeddings.tsv"
-            )
-        else:
-            emb_path = os.path.join(embeddings_dir, "MTG_gene_embeddings.tsv")
-            if not os.path.exists(emb_path):
-                emb_path = os.path.join(embeddings_dir, "EC_gene_embeddings.tsv")
+        else:  # Microglia
+            emb_path = os.path.join(embeddings_dir, f"{region}_Microglia_gene_embeddings.tsv")
 
         embeddings_dict = load_gene_embeddings(emb_path, gene_list=adata.var_names)
         adata = adata[:, adata.var_names.isin(embeddings_dict.keys())].copy()
@@ -259,7 +214,7 @@ def main(args):
         # Microglia Thal column contains CERAD string labels, not numeric Thal stages
         CERAD_STR_TO_INT = {"none": 0, "sparse": 1, "moderate": 2, "frequent": 3}
 
-        if label_mode == "MTG":
+        if label_mode == "staging":
             thal_info = adata.obs["Thal"].astype(str).str.strip()
             braak_info = adata.obs["Braak"].astype(str).str.strip()
         elif label_mode == "Microglia":
@@ -275,7 +230,7 @@ def main(args):
             cell_idx = np.where(mask.values if hasattr(mask, "values") else mask)[0]
             base_patient_cell_idx.append(cell_idx)
             base_patient_cell_names.append(adata.obs.index[mask].tolist())
-            if label_mode == "MTG":
+            if label_mode == "staging":
                 base_thal.append(thal_info[mask].iloc[0])
                 base_braak.append(braak_info[mask].iloc[0])
                 base_ptau.append(None)
@@ -284,14 +239,11 @@ def main(args):
                 base_thal.append(thal_info[mask].iloc[0])
                 base_braak.append(None)
 
-        # Drop invalid patients (MTG Reference, Microglia unmapped, etc.)
-        if label_mode == "MTG":
-            valid_idx = [
-                i
-                for i in range(len(unique_patients))
-                if str(base_thal[i]).strip() != "Reference"
-                and str(base_braak[i]).strip() != "Reference"
-            ]
+        # Drop invalid patients. Staging (SEAAD/ROSMAP) labels are already cleaned when
+        # the perCell AnnData is built (save_perCell_AnnData drops missing/Reference Thal
+        # & Braak), so no extra filtering is needed here.
+        if label_mode == "staging":
+            valid_idx = list(range(len(unique_patients)))
         elif label_mode == "Microglia":
             CERAD_VALID = {0, 1, 2, 3}
 
@@ -345,12 +297,10 @@ def main(args):
         # --- Save ---
         out_dir = os.path.join("data", "model_data")
         os.makedirs(out_dir, exist_ok=True)
-        if data == "SEAAD":
-            out_name = f"SEAAD_{cell_type}_v2_data_{expr_transform}.pkl"
+        if data in ("SEAAD", "ROSMAP"):
+            out_name = f"{data}_{cell_type}_v2_data_{expr_transform}.pkl"
         elif cell_type == "Microglia":
             out_name = f"{region}_Microglia_v2_data_{expr_transform}.pkl"
-        elif cell_type == "MTG":
-            out_name = f"MTG_v2_data_{expr_transform}.pkl"
         else:
             out_name = f"{region}_v2_data_{expr_transform}.pkl"
         out_path = os.path.join(out_dir, out_name)
@@ -390,15 +340,15 @@ if __name__ == "__main__":
         "--data",
         type=str,
         default="Atlas",
-        choices=["Atlas", "SEAAD"],
+        choices=["Atlas", "SEAAD", "ROSMAP"],
         help="Dataset. Atlas (default) uses the per-region perCell AnnData; "
-             "SEAAD uses data/SEA_AD_Data/<ct>/<ct>.h5ad with Thal+Braak labels.",
+             "SEAAD/ROSMAP load <DATA>_<ct> perCell AnnData with Thal+Braak staging labels.",
     )
     parser.add_argument(
         "--cell_type",
         type=str,
         default="Astrocytes",
-        choices=["Astrocytes", "Microglia", "MTG"],
+        choices=["Astrocytes", "Microglia"],
     )
     parser.add_argument(
         "--region",
