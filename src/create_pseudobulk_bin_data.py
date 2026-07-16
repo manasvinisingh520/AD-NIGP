@@ -34,6 +34,7 @@ from sklearn.decomposition import PCA
 from sklearn.model_selection import StratifiedGroupKFold
 
 from config import _SEAAD_THAL, _SEAAD_BRAAK
+from create_data import load_gene_embeddings
 
 N_FOLDS = 8
 TARGET_DIMS = 16
@@ -73,6 +74,12 @@ def main(args):
     pb_path = os.path.join("data", "GRN", data, ct, f"{ct}_pseudobulk_AnnData.h5ad")
 
     adata = ad.read_h5ad(pb_path)
+    if args.grn_only:
+        emb_path = os.path.join("GREmLN", "embeddings", f"{data}_{ct}_gene_embeddings.tsv")
+        emb = load_gene_embeddings(emb_path, gene_list=list(adata.var_names))
+        genes = [g for g in adata.var_names if g in emb]
+        adata = adata[:, genes].copy()
+        print(f"  GRN-only: subset to {len(genes)} genes")
     obs = adata.obs
     bin_names = obs["_sample_id"].astype(str).tolist()
     X = _normalize_log1p(adata.X)
@@ -124,7 +131,8 @@ def main(args):
 
     out_dir = os.path.join("data", "model_data")
     os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, f"{data}_{ct}_pseudobulk_data.pkl")
+    suffix = "_grn" if args.grn_only else ""
+    out_path = os.path.join(out_dir, f"{data}_{ct}_pseudobulk{suffix}_data.pkl")
     payload = {
         "X_folds": X_folds, "thal_folds": thal_folds, "braak_folds": braak_folds,
         "donor_folds": donor_folds, "bin_folds": bin_folds,
@@ -142,4 +150,7 @@ if __name__ == "__main__":
     ap.add_argument("--cell_type", default="Astrocytes", choices=["Astrocytes", "Microglia"])
     ap.add_argument("--n_components", type=int, default=0,
                     help="Global PCA dim (default 0 = keep raw; trainer does per-fold PCA).")
+    ap.add_argument("--grn_only", action="store_true",
+                    help="Subset to the 3972 GRN genes before normalizing; writes "
+                         "*_pseudobulk_grn_data.pkl (keeps the full-gene file).")
     main(ap.parse_args())

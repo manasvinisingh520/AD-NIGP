@@ -29,8 +29,17 @@ import scipy.sparse as sp
 from sklearn.decomposition import PCA
 from sklearn.model_selection import StratifiedKFold
 
+from create_data import load_gene_embeddings
+
 N_FOLDS = 8
 TARGET_DIMS = 16
+
+
+def _grn_genes(data, ct, var_names):
+    """GRN gene set = genes that have a GREmLN embedding (same 3972 set the v2 pipeline uses)."""
+    emb_path = os.path.join("GREmLN", "embeddings", f"{data}_{ct}_gene_embeddings.tsv")
+    emb = load_gene_embeddings(emb_path, gene_list=list(var_names))
+    return [g for g in var_names if g in emb]
 
 
 def _donor_mean_log1p(X, mask):
@@ -47,6 +56,10 @@ def main(args):
     data, ct = args.data, args.cell_type
     pc = os.path.join("data", "model_data", "perCell_AnnData", f"{data}_{ct}_AnnData_perCell.h5ad")
     adata = ad.read_h5ad(pc)
+    if args.grn_only:
+        genes = _grn_genes(data, ct, adata.var_names)
+        adata = adata[:, genes].copy()
+        print(f"  GRN-only: subset to {len(genes)} genes")
     X = adata.X
     obs = adata.obs
     donors = obs["SampleName"].astype(str).values
@@ -78,7 +91,8 @@ def main(args):
         print(f"  Fold {fi + 1}: {len(te)} donors")
 
     out_dir = os.path.join("data", "model_data")
-    out_path = os.path.join(out_dir, f"{data}_{ct}_patientmean_data.pkl")
+    suffix = "_grn" if args.grn_only else ""
+    out_path = os.path.join(out_dir, f"{data}_{ct}_patientmean{suffix}_data.pkl")
     with open(out_path, "wb") as f:
         pickle.dump({
             "X_folds": X_folds, "thal_folds": thal_folds, "braak_folds": braak_folds,
@@ -94,4 +108,7 @@ if __name__ == "__main__":
     ap.add_argument("--data", default="SEAAD", choices=["SEAAD", "ROSMAP"])
     ap.add_argument("--cell_type", default="Astrocytes", choices=["Astrocytes", "Microglia"])
     ap.add_argument("--n_components", type=int, default=TARGET_DIMS)
+    ap.add_argument("--grn_only", action="store_true",
+                    help="Subset to the 3972 GRN genes (genes with a GREmLN embedding) before "
+                         "aggregating; writes *_patientmean_grn_data.pkl (keeps the full-gene file).")
     main(ap.parse_args())

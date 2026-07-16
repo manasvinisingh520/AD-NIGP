@@ -225,9 +225,10 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--data", default="SEAAD", choices=["SEAAD", "ROSMAP"])
     p.add_argument("--cell_type", default="Astrocytes", choices=["Astrocytes", "Microglia"])
-    p.add_argument("--kind", default="cellemb", choices=["cellemb", "patientmean", "pseudobulk"],
+    p.add_argument("--kind", default="cellemb",
+                   choices=["cellemb", "patientmean", "pseudobulk", "patientmean_grn", "pseudobulk_grn"],
                    help="Which dataset pickle: cellemb (per-bin emb), patientmean (per-donor "
-                        "expr), or pseudobulk (per-bin raw expr).")
+                        "expr), pseudobulk (per-bin raw expr); *_grn = same on the 3972 GRN genes.")
     p.add_argument("--multitask", action="store_true")
     # encoder / optim (mil_hidden_dim/mil_encoder_layers reused as the encoder width/depth)
     p.add_argument("--mil_hidden_dim", type=int, default=128)
