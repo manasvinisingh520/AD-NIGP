@@ -229,11 +229,14 @@ def _aggregate_patients(
     ptau_fold,
     thal_fold,
     thal_to_idx: dict,
+    braak_fold=None,
+    braak_to_idx: dict = None,
 ) -> dict:
     """Aggregate cell-level data to patient-level (mean pooling)."""
     patient_embeddings = []
     patient_ptau = []
     patient_thal = []
+    patient_braak = []
     cell_idx = 0
     for pi_idx, (_, cell_names) in enumerate(patient_info):
         n_cells = len(cell_names)
@@ -250,12 +253,17 @@ def _aggregate_patients(
         patient_embeddings.append(patient_emb)
         patient_ptau.append(_safe_ptau_scalar(ptau_fold, pi_idx))
         patient_thal.append(thal_to_idx[int(thal_fold[pi_idx])])
+        if braak_fold is not None and braak_to_idx is not None:
+            patient_braak.append(braak_to_idx[int(braak_fold[pi_idx])])
         cell_idx += n_cells
-    return {
+    out = {
         "embeddings": np.array(patient_embeddings, dtype=np.float32),
         "ptau": np.log1p(np.array(patient_ptau, dtype=np.float32)),
         "thal": np.array(patient_thal, dtype=np.int64),
     }
+    if patient_braak:
+        out["braak"] = np.array(patient_braak, dtype=np.int64)
+    return out
 
 
 def _build_mil_bags(
@@ -562,6 +570,10 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
             )
         thal_folds = braak_folds
 
+    # Normalize label folds to plain ints. perCell stores staging labels as floats
+    # (e.g. Braak "2.0"), which would break int("2.0"); int(float(x)) handles all forms.
+    thal_folds = [[int(float(x)) for x in f] for f in thal_folds]
+
     # --- Optional binarization of the target (e.g. --binarize 3 -> {<3:0, >=3:1}) ---
     binarize = getattr(args, "binarize", None)
     if binarize is not None:
@@ -581,6 +593,7 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
             len(f) > 0 for f in braak_folds if hasattr(f, "__len__")
         ):
             raise SystemExit("--multitask needs braak_folds in the pickle (SEA-AD / ROSMAP).")
+        braak_folds = [[int(float(x)) for x in f] for f in braak_folds]  # '2.0' -> 2
         bb = getattr(args, "binarize_braak", None)
         if bb is not None:
             braak_folds = [[0 if int(x) < int(bb) else 1 for x in fold] for fold in braak_folds]
@@ -736,6 +749,8 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
                     ptau_folds[fi],
                     thal_folds[fi],
                     thal_to_idx,
+                    braak_fold=braak_folds[fi] if multitask else None,
+                    braak_to_idx=braak_to_idx,
                 )
             )
 
@@ -959,6 +974,13 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
                 test_emb = all_fold_data[test_fi]["embeddings"]
                 test_ptau = all_fold_data[test_fi]["ptau"]
                 test_thal = all_fold_data[test_fi]["thal"]
+                if multitask:
+                    train_braak_arr = np.concatenate(
+                        [all_fold_data[i]["braak"] for i in train_indices]
+                    )
+                    test_braak = all_fold_data[test_fi]["braak"]
+                else:
+                    train_braak_arr = test_braak = None
 
                 if getattr(args, "verbose_cv", False):
                     # train_emb can be 2D (cells x features) or 3D (cells x genes x D)
@@ -1060,10 +1082,10 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
 
                 train_ds = SimpleDataset(
                     train_emb, train_ptau_arr, train_thal_arr,
-                    train=True, augment_config=train_aug,
+                    train=True, augment_config=train_aug, braak=train_braak_arr,
                 )
                 test_ds = SimpleDataset(
-                    test_emb, test_ptau, test_thal, train=False,
+                    test_emb, test_ptau, test_thal, train=False, braak=test_braak,
                 )
                 train_loader = DataLoader(train_ds, batch_size=bs, shuffle=True)
                 test_loader = DataLoader(test_ds, batch_size=bs, shuffle=False)
@@ -1099,6 +1121,7 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
                         hidden_dim_3layer=int(getattr(args, "hidden_dim_3layer", 32)),
                         mlp_hidden_sizes=mlp_sizes,
                         thal_ordinal=thal_ordinal,
+                        n_braak_classes=n_braak_classes,
                     ).to(device)
 
                 run_eval = evaluate_standard
@@ -1163,10 +1186,12 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
                         mixup_alpha=mixup_alpha if not is_mil else 0.0,
                         gene_cutmix_prob=gene_cutmix_prob if not is_mil else 0.0,
                         gene_cutmix_alpha=gene_cutmix_alpha,
+                        criterion_braak=criterion_braak if multitask else None,
+                        braak_weight=braak_weight,
                     )
 
                 _eval_kw = dict(thal_ordinal=thal_ordinal, n_thal_classes=n_thal_classes)
-                if is_mil and multitask:
+                if multitask:
                     _eval_kw.update(criterion_braak=criterion_braak,
                                     idx_to_braak=idx_to_braak, braak_weight=braak_weight)
                 test_loss, test_mse, test_mae, test_f1, test_braak_f1 = run_eval(
@@ -1227,7 +1252,7 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
             with torch.no_grad():
                 _eval_kw = dict(thal_ordinal=thal_ordinal, n_thal_classes=n_thal_classes,
                                 return_preds=True)
-                if is_mil and multitask:
+                if multitask:
                     _eval_kw.update(criterion_braak=criterion_braak,
                                     idx_to_braak=idx_to_braak, braak_weight=braak_weight)
                 (_, _, _, report_f1, fold_true, fold_pred, report_braak_f1,
@@ -1464,13 +1489,17 @@ if __name__ == "__main__":
     elif not args.region:
         parser.error("--region is required unless --data SEAAD/ROSMAP")
 
-    if args.multitask and args.model_type != "mil":
-        parser.error("--multitask is only supported with --model_type mil")
+    if args.multitask and args.model_type not in ("mil", "flatten_mlp", "mlp"):
+        parser.error("--multitask supports --model_type mil, flatten_mlp, or mlp "
+                     "(not gene_encoder / sklearn / scvi).")
 
-    # Validate input_type / model_type combos
-    if args.input_type == "expression" and args.model_type in EMBEDDING_MODELS:
+    # Validate input_type / model_type combos.
+    # Only gene_encoder truly needs the 3D (cells x genes x D) embedding tensor; mil bags
+    # flat per-cell vectors and flatten_mlp/mlp aggregate+flatten, so all three accept 2D
+    # raw expression too (used for the raw-expression attention/mean pooling experiments).
+    if args.input_type == "expression" and args.model_type == "gene_encoder":
         raise SystemExit(
-            f"--model_type {args.model_type} requires --input_type embedding or random_embedding"
+            "--model_type gene_encoder requires --input_type embedding or random_embedding"
         )
     if args.input_type in ("embedding", "random_embedding") and args.model_type in EXPRESSION_MODELS:
         raise SystemExit(

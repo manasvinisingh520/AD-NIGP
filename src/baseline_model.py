@@ -45,6 +45,7 @@ class BaselineRankingModel(nn.Module):
         hidden_dim_3layer=32,
         mlp_hidden_sizes: Optional[List[int]] = None,
         thal_ordinal=False,
+        n_braak_classes=None,
     ):
         super(BaselineRankingModel, self).__init__()
 
@@ -52,6 +53,7 @@ class BaselineRankingModel(nn.Module):
         self.n_hidden_layers = n_hidden_layers
         self.thal_ordinal = bool(thal_ordinal)
         self.n_thal_classes = n_thal_classes
+        self.n_braak_classes = n_braak_classes
 
         # Handle 2D input (n_genes, n_dims) or 1D input (flattened)
         if input_shape is not None and len(input_shape) == 2:
@@ -119,6 +121,8 @@ class BaselineRankingModel(nn.Module):
         # Ordinal: K-1 cumulative logits (P(Y>=k)); else K-way classification
         thal_out = (n_thal_classes - 1) if self.thal_ordinal else n_thal_classes
         self.thal_head = nn.Linear(self._hidden_dim, thal_out)
+        # Optional second classification head for multi-task (Thal + Braak).
+        self.braak_head = nn.Linear(self._hidden_dim, n_braak_classes) if n_braak_classes else None
 
     def forward(self, x):
         # Apply attention only for 2D input (batch, n_genes, n_dims)
@@ -133,4 +137,5 @@ class BaselineRankingModel(nn.Module):
         shared_features = self.shared(x)
         ptau_pred = self.ptau_head(shared_features).squeeze(-1)
         thal_pred = self.thal_head(shared_features)  # (batch_size, n_thal_classes) logits (no softmax; CrossEntropyLoss applies it)
-        return ptau_pred, thal_pred
+        braak_pred = self.braak_head(shared_features) if self.braak_head is not None else None
+        return ptau_pred, thal_pred, braak_pred

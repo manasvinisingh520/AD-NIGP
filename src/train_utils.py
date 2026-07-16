@@ -177,10 +177,14 @@ class SimpleDataset(Dataset):
         thal: np.ndarray,
         train: bool = False,
         augment_config: Optional[EmbeddingAugmentConfig] = None,
+        braak: Optional[np.ndarray] = None,
     ):
         self.embeddings = torch.FloatTensor(embeddings)
         self.ptau = torch.FloatTensor(ptau)
         self.thal = torch.LongTensor(thal)
+        # -1 sentinel when braak is unused (single-task); ignored in loss/eval.
+        self.braak = (torch.LongTensor(braak) if braak is not None
+                      else torch.full((len(self.thal),), -1, dtype=torch.long))
         self.train = train
         self.augment_config = augment_config or EmbeddingAugmentConfig()
 
@@ -191,7 +195,7 @@ class SimpleDataset(Dataset):
         x = self.embeddings[idx]
         if self.train and self.augment_config.any_enabled():
             x = _augment_tensor(x, self.augment_config)
-        return x, self.ptau[idx], self.thal[idx]
+        return x, self.ptau[idx], self.thal[idx], self.braak[idx]
 
 
 class BagDataset(Dataset):
@@ -383,17 +387,24 @@ def train_epoch_standard(
     mixup_alpha: float = 0.0,
     gene_cutmix_prob: float = 0.0,
     gene_cutmix_alpha: float = 1.0,
+    criterion_braak: Optional[nn.Module] = None,
+    braak_weight: float = 1.0,
 ) -> Tuple[float, float, float]:
-    """Standard (non-MIL) training epoch. Returns (total_loss, ptau_loss, thal_loss)."""
+    """Standard (non-MIL) training epoch. Returns (total_loss, ptau_loss, thal_loss).
+
+    If criterion_braak is given, adds braak_weight * CE(braak) for multi-task; the
+    model's 3rd output is then Braak logits (not gene-encoder attention weights).
+    """
     model.train()
     total_loss = 0.0
     ptau_losses, thal_losses = [], []
     criterion_ordinal = nn.BCEWithLogitsLoss() if thal_ordinal else None
 
-    for embeddings, ptau, thal in dataloader:
+    for embeddings, ptau, thal, braak in dataloader:
         embeddings = embeddings.to(device)
         ptau = ptau.to(device)
         thal = thal.to(device)
+        braak = braak.to(device)
         B = embeddings.size(0)
 
         batch_mix = None
@@ -436,7 +447,10 @@ def train_epoch_standard(
         optimizer.zero_grad()
         out = model(embeddings)
         ptau_pred, thal_pred = out[0], out[1]
-        w = out[2] if len(out) == 3 else None
+        extra = out[2] if len(out) == 3 else None
+        # 3rd output is Braak logits under multi-task, else gene-encoder attn weights.
+        braak_pred = extra if criterion_braak is not None else None
+        w = None if criterion_braak is not None else extra
 
         if thal_ordinal and n_thal_classes is not None:
             loss_thal = criterion_ordinal(
@@ -457,6 +471,8 @@ def train_epoch_standard(
             loss_thal = criterion_thal(thal_pred, thal)
 
         loss = loss_thal
+        if criterion_braak is not None and braak_pred is not None:
+            loss = loss + braak_weight * criterion_braak(braak_pred, braak)
         if criterion_ptau is not None:
             loss_ptau = criterion_ptau(ptau_pred, ptau)
             loss = loss + loss_ptau
@@ -489,21 +505,29 @@ def evaluate_standard(
     thal_ordinal: bool = False,
     n_thal_classes: Optional[int] = None,
     return_preds: bool = False,
+    criterion_braak: Optional[nn.Module] = None,
+    idx_to_braak: Optional[dict] = None,
+    braak_weight: float = 1.0,
 ):
-    """Standard (non-MIL) evaluation. Returns (loss, mse, mae, f1[, true, pred])."""
+    """Standard (non-MIL) evaluation. When idx_to_braak is given (multi-task), also
+    returns the weighted Braak F1 (and, with return_preds, its true/pred labels)."""
     model.eval()
     total_loss = 0.0
     ptau_preds, ptau_targets = [], []
     thal_preds, thal_targets = [], []
+    braak_preds, braak_targets = [], []
     criterion_ordinal = nn.BCEWithLogitsLoss() if thal_ordinal else None
+    multitask = idx_to_braak is not None
 
     with torch.no_grad():
-        for embeddings, ptau, thal in dataloader:
+        for embeddings, ptau, thal, braak in dataloader:
             embeddings = embeddings.to(device)
             ptau = ptau.to(device)
             thal = thal.to(device)
+            braak = braak.to(device)
             out = model(embeddings)
             ptau_pred, thal_pred = out[0], out[1]
+            braak_pred = out[2] if (multitask and len(out) == 3) else None
 
             if thal_ordinal and n_thal_classes:
                 thal_cls = ordinal_logits_to_class(thal_pred)
@@ -525,6 +549,9 @@ def evaluate_standard(
             ptau_targets.extend(ptau.cpu().numpy())
             thal_preds.extend(thal_cls.cpu().numpy())
             thal_targets.extend(thal.cpu().numpy())
+            if braak_pred is not None:
+                braak_preds.extend(torch.argmax(braak_pred, dim=1).cpu().numpy())
+                braak_targets.extend(braak.cpu().numpy())
 
     thal_preds_labels = [idx_to_thal[int(i)] for i in thal_preds]
     thal_targets_labels = [idx_to_thal[int(i)] for i in thal_targets]
@@ -537,6 +564,12 @@ def evaluate_standard(
     mae = mean_absolute_error(y_t, y_p)
     f1 = f1_score(thal_targets_labels, thal_preds_labels, average="weighted")
 
+    braak_f1 = braak_true_labels = braak_pred_labels = None
+    if multitask and braak_preds:
+        braak_true_labels = [idx_to_braak[int(i)] for i in braak_targets]
+        braak_pred_labels = [idx_to_braak[int(i)] for i in braak_preds]
+        braak_f1 = f1_score(braak_true_labels, braak_pred_labels, average="weighted")
+
     if return_preds:
         return (
             total_loss / max(len(dataloader), 1),
@@ -545,11 +578,11 @@ def evaluate_standard(
             f1,
             thal_targets_labels,
             thal_preds_labels,
-            None,  # braak_f1
-            None,  # braak_true_labels
-            None,  # braak_pred_labels — standard models are single-task
+            braak_f1,
+            braak_true_labels,
+            braak_pred_labels,
         )
-    return total_loss / max(len(dataloader), 1), mse, mae, f1, None
+    return total_loss / max(len(dataloader), 1), mse, mae, f1, braak_f1
 
 
 def evaluate_mil_model(
