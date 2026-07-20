@@ -1,14 +1,25 @@
 # Generalized autosearch runner: random, optuna, and llm samplers for any region/cell_type.
 # All three studies share one SQLite DB per region+cell_type for the Optuna dashboard.
 #
-# Usage (from repo root):
+# Usage (from repo root; needs the sf2026 conda env active so `python` resolves):
 #   .\run_autosearch_v2.ps1
 #   .\run_autosearch_v2.ps1 -Region EC -CellType Astrocytes -InputType expression
 #   .\run_autosearch_v2.ps1 -Region ITG -CellType Microglia -NTrials 50 -Epochs 300
+#   # SEA-AD, multitask (combined 1:1 Thal+Braak F1), embedding models only:
+#   .\run_autosearch_v2.ps1 -Data SEAAD -Region SEAAD -CellType Astrocytes -Multitask -InputType embedding
+#
+# -Data SEAAD loads SEAAD_<CellType>_v2_data_*.pkl (-Region is just a label then).
+# -Multitask optimizes the combined 1:1 Thal+Braak F1 and restricts the search to
+#   mlp/flatten_mlp/mil.  -BraakWeight sets the Braak loss weight (default 1.0).
+# NOTE: this runs all three samplers (random, optuna, llm); the llm one needs an API key.
 
 param(
     [string]$Region = "EC",
     [string]$CellType = "Astrocytes",
+    [ValidateSet("Atlas", "SEAAD")]
+    [string]$Data = "Atlas",
+    [switch]$Multitask,
+    [double]$BraakWeight = 1.0,
     [string]$InputType = "",
     [string]$LogBase = "",
     [int]$NTrials = 100,
@@ -42,12 +53,14 @@ $common = @(
     "src/autosearch.py",
     "--region", $Region,
     "--cell_type", $CellType,
+    "--data", $Data,
     "--log_base", $LogBase,
     "--n_trials", "$NTrials",
     "--epochs", "$Epochs",
     "--patience", "$Patience",
     "--seed", "$Seed"
 )
+if ($Multitask) { $common += @("--multitask", "--braak_weight", "$BraakWeight") }
 if ($InputType) { $common += @("--input_type", $InputType) }
 if ($BaseUrl) { $common += @("--base_url", $BaseUrl) }
 if ($ApiKey) { $common += @("--api_key", $ApiKey) }

@@ -49,6 +49,7 @@ from train_model_v2 import (
 from train_utils import (
     BagDataset,
     EmbeddingAugmentConfig,
+    augment_config_from_args,
     SimpleDataset,
     collate_mil_eval,
     evaluate_mil_model,
@@ -69,8 +70,14 @@ def parse_args() -> argparse.Namespace:
         "--cell_type",
         type=str,
         default="Astrocytes",
-        choices=["Astrocytes", "Microglia", "MTG"],
+        choices=["Astrocytes", "Microglia"],
     )
+    parser.add_argument("--data", type=str, default="Atlas", choices=["Atlas", "SEAAD", "ROSMAP"],
+                        help="Dataset. SEAAD/ROSMAP load <data>_<cell_type>_v2_data (region is a label).")
+    parser.add_argument("--multitask", action="store_true",
+                        help="Rank by the combined 1:1 Thal+Braak F1 drop (matches a multitask model).")
+    parser.add_argument("--braak_weight", type=float, default=1.0,
+                        help="Braak loss weight when --multitask (default 1.0).")
     parser.add_argument(
         "--input_type",
         type=str,
@@ -132,6 +139,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mil_hidden_dim", type=int, default=128)
     parser.add_argument("--mil_attn_dim", type=int, default=64)
     parser.add_argument("--mil_encoder_layers", type=int, default=2)
+    # Online augmentation (train only) -- match train_model_v2 so a retrain reproduces a trial.
+    parser.add_argument("--aug_scale_jitter", type=float, default=0.0)
+    parser.add_argument("--aug_per_gene_scale_jitter", type=float, default=0.0)
+    parser.add_argument("--aug_gene_dropout", type=float, default=0.0)
+    parser.add_argument("--aug_emb_dim_dropout", type=float, default=0.0)
+    parser.add_argument("--aug_feature_dropout", type=float, default=0.0)
+    parser.add_argument("--aug_gene_block_cutout_max", type=int, default=0)
+    parser.add_argument("--aug_gene_block_cutout_prob", type=float, default=0.5)
+    parser.add_argument("--aug_noise_std", type=float, default=0.0)
     parser.add_argument("--verbose", action="store_true")
     return parser.parse_args()
 
@@ -175,19 +191,28 @@ def make_criteria(args: argparse.Namespace) -> Tuple[Optional[nn.Module], nn.Mod
         if smoothing > 0
         else nn.CrossEntropyLoss()
     )
-    return criterion_ptau, criterion_thal
+    criterion_braak = (
+        nn.CrossEntropyLoss(label_smoothing=smoothing) if getattr(args, "multitask", False) else None
+    )
+    return criterion_ptau, criterion_thal, criterion_braak
 
 
 def load_fold_data(args: argparse.Namespace):
-    data = _load_v2_pickle(args.region, args.cell_type, expr_transform=args.expr_transform)
+    data = _load_v2_pickle(args.region, args.cell_type, expr_transform=args.expr_transform,
+                           dataset=getattr(args, "data", "Atlas"))
     raw_folds = _select_folds(data, args.input_type)
     patient_info_folds = data["patient_info_folds"]
     ptau_folds = data["ptau_folds"]
     thal_folds = data["thal_folds"]
+    multitask = bool(getattr(args, "multitask", False))
+    braak_folds = data.get("braak_folds") if multitask else None
     gene_names = list(data["gene_names"])
     embedding_dim = int(data.get("embedding_dim", 0) or 0)
     if args.input_type == "random_embedding":
         embedding_dim = RANDOM_EMBEDDING_DIM
+    if multitask and (braak_folds is None or not any(len(f) for f in braak_folds)):
+        raise ValueError(f"--multitask requested but no Braak labels in the {args.data} "
+                         f"{args.cell_type} v2 data.")
 
     n_folds_eval = int(args.n_folds_eval or len(raw_folds))
     if n_folds_eval != len(raw_folds):
@@ -198,34 +223,42 @@ def load_fold_data(args: argparse.Namespace):
         patient_info_folds = _merge_folds(patient_info_folds, group_size)
         ptau_folds = _merge_folds(ptau_folds, group_size)
         thal_folds = _merge_folds(thal_folds, group_size)
+        if multitask:
+            braak_folds = _merge_folds(braak_folds, group_size)
+
+    # Labels can be stored as float-strings ('5.0'); normalize to clean ints so the
+    # downstream int(...) in _build_mil_bags / _aggregate_patients doesn't choke.
+    thal_folds = [[int(float(x)) for x in f] for f in thal_folds]
+    if multitask:
+        braak_folds = [[int(float(x)) for x in f] for f in braak_folds]
 
     all_thal = [int(x) for fold in thal_folds for x in fold]
     thal_classes = sorted(set(all_thal))
     thal_to_idx = {c: i for i, c in enumerate(thal_classes)}
     idx_to_thal = {i: c for c, i in thal_to_idx.items()}
 
+    braak_to_idx = idx_to_braak = None
+    n_braak_classes = None
+    if multitask:
+        all_braak = [int(float(x)) for fold in braak_folds for x in fold]
+        braak_classes = sorted(set(all_braak))
+        braak_to_idx = {c: i for i, c in enumerate(braak_classes)}
+        idx_to_braak = {i: c for c, i in braak_to_idx.items()}
+        n_braak_classes = len(braak_classes)
+
     use_mil = args.model_type == "mil"
     all_fold_data = []
     for fi in range(len(raw_folds)):
+        bkw = dict(braak_fold=braak_folds[fi], braak_to_idx=braak_to_idx) if multitask else {}
         if use_mil:
             all_fold_data.append(
-                _build_mil_bags(
-                    raw_folds[fi],
-                    patient_info_folds[fi],
-                    ptau_folds[fi],
-                    thal_folds[fi],
-                    thal_to_idx,
-                )
+                _build_mil_bags(raw_folds[fi], patient_info_folds[fi], ptau_folds[fi],
+                                thal_folds[fi], thal_to_idx, **bkw)
             )
         else:
             all_fold_data.append(
-                _aggregate_patients(
-                    raw_folds[fi],
-                    patient_info_folds[fi],
-                    ptau_folds[fi],
-                    thal_folds[fi],
-                    thal_to_idx,
-                )
+                _aggregate_patients(raw_folds[fi], patient_info_folds[fi], ptau_folds[fi],
+                                    thal_folds[fi], thal_to_idx, **bkw)
             )
 
     return {
@@ -234,6 +267,9 @@ def load_fold_data(args: argparse.Namespace):
         "embedding_dim": embedding_dim,
         "idx_to_thal": idx_to_thal,
         "n_thal_classes": len(thal_classes),
+        "idx_to_braak": idx_to_braak,
+        "n_braak_classes": n_braak_classes,
+        "multitask": multitask,
     }
 
 
@@ -391,6 +427,7 @@ def run_sklearn_fold(
     idx_to_thal: dict,
     n_genes: int,
     rng: np.random.Generator,
+    n_permute_genes: Optional[int] = None,
 ) -> Tuple[float, Dict[int, float]]:
     train_indices = [i for i in range(len(fold_data)) if i != test_fi]
     train_x = np.concatenate([fold_data[i]["embeddings"] for i in train_indices])
@@ -420,10 +457,11 @@ def run_sklearn_fold(
     )
 
     gene_width = _infer_gene_width(args, test_x.shape[1], n_genes)
+    n_perm = n_permute_genes or n_genes
     drops = {}
-    for g in range(n_genes):
+    for g in range(n_perm):
         if args.progress_every and (g == 0 or (g + 1) % int(args.progress_every) == 0):
-            print(f"    permuting gene {g + 1}/{n_genes}", flush=True)
+            print(f"    permuting gene {g + 1}/{n_perm}", flush=True)
         per_rep = []
         for _ in range(args.n_permute):
             perm_raw = _permute_patient_gene_matrix(test_x, g, gene_width, rng)
@@ -466,6 +504,7 @@ def build_standard_model(
     train_x: np.ndarray,
     n_thal_classes: int,
     n_genes: int,
+    n_braak_classes: Optional[int] = None,
 ) -> nn.Module:
     dropout = float(args.dropout)
     if args.model_type == "gene_encoder":
@@ -494,6 +533,7 @@ def build_standard_model(
         hidden_dim_3layer=int(args.hidden_dim_3layer),
         mlp_hidden_sizes=mlp_sizes,
         thal_ordinal=bool(args.thal_ordinal),
+        n_braak_classes=n_braak_classes,
     )
 
 
@@ -506,20 +546,39 @@ def run_torch_fold(
     n_genes: int,
     device: torch.device,
     rng: np.random.Generator,
+    idx_to_braak: Optional[dict] = None,
+    n_braak_classes: Optional[int] = None,
+    multitask: bool = False,
+    n_permute_genes: Optional[int] = None,
 ) -> Tuple[float, Dict[int, float]]:
     train_indices = [i for i in range(len(fold_data)) if i != test_fi]
-    criterion_ptau, criterion_thal = make_criteria(args)
+    criterion_ptau, criterion_thal, criterion_braak = make_criteria(args)
     thal_ordinal = bool(args.thal_ordinal)
+    braak_weight = float(getattr(args, "braak_weight", 1.0))
+    # Extra kwargs so eval also reports/optimizes Braak when multitask.
+    eval_kw = dict(thal_ordinal=thal_ordinal, n_thal_classes=n_thal_classes)
+    train_braak_kw = dict(braak_weight=braak_weight)
+    if multitask:
+        eval_kw.update(criterion_braak=criterion_braak, idx_to_braak=idx_to_braak,
+                       braak_weight=braak_weight)
+        train_braak_kw.update(criterion_braak=criterion_braak)
+
+    def _sel(thal_f1, braak_f1):
+        return (thal_f1 + braak_f1) / 2.0 if (multitask and braak_f1 is not None) else thal_f1
 
     if args.model_type == "mil":
-        train_bags, train_ptau, train_thal = [], [], []
+        train_bags, train_ptau, train_thal, train_braak = [], [], [], []
         for i in train_indices:
             train_bags.extend(fold_data[i]["cell_bags"])
             train_ptau.extend(fold_data[i]["ptau"])
             train_thal.extend(fold_data[i]["thal"])
+            if multitask:
+                train_braak.extend(fold_data[i]["braak"])
         test_bags_raw = list(fold_data[test_fi]["cell_bags"])
         test_ptau = fold_data[test_fi]["ptau"]
         test_thal = fold_data[test_fi]["thal"]
+        test_braak = fold_data[test_fi]["braak"] if multitask else None
+        train_braak_arr = np.asarray(train_braak, dtype=np.int64) if multitask else None
         raw_gene_width = _infer_gene_width(args, test_bags_raw[0].shape[1], n_genes)
 
         train_bags_tf, mil_scaler, mil_pca, cell_in, mil_feat_dim = _fit_mil_transform(
@@ -534,8 +593,9 @@ def run_torch_fold(
             np.asarray(train_thal, dtype=np.int64),
             train=True,
             mil_cells_per_patient=int(args.mil_cells_per_patient),
-            augment_config=EmbeddingAugmentConfig(),
+            augment_config=augment_config_from_args(args),
             seed=args.seed + test_fi,
+            braak=train_braak_arr,
         )
         test_ds = BagDataset(
             test_bags_tf,
@@ -544,6 +604,7 @@ def run_torch_fold(
             train=False,
             mil_cells_per_patient=int(args.mil_cells_per_patient),
             seed=args.seed + test_fi,
+            braak=test_braak,
         )
         train_loader = DataLoader(train_ds, batch_size=int(args.batch_size), shuffle=True)
         test_loader = DataLoader(test_ds, batch_size=1, shuffle=False, collate_fn=collate_mil_eval)
@@ -555,6 +616,7 @@ def run_torch_fold(
             mil_encoder_layers=int(args.mil_encoder_layers),
             dropout=float(args.dropout),
             thal_ordinal=thal_ordinal,
+            n_braak_classes=n_braak_classes,
         ).to(device)
         run_train = train_epoch_mil
         run_eval = evaluate_mil_model
@@ -570,20 +632,25 @@ def run_torch_fold(
         train_x_raw = np.concatenate([fold_data[i]["embeddings"] for i in train_indices])
         train_ptau = np.concatenate([fold_data[i]["ptau"] for i in train_indices])
         train_thal = np.concatenate([fold_data[i]["thal"] for i in train_indices])
+        train_braak_arr = (np.concatenate([fold_data[i]["braak"] for i in train_indices])
+                           if multitask else None)
         test_x_raw = fold_data[test_fi]["embeddings"]
         test_ptau = fold_data[test_fi]["ptau"]
         test_thal = fold_data[test_fi]["thal"]
+        test_braak = fold_data[test_fi]["braak"] if multitask else None
         raw_gene_width = _infer_gene_width(args, test_x_raw.shape[1], n_genes)
 
         train_x, test_x, scaler, pca = _transform_matrix(train_x_raw, test_x_raw, args, args.seed + test_fi)
         if args.model_type == "gene_encoder":
             train_x, test_x, _, _ = _reshape_for_gene_encoder(train_x, test_x, args, n_genes)
 
-        train_ds = SimpleDataset(train_x, train_ptau, train_thal, train=True, augment_config=EmbeddingAugmentConfig())
-        test_ds = SimpleDataset(test_x, test_ptau, test_thal, train=False)
+        train_ds = SimpleDataset(train_x, train_ptau, train_thal, train=True,
+                                 augment_config=augment_config_from_args(args), braak=train_braak_arr)
+        test_ds = SimpleDataset(test_x, test_ptau, test_thal, train=False, braak=test_braak)
         train_loader = DataLoader(train_ds, batch_size=int(args.batch_size), shuffle=True)
         test_loader = DataLoader(test_ds, batch_size=int(args.batch_size), shuffle=False)
-        model = build_standard_model(args, train_x, n_thal_classes, n_genes).to(device)
+        model = build_standard_model(args, train_x, n_thal_classes, n_genes,
+                                     n_braak_classes=n_braak_classes).to(device)
         run_train = train_epoch_standard
         run_eval = evaluate_standard
         permute_eval_data = ("standard", test_x_raw, raw_gene_width, scaler, pca)
@@ -610,6 +677,7 @@ def run_torch_fold(
                 device,
                 thal_ordinal=thal_ordinal,
                 n_thal_classes=n_thal_classes,
+                **train_braak_kw,
             )
         else:
             run_train(
@@ -622,17 +690,18 @@ def run_torch_fold(
                 lambda_entropy=float(args.lambda_entropy) if args.model_type == "gene_encoder" else 0.0,
                 thal_ordinal=thal_ordinal,
                 n_thal_classes=n_thal_classes,
+                **train_braak_kw,
             )
-        test_loss, _, _, test_f1 = run_eval(
+        test_loss, _, _, test_thal_f1, test_braak_f1 = run_eval(
             model,
             test_loader,
             criterion_ptau,
             criterion_thal,
             device,
             idx_to_thal,
-            thal_ordinal=thal_ordinal,
-            n_thal_classes=n_thal_classes,
+            **eval_kw,
         )
+        test_f1 = _sel(test_thal_f1, test_braak_f1)
         improved = test_f1 > best_f1 or (test_f1 == best_f1 and test_loss < best_loss)
         if improved:
             best_f1 = float(test_f1)
@@ -653,10 +722,11 @@ def run_torch_fold(
     if args.verbose:
         print(f"    best_f1={best_f1:.4f}, epochs={last_epoch + 1}")
 
+    n_perm = n_permute_genes or n_genes
     drops = {}
-    for g in range(n_genes):
+    for g in range(n_perm):
         if args.progress_every and (g == 0 or (g + 1) % int(args.progress_every) == 0):
-            print(f"    permuting gene {g + 1}/{n_genes}", flush=True)
+            print(f"    permuting gene {g + 1}/{n_perm}", flush=True)
         per_rep = []
         for _ in range(args.n_permute):
             mode = permute_eval_data[0]
@@ -671,6 +741,7 @@ def run_torch_fold(
                     train=False,
                     mil_cells_per_patient=int(args.mil_cells_per_patient),
                     seed=args.seed + test_fi,
+                    braak=test_braak,
                 )
                 perm_loader = DataLoader(perm_ds, batch_size=1, shuffle=False, collate_fn=collate_mil_eval)
             else:
@@ -679,19 +750,18 @@ def run_torch_fold(
                 perm_x = _transform_test_matrix(perm_raw, scaler, pca)
                 if args.model_type == "gene_encoder":
                     _, perm_x, _, _ = _reshape_for_gene_encoder(perm_x, perm_x, args, n_genes)
-                perm_ds = SimpleDataset(perm_x, test_ptau, test_thal, train=False)
+                perm_ds = SimpleDataset(perm_x, test_ptau, test_thal, train=False, braak=test_braak)
                 perm_loader = DataLoader(perm_ds, batch_size=int(args.batch_size), shuffle=False)
-            _, _, _, perm_f1 = run_eval(
+            _, _, _, perm_thal_f1, perm_braak_f1 = run_eval(
                 model,
                 perm_loader,
                 criterion_ptau,
                 criterion_thal,
                 device,
                 idx_to_thal,
-                thal_ordinal=thal_ordinal,
-                n_thal_classes=n_thal_classes,
+                **eval_kw,
             )
-            per_rep.append(best_f1 - float(perm_f1))
+            per_rep.append(best_f1 - _sel(perm_thal_f1, perm_braak_f1))
         drops[g] = float(np.mean(per_rep))
     return best_f1, drops
 
@@ -740,10 +810,15 @@ def main() -> None:
     gene_names = loaded["gene_names"]
     idx_to_thal = loaded["idx_to_thal"]
     n_thal_classes = loaded["n_thal_classes"]
-    n_genes = len(gene_names)
+    idx_to_braak = loaded["idx_to_braak"]
+    n_braak_classes = loaded["n_braak_classes"]
+    multitask = loaded["multitask"]
+    if multitask and args.model_type not in ("mil", "flatten_mlp", "mlp"):
+        raise ValueError(f"--multitask supports mil/flatten_mlp/mlp, not {args.model_type}")
+    n_genes = len(gene_names)  # TRUE gene count -> used for gene-width inference
+    n_permute_genes = n_genes  # how many genes to actually permute (debug limit)
     if args.max_genes is not None:
-        n_genes = min(n_genes, int(args.max_genes))
-        gene_names = gene_names[:n_genes]
+        n_permute_genes = min(n_genes, int(args.max_genes))
 
     device = torch.device(args.device)
     rng = np.random.default_rng(int(args.seed))
@@ -768,6 +843,7 @@ def main() -> None:
                 idx_to_thal,
                 n_genes,
                 rng,
+                n_permute_genes=n_permute_genes,
             )
         else:
             base_f1, drops = run_torch_fold(
@@ -779,6 +855,10 @@ def main() -> None:
                 n_genes,
                 device,
                 rng,
+                idx_to_braak=idx_to_braak,
+                n_braak_classes=n_braak_classes,
+                multitask=multitask,
+                n_permute_genes=n_permute_genes,
             )
         baseline_f1s.append(base_f1)
         print(f"  baseline F1={base_f1:.4f}")

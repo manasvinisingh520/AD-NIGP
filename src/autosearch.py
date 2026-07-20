@@ -43,13 +43,23 @@ from train_model_v2 import (
 REGIONS_BY_CELL_TYPE = {
     "Astrocytes": ["EC", "ITG", "PFC", "V2", "V1"],
     "Microglia": ["CrossRegion", "ITG", "PFC"],
-    "MTG": ["MTG"],
 }
 
 INPUT_TYPE_CHOICES = ["expression", "embedding", "random_embedding"]
 EXPR_MODEL_CHOICES = ["logreg", "svm", "mlp"]
 EMB_MODEL_CHOICES = ["flatten_mlp", "gene_encoder", "mil"]
 ALL_SEARCHABLE_MODELS = EXPR_MODEL_CHOICES + EMB_MODEL_CHOICES
+# Models with Thal+Braak heads (the only ones valid under --multitask).
+MULTITASK_MODELS = ("mlp", "flatten_mlp", "mil")
+_MULTITASK = False  # set by main() from --multitask; narrows the model search space below
+
+
+def _expr_models():
+    return [m for m in EXPR_MODEL_CHOICES if m in MULTITASK_MODELS] if _MULTITASK else EXPR_MODEL_CHOICES
+
+
+def _emb_models():
+    return [m for m in EMB_MODEL_CHOICES if m in MULTITASK_MODELS] if _MULTITASK else EMB_MODEL_CHOICES
 
 PCA_CHOICES = [None, 16, 50, 100]
 MLP_MENU = ["", "64,32,16", "128,64,32", "256,128,64,32"]
@@ -161,11 +171,11 @@ def suggest_trial_optuna(trial, *, fixed_input_type: Optional[str] = None) -> Tr
 
     if input_type == "expression":
         # Use a distinct Optuna parameter name for expression-only models
-        model_type = trial.suggest_categorical("model_type_expr", EXPR_MODEL_CHOICES)
+        model_type = trial.suggest_categorical("model_type_expr", _expr_models())
     else:
         # And a separate name for embedding-based models to avoid
         # dynamic value spaces on a single parameter.
-        model_type = trial.suggest_categorical("model_type_emb", EMB_MODEL_CHOICES)
+        model_type = trial.suggest_categorical("model_type_emb", _emb_models())
 
     is_sklearn = model_type in ("logreg", "svm")
     is_scvi = model_type == "scvi"
@@ -258,9 +268,9 @@ def suggest_trial_random(rng, *, fixed_input_type: Optional[str] = None) -> Tria
         input_type = rng.choice(INPUT_TYPE_CHOICES)
 
     if input_type == "expression":
-        model_type = rng.choice(EXPR_MODEL_CHOICES)
+        model_type = rng.choice(_expr_models())
     else:
-        model_type = rng.choice(EMB_MODEL_CHOICES)
+        model_type = rng.choice(_emb_models())
 
     is_sklearn = model_type in ("logreg", "svm")
     is_scvi = model_type == "scvi"
@@ -378,10 +388,10 @@ def trial_params_from_llm_dict(raw: Dict[str, Any], *, fixed_input_type: Optiona
 
     model_type = s("model_type", "logreg")
     if input_type == "expression":
-        if model_type not in EXPR_MODEL_CHOICES:
-            model_type = "logreg"
+        if model_type not in _expr_models():
+            model_type = "mlp" if _MULTITASK else "logreg"
     else:
-        if model_type not in EMB_MODEL_CHOICES:
+        if model_type not in _emb_models():
             model_type = "flatten_mlp"
 
     is_sklearn = model_type in ("logreg", "svm")
@@ -503,9 +513,13 @@ def params_to_namespace(
     no_online_augment: bool = False,
     attention_heads: int = 1,
     data: str = "Atlas",
+    multitask: bool = False,
+    braak_weight: float = 1.0,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         data=data,
+        multitask=multitask,
+        braak_weight=braak_weight,
         region=region,
         cell_type=cell_type,
         input_type=p.input_type,
@@ -565,6 +579,8 @@ def params_to_namespace(
 
 
 def _run_one_trial(ns: SimpleNamespace) -> Tuple[float, Optional[str]]:
+    if getattr(ns, "multitask", False) and ns.model_type not in MULTITASK_MODELS:
+        return float("-inf"), f"multitask unsupported for model_type={ns.model_type}"
     try:
         avg_f1, _, _, _ = train_v2_main(ns)
         if avg_f1 is None or (isinstance(avg_f1, float) and math.isnan(avg_f1)):
@@ -871,6 +887,7 @@ def run_optuna_sampler(args: argparse.Namespace) -> None:
             patience=args.patience, device=device, seed=args.seed,
             quiet=not args.verbose, no_online_augment=args.no_online_augment,
             attention_heads=args.attention_heads,
+            multitask=args.multitask, braak_weight=args.braak_weight,
         )
         f1, err = _run_one_trial(ns)
         row = {"trial": trial.number, "value": f1, "error": err or "", "exp_id": exp_id, **asdict(p)}
@@ -937,6 +954,7 @@ def run_random_sampler(args: argparse.Namespace) -> None:
             patience=args.patience, device=device, seed=args.seed,
             quiet=not args.verbose, no_online_augment=args.no_online_augment,
             attention_heads=args.attention_heads,
+            multitask=args.multitask, braak_weight=args.braak_weight,
         )
         f1, err = _run_one_trial(ns)
         row = {"trial": i, "value": f1, "error": err or "", "exp_id": exp_id, **asdict(p)}
@@ -1060,6 +1078,7 @@ def run_llm_sampler(args: argparse.Namespace) -> None:
                 patience=args.patience, device=device, seed=args.seed,
                 quiet=not args.verbose, no_online_augment=args.no_online_augment,
                 attention_heads=args.attention_heads,
+                multitask=args.multitask, braak_weight=args.braak_weight,
             )
             f1, err = _run_one_trial(ns)
             row = {"trial": trial_id, "value": f1, "error": err or "", "exp_id": exp_id, **asdict(p)}
@@ -1098,11 +1117,16 @@ def main() -> None:
     parser.add_argument("--region", type=str, nargs="+", required=True,
                         help='One or more regions, or "all" to auto-select per cell_type.')
     parser.add_argument("--cell_type", type=str, nargs="+", default=["Astrocytes"],
-                        choices=["Astrocytes", "Microglia", "MTG"],
+                        choices=["Astrocytes", "Microglia"],
                         help="One or more cell types (runs sequentially per type).")
     parser.add_argument("--data", type=str, default="Atlas", choices=["Atlas", "SEAAD"],
                         help="Dataset. SEAAD loads SEAAD_<cell_type>_v2_data_*.pkl; "
                              "pass any --region label (used only for study/db naming).")
+    parser.add_argument("--multitask", action="store_true",
+                        help="Optimize the combined 1:1 Thal+Braak F1 (multitask heads) instead "
+                             "of Thal-only. Only valid for model_type mil/flatten_mlp/mlp.")
+    parser.add_argument("--braak_weight", type=float, default=1.0,
+                        help="Weight on the Braak loss term when --multitask (default 1.0).")
     parser.add_argument("--input_type", type=str, nargs="+", default=None,
                         choices=sorted(INPUT_TYPES),
                         help="One or more input types to fix; omit to search all three.")
@@ -1154,6 +1178,12 @@ def main() -> None:
     args = parser.parse_args()
     if args.total_trials is not None:
         args.n_trials = args.total_trials
+
+    global _MULTITASK
+    _MULTITASK = bool(args.multitask)  # narrows the model search space to Thal+Braak-capable models
+    if _MULTITASK:
+        print(f"[autosearch] multitask ON: searching only {MULTITASK_MODELS}; "
+              f"objective = combined 1:1 Thal+Braak F1 (braak_weight={args.braak_weight})")
 
     cell_types = args.cell_type          # list (nargs="+")
     input_types = args.input_type        # list or None
