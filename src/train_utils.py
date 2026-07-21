@@ -508,6 +508,7 @@ def evaluate_standard(
     criterion_braak: Optional[nn.Module] = None,
     idx_to_braak: Optional[dict] = None,
     braak_weight: float = 1.0,
+    f1_average: str = "weighted",
 ):
     """Standard (non-MIL) evaluation. When idx_to_braak is given (multi-task), also
     returns the weighted Braak F1 (and, with return_preds, its true/pred labels)."""
@@ -516,6 +517,7 @@ def evaluate_standard(
     ptau_preds, ptau_targets = [], []
     thal_preds, thal_targets = [], []
     braak_preds, braak_targets = [], []
+    thal_probs, braak_probs = [], []   # full per-sample softmax (for AUROC + confidence)
     criterion_ordinal = nn.BCEWithLogitsLoss() if thal_ordinal else None
     multitask = idx_to_braak is not None
 
@@ -545,13 +547,23 @@ def evaluate_standard(
                 loss = loss + criterion_ptau(ptau_pred, ptau)
             total_loss += loss.item()
 
+            # Full per-sample softmax (for confidence/entropy + AUROC). Ordinal -> a
+            # pseudo two-class [1-p, p] from the single cumulative logit.
+            if thal_ordinal:
+                _p1 = torch.sigmoid(thal_pred[:, -1])
+                thal_prob = torch.stack([1 - _p1, _p1], dim=1)
+            else:
+                thal_prob = torch.softmax(thal_pred, dim=1)
+
             ptau_preds.extend(ptau_pred.cpu().numpy())
             ptau_targets.extend(ptau.cpu().numpy())
             thal_preds.extend(thal_cls.cpu().numpy())
             thal_targets.extend(thal.cpu().numpy())
+            thal_probs.extend(thal_prob.cpu().numpy())
             if braak_pred is not None:
                 braak_preds.extend(torch.argmax(braak_pred, dim=1).cpu().numpy())
                 braak_targets.extend(braak.cpu().numpy())
+                braak_probs.extend(torch.softmax(braak_pred, dim=1).cpu().numpy())
 
     thal_preds_labels = [idx_to_thal[int(i)] for i in thal_preds]
     thal_targets_labels = [idx_to_thal[int(i)] for i in thal_targets]
@@ -562,13 +574,13 @@ def evaluate_standard(
         y_p = np.nan_to_num(y_p, nan=0.0, posinf=0.0, neginf=0.0)
     mse = mean_squared_error(y_t, y_p)
     mae = mean_absolute_error(y_t, y_p)
-    f1 = f1_score(thal_targets_labels, thal_preds_labels, average="weighted")
+    f1 = f1_score(thal_targets_labels, thal_preds_labels, average=f1_average)
 
     braak_f1 = braak_true_labels = braak_pred_labels = None
     if multitask and braak_preds:
         braak_true_labels = [idx_to_braak[int(i)] for i in braak_targets]
         braak_pred_labels = [idx_to_braak[int(i)] for i in braak_preds]
-        braak_f1 = f1_score(braak_true_labels, braak_pred_labels, average="weighted")
+        braak_f1 = f1_score(braak_true_labels, braak_pred_labels, average=f1_average)
 
     if return_preds:
         return (
@@ -581,6 +593,8 @@ def evaluate_standard(
             braak_f1,
             braak_true_labels,
             braak_pred_labels,
+            [list(map(float, p)) for p in thal_probs],
+            ([list(map(float, p)) for p in braak_probs] if multitask else None),
         )
     return total_loss / max(len(dataloader), 1), mse, mae, f1, braak_f1
 
@@ -599,6 +613,7 @@ def evaluate_mil_model(
     criterion_braak: Optional[nn.Module] = None,
     idx_to_braak: Optional[dict] = None,
     braak_weight: float = 1.0,
+    f1_average: str = "weighted",
 ):
     """MIL evaluation (padded bags with mask).
 
@@ -610,6 +625,7 @@ def evaluate_mil_model(
     ptau_preds, ptau_targets = [], []
     thal_preds_list, thal_targets_list = [], []
     braak_preds_list, braak_targets_list = [], []
+    thal_probs, braak_probs = [], []   # full per-sample softmax (for AUROC + confidence)
     criterion_ordinal = nn.BCEWithLogitsLoss() if thal_ordinal else None
     multitask = idx_to_braak is not None
 
@@ -642,13 +658,21 @@ def evaluate_mil_model(
                 loss = loss + criterion_ptau(ptau_pred, ptau)
             total_loss += loss.item()
 
+            if thal_ordinal:
+                _p1 = torch.sigmoid(thal_pred[:, -1])
+                thal_prob = torch.stack([1 - _p1, _p1], dim=1)
+            else:
+                thal_prob = torch.softmax(thal_pred, dim=1)
+
             ptau_preds.extend(ptau_pred.cpu().numpy())
             ptau_targets.extend(ptau.cpu().numpy())
             thal_preds_list.extend(thal_cls.cpu().numpy())
             thal_targets_list.extend(thal.cpu().numpy())
+            thal_probs.extend(thal_prob.cpu().numpy())
             if multitask and braak_pred is not None:
                 braak_preds_list.extend(torch.argmax(braak_pred, dim=1).cpu().numpy())
                 braak_targets_list.extend(braak.cpu().numpy())
+                braak_probs.extend(torch.softmax(braak_pred, dim=1).cpu().numpy())
 
     thal_preds_labels = [idx_to_thal[int(i)] for i in thal_preds_list]
     thal_targets_labels = [idx_to_thal[int(i)] for i in thal_targets_list]
@@ -659,14 +683,14 @@ def evaluate_mil_model(
         y_p = np.nan_to_num(y_p, nan=0.0, posinf=0.0, neginf=0.0)
     mse = mean_squared_error(y_t, y_p)
     mae = mean_absolute_error(y_t, y_p)
-    f1 = f1_score(thal_targets_labels, thal_preds_labels, average="weighted")
+    f1 = f1_score(thal_targets_labels, thal_preds_labels, average=f1_average)
 
     braak_f1 = None
     braak_true_labels = braak_pred_labels = None
     if multitask and braak_preds_list:
         braak_true_labels = [idx_to_braak[int(i)] for i in braak_targets_list]
         braak_pred_labels = [idx_to_braak[int(i)] for i in braak_preds_list]
-        braak_f1 = f1_score(braak_true_labels, braak_pred_labels, average="weighted")
+        braak_f1 = f1_score(braak_true_labels, braak_pred_labels, average=f1_average)
 
     if return_preds:
         return (
@@ -679,6 +703,8 @@ def evaluate_mil_model(
             braak_f1,
             braak_true_labels,
             braak_pred_labels,
+            [list(map(float, p)) for p in thal_probs],
+            ([list(map(float, p)) for p in braak_probs] if multitask else None),
         )
     return total_loss / max(len(dataloader), 1), mse, mae, f1, braak_f1
 

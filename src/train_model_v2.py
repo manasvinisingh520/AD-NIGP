@@ -30,7 +30,7 @@ import torch.nn as nn
 import torch.optim as optim
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import f1_score
+from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import LinearSVC
 from torch.utils.data import DataLoader
@@ -550,6 +550,17 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
         expr_transform=expr_transform,
         dataset=getattr(args, "data", "Atlas"),
     )
+    # --- Optional label-shuffle overlay (permutation-control; see shuffle_labels_v2.py) ---
+    if getattr(args, "shuffle_labels", None):
+        with open(args.shuffle_labels, "rb") as _sf:
+            _ov = pickle.load(_sf)
+        if [len(f) for f in _ov["thal_folds"]] != [len(f) for f in data["thal_folds"]]:
+            raise SystemExit("--shuffle_labels overlay fold sizes don't match the loaded v2 data.")
+        data["thal_folds"] = _ov["thal_folds"]
+        data["braak_folds"] = _ov["braak_folds"]
+        out(f"Applied label-shuffle overlay ({_ov.get('mode')}, seed {_ov.get('seed')}): "
+            f"{os.path.basename(args.shuffle_labels)}")
+
     raw_folds = _select_folds(data, args.input_type)
     patient_info_folds = data["patient_info_folds"]
     ptau_folds = data["ptau_folds"]
@@ -774,6 +785,7 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
     criterion_braak = (nn.CrossEntropyLoss(label_smoothing=label_smoothing)
                        if label_smoothing > 0 else nn.CrossEntropyLoss()) if multitask else None
     braak_weight = float(getattr(args, "braak_weight", 1.0))
+    f1_average = getattr(args, "f1_average", "weighted") or "weighted"
 
     device = torch.device(getattr(args, "device", "cpu"))
     out(f"Device: {device}")
@@ -797,6 +809,10 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
     all_pred_labels: List = []
     all_braak_true_labels: List = []
     all_braak_pred_labels: List = []
+    all_thal_scores: List = []
+    all_braak_scores: List = []
+    all_thal_probs: List = []
+    all_braak_probs: List = []
 
     for seed_idx in range(n_seeds):
         current_seed = base_seed + seed_idx
@@ -1190,7 +1206,8 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
                         braak_weight=braak_weight,
                     )
 
-                _eval_kw = dict(thal_ordinal=thal_ordinal, n_thal_classes=n_thal_classes)
+                _eval_kw = dict(thal_ordinal=thal_ordinal, n_thal_classes=n_thal_classes,
+                                f1_average=f1_average)
                 if multitask:
                     _eval_kw.update(criterion_braak=criterion_braak,
                                     idx_to_braak=idx_to_braak, braak_weight=braak_weight)
@@ -1251,12 +1268,13 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
             model.eval()
             with torch.no_grad():
                 _eval_kw = dict(thal_ordinal=thal_ordinal, n_thal_classes=n_thal_classes,
-                                return_preds=True)
+                                return_preds=True, f1_average=f1_average)
                 if multitask:
                     _eval_kw.update(criterion_braak=criterion_braak,
                                     idx_to_braak=idx_to_braak, braak_weight=braak_weight)
                 (_, _, _, report_f1, fold_true, fold_pred, report_braak_f1,
-                 fold_braak_true, fold_braak_pred) = run_eval(
+                 fold_braak_true, fold_braak_pred,
+                 fold_thal_probs, fold_braak_probs) = run_eval(
                     model, test_loader, criterion_ptau, criterion_thal,
                     device, idx_to_thal, **_eval_kw,
                 )
@@ -1291,6 +1309,11 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
             })
             all_true_labels.extend(fold_true)
             all_pred_labels.extend(fold_pred)
+            all_thal_probs.extend(fold_thal_probs)
+            all_thal_scores.extend([p[-1] for p in fold_thal_probs])   # positive-class prob (AUROC)
+            if fold_braak_probs is not None:
+                all_braak_probs.extend(fold_braak_probs)
+                all_braak_scores.extend([p[-1] for p in fold_braak_probs])
 
         # Per-seed summary
         seed_f1s = [r["best_f1"] for r in fold_results]
@@ -1307,10 +1330,22 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
     grand_mae = float(np.mean(all_maes))
 
     pooled_thal = (
-        f1_score(all_true_labels, all_pred_labels, average="weighted")
+        f1_score(all_true_labels, all_pred_labels, average=f1_average)
         if all_true_labels
         else float("nan")
     )
+
+    def _auroc(true_labels, scores):
+        """Pooled AUROC; only defined for a binary target with both classes present."""
+        try:
+            yt = [int(t) for t in true_labels]
+            if len(set(yt)) != 2 or not scores or len(scores) != len(yt):
+                return None
+            return float(roc_auc_score(yt, list(scores)))
+        except Exception:
+            return None
+
+    thal_auroc = _auroc(all_true_labels, all_thal_scores)
 
     out(f"\n{'#'*60}")
     out(f"Grand Summary: {n_seeds} seeds x {n_folds} folds = {len(all_seed_results)} runs")
@@ -1321,8 +1356,9 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
         braak_list = [r["best_braak_f1"] for r in all_seed_results
                       if r.get("best_braak_f1") is not None]
         braak_gen = float(np.mean(braak_list)) if braak_list else float("nan")
-        pooled_braak = (f1_score(all_braak_true_labels, all_braak_pred_labels, average="weighted")
+        pooled_braak = (f1_score(all_braak_true_labels, all_braak_pred_labels, average=f1_average)
                         if all_braak_true_labels else float("nan"))
+        braak_auroc = _auroc(all_braak_true_labels, all_braak_scores)
         pooled_combined = (pooled_thal + pooled_braak) / 2.0
         # grand_f1 here is the mean of per-fold combined (1:1) F1.
         out(f"  Combined (1:1) Generalized F1: {grand_f1:.4f} +/- {grand_std:.4f}")
@@ -1330,11 +1366,20 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
         out(f"    Braak Generalized F1: {braak_gen:.4f}")
         out(f"  Combined Pooled F1: {pooled_combined:.4f} "
             f"(Thal {pooled_thal:.4f}, Braak {pooled_braak:.4f})")
+        if thal_auroc is not None or braak_auroc is not None:
+            _ta = f"{thal_auroc:.4f}" if thal_auroc is not None else "n/a"
+            _ba = f"{braak_auroc:.4f}" if braak_auroc is not None else "n/a"
+            _ca = ((thal_auroc + braak_auroc) / 2.0
+                   if (thal_auroc is not None and braak_auroc is not None) else None)
+            _cas = f"{_ca:.4f}" if _ca is not None else "n/a"
+            out(f"  Pooled AUROC (binary): Combined {_cas} (Thal {_ta}, Braak {_ba})")
         writer.add_scalar("BestBraakF1/generalized_mean", braak_gen, 0)
         writer.add_scalar("CombinedF1/generalized_mean", grand_f1, 0)
     else:
         out(f"  Thal Generalized F1: {grand_f1:.4f} +/- {grand_std:.4f}")
         out(f"  Thal Pooled held-out F1: {pooled_thal:.4f}")
+        if thal_auroc is not None:
+            out(f"  Thal Pooled AUROC (binary): {thal_auroc:.4f}")
     out(f"  Avg MSE: {grand_mse:.4f}, Avg MAE: {grand_mae:.4f}")
     out(f"{'#'*60}")
 
@@ -1342,6 +1387,19 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
     writer.add_scalar("BestF1/pooled", pooled_thal, 0)
     writer.flush()
     writer.close()
+
+    if getattr(args, "save_preds", None):
+        payload = {"thal_true": list(all_true_labels), "thal_pred": list(all_pred_labels),
+                   "thal_probs": list(all_thal_probs),
+                   "multitask": multitask, "target": target}
+        if multitask:
+            payload["braak_true"] = list(all_braak_true_labels)
+            payload["braak_pred"] = list(all_braak_pred_labels)
+            payload["braak_probs"] = list(all_braak_probs)
+        os.makedirs(os.path.dirname(os.path.abspath(args.save_preds)), exist_ok=True)
+        with open(args.save_preds, "wb") as _pf:
+            pickle.dump(payload, _pf)
+        out(f"  Saved pooled held-out predictions -> {args.save_preds}")
 
     return grand_f1, grand_mse, grand_mae, all_seed_results
 
@@ -1373,6 +1431,21 @@ if __name__ == "__main__":
         "--binarize", type=int, default=None, metavar="THRESH",
         help="Binarize the target: labels < THRESH -> 0, >= THRESH -> 1 "
              "(e.g. --binarize 3 for Thal 0-2 vs 3-5).",
+    )
+    parser.add_argument(
+        "--save_preds", type=str, default=None,
+        help="Save pooled held-out (true,pred) labels for Thal/Braak to this pickle "
+             "(for building confusion matrices).",
+    )
+    parser.add_argument(
+        "--shuffle_labels", type=str, default=None, metavar="OVERLAY.pkl",
+        help="Apply a label-shuffle overlay from shuffle_labels_v2.py (permutation control): "
+             "replaces thal_folds/braak_folds with the shuffled labels.",
+    )
+    parser.add_argument(
+        "--f1_average", type=str, default="weighted", choices=["weighted", "macro"],
+        help="F1 averaging: 'weighted' (prevalence-weighted, default) or 'macro' "
+             "(classes equal -- imbalance-robust). Applies to per-fold and pooled Thal/Braak F1.",
     )
     parser.add_argument(
         "--multitask", action="store_true",
