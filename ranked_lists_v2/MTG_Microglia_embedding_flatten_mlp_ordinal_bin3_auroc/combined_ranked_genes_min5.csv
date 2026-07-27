@@ -1,0 +1,5 @@
+combined_rank,gene,gene_symbol,n_seeds_top50,consensus_mean_auroc_drop,mean_rank_across_seeds
+1,ENSG00000144820,ADGRG7,7,0.020312,410.0
+2,ENSG00000004809,SLC22A16,5,0.001637,252.9
+3,ENSG00000004700,RECQL,5,0.001637,119.1
+4,ENSG00000000971,CFH,5,0.000521,221.6

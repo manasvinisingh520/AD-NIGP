@@ -1,0 +1,2 @@
+combined_rank,gene,gene_symbol,n_seeds_top200,consensus_mean_f1_drop,mean_rank_across_seeds
+1,ENSG00000005513,SOX8,9,0.002086,179.5

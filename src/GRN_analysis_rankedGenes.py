@@ -46,11 +46,12 @@ def load_ranked_genes(args):
     return df["gene"].tolist()[: args.n_genes]
 
 
-def load_grn_edges_for_genes(grn_path, geneset, chunksize=2_000_000):
+def load_grn_edges_for_genes(grn_path, geneset, mi_threshold=0.0, chunksize=2_000_000):
     """Stream the (large) GRN and keep only edges touching a gene in `geneset`.
 
     Avoids loading the full ~1GB file into memory and avoids re-scanning it once
-    per gene. Returns a small DataFrame with columns source/target/mi.
+    per gene. Returns a small DataFrame with columns source/target/mi. Edges with
+    mutual information (confidence) below `mi_threshold` are dropped.
     """
     geneset = set(geneset)
     kept = []
@@ -59,6 +60,8 @@ def load_grn_edges_for_genes(grn_path, geneset, chunksize=2_000_000):
         dtype={"source": str, "target": str, "mi": float}, chunksize=chunksize,
     ):
         mask = chunk["source"].isin(geneset) | chunk["target"].isin(geneset)
+        if mi_threshold > 0:
+            mask &= chunk["mi"] >= mi_threshold
         if mask.any():
             kept.append(chunk.loc[mask])
     if not kept:
@@ -105,8 +108,9 @@ def main(args):
     print(f"GRN: {grn_path}")
     print(f"Ranked genes ({len(genes)}): {genes[:10]}{' ...' if len(genes) > 10 else ''}")
 
-    edges = load_grn_edges_for_genes(grn_path, genes)
-    print(f"Edges touching the ranked genes: {len(edges)}")
+    edges = load_grn_edges_for_genes(grn_path, genes, mi_threshold=args.mi_threshold)
+    print(f"Edges touching the ranked genes: {len(edges)}"
+          + (f"  (MI >= {args.mi_threshold})" if args.mi_threshold > 0 else ""))
 
     long_df, summary_df = build_connections(genes, edges)
 
@@ -118,11 +122,13 @@ def main(args):
     summary_df = summary_df[summary_df["ranked_gene"].isin(keep)].reset_index(drop=True)
     long_df = long_df[long_df["ranked_gene"].isin(keep)].reset_index(drop=True)
 
-    os.makedirs("results", exist_ok=True)
+    os.makedirs(args.out_dir, exist_ok=True)
     src = args.label if args.label else ("dge" if args.load_dge_results else "ranked")
     stem = f"GRN_analysis_{src}_{args.data}_{args.cell_type}_{args.region}_top{args.n_genes}"
-    edges_out = f"results/{stem}_edges.csv"
-    summary_out = f"results/{stem}_summary.csv"
+    if args.mi_threshold > 0:
+        stem += f"_mi{args.mi_threshold:g}"
+    edges_out = os.path.join(args.out_dir, f"{stem}_edges.csv")
+    summary_out = os.path.join(args.out_dir, f"{stem}_summary.csv")
     long_df.to_csv(edges_out, index=False)
     summary_df.to_csv(summary_out, index=False)
     print(f"Wrote {len(long_df)} connections -> {edges_out}")
@@ -137,6 +143,11 @@ if __name__ == "__main__":
     parser.add_argument("--data", type=str, default="SEAAD")
     parser.add_argument("--cell_type", type=str, default="Microglia")
     parser.add_argument("--region", type=str, default="MTG")
+    parser.add_argument("--mi_threshold", type=float, default=0.0,
+                        help="Confidence cutoff: keep only GRN edges with mutual information "
+                             ">= this value (default 0.0 = keep all).")
+    parser.add_argument("--out_dir", type=str, default="results",
+                        help="Directory to write the edges/summary CSVs into (default: results).")
     parser.add_argument(
         "--ranked_list", type=str,
         default="ranked_lists_v2/SEAAD_Microglia_flatten_mlp_thalonly_trial25/ranked_genes.csv",
