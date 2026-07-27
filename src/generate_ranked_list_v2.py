@@ -28,7 +28,7 @@ import torch.nn as nn
 import torch.optim as optim
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import f1_score
+from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import LinearSVC
 from torch.utils.data import DataLoader
@@ -124,6 +124,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--loss_ptau", type=str, default="none", choices=["none", "mse", "mae", "huber"])
     parser.add_argument("--label_smoothing", type=float, default=0.0)
     parser.add_argument("--thal_ordinal", action="store_true")
+    parser.add_argument("--rank_metric", type=str, default="f1", choices=["f1", "auroc"],
+                        help="Metric whose per-gene drop defines importance. 'auroc' needs a "
+                             "binary task (use --binarize); it ranks by the drop in P(positive) "
+                             "AUROC, which is far more discriminative than hard-label F1.")
+    parser.add_argument("--binarize", type=int, default=None, metavar="THR",
+                        help="Binarize Thal to {0:<THR, 1:>=THR} before ranking (e.g. --binarize 3). "
+                             "Required for a well-defined --rank_metric auroc.")
     parser.add_argument("--dropout", type=float, default=0.2)
     parser.add_argument("--weight_decay", type=float, default=0.1)
     parser.add_argument("--lr", type=float, default=1e-3)
@@ -162,6 +169,17 @@ def apply_best_params(args: argparse.Namespace) -> argparse.Namespace:
         if hasattr(args, key):
             setattr(args, key, value)
     return args
+
+
+def _binary_auroc(true_labels, scores) -> float:
+    """AUROC of P(positive) vs binary truth. NaN when a fold has only one class."""
+    t = np.asarray([int(x) for x in true_labels])
+    if len(np.unique(t)) < 2:
+        return float("nan")
+    try:
+        return float(roc_auc_score(t, np.asarray(scores, dtype=np.float64)))
+    except Exception:
+        return float("nan")
 
 
 def set_seed(seed: int) -> None:
@@ -231,6 +249,12 @@ def load_fold_data(args: argparse.Namespace):
     thal_folds = [[int(float(x)) for x in f] for f in thal_folds]
     if multitask:
         braak_folds = [[int(float(x)) for x in f] for f in braak_folds]
+
+    # Optional binarization of Thal (0:<thr, 1:>=thr) -- makes AUROC well defined.
+    binarize = getattr(args, "binarize", None)
+    if binarize is not None:
+        thr = int(binarize)
+        thal_folds = [[1 if x >= thr else 0 for x in f] for f in thal_folds]
 
     all_thal = [int(x) for fold in thal_folds for x in fold]
     thal_classes = sorted(set(all_thal))
@@ -563,8 +587,26 @@ def run_torch_fold(
                        braak_weight=braak_weight)
         train_braak_kw.update(criterion_braak=criterion_braak)
 
+    rank_metric = str(getattr(args, "rank_metric", "f1")).lower()
+
     def _sel(thal_f1, braak_f1):
         return (thal_f1 + braak_f1) / 2.0 if (multitask and braak_f1 is not None) else thal_f1
+
+    def _score_loader(loader) -> Tuple[float, float]:
+        """Return (ranking_score, loss). Score is higher-is-better: F1 (default) or
+        binary AUROC on P(top class) when rank_metric == 'auroc'."""
+        res = run_eval(
+            model, loader, criterion_ptau, criterion_thal, device, idx_to_thal,
+            return_preds=True, **eval_kw,
+        )
+        # return_preds tuple: (loss, mse, mae, thal_f1, thal_true, thal_pred,
+        #                       braak_f1, braak_true, braak_pred, thal_probs, braak_probs)
+        loss = float(res[0])
+        if rank_metric == "auroc":
+            thal_true = res[4]
+            thal_scores = [p[-1] for p in res[9]]  # P(positive/top): ordinal->sigmoid, 2-class->softmax[1]
+            return _binary_auroc(thal_true, thal_scores), loss
+        return _sel(res[3], res[6]), loss
 
     if args.model_type == "mil":
         train_bags, train_ptau, train_thal, train_braak = [], [], [], []
@@ -660,7 +702,7 @@ def run_torch_fold(
         lr=float(args.lr),
         weight_decay=float(args.weight_decay),
     )
-    best_f1 = float("-inf")
+    best_score = float("-inf")
     best_loss = float("inf")
     best_state = None
     epochs_no_improve = 0
@@ -692,19 +734,13 @@ def run_torch_fold(
                 n_thal_classes=n_thal_classes,
                 **train_braak_kw,
             )
-        test_loss, _, _, test_thal_f1, test_braak_f1 = run_eval(
-            model,
-            test_loader,
-            criterion_ptau,
-            criterion_thal,
-            device,
-            idx_to_thal,
-            **eval_kw,
+        test_score, test_loss = _score_loader(test_loader)
+        # NaN score (single-class fold under AUROC) never counts as an improvement.
+        improved = np.isfinite(test_score) and (
+            test_score > best_score or (test_score == best_score and test_loss < best_loss)
         )
-        test_f1 = _sel(test_thal_f1, test_braak_f1)
-        improved = test_f1 > best_f1 or (test_f1 == best_f1 and test_loss < best_loss)
         if improved:
-            best_f1 = float(test_f1)
+            best_score = float(test_score)
             best_loss = float(test_loss)
             best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
             epochs_no_improve = 0
@@ -719,11 +755,22 @@ def run_torch_fold(
     if best_state is not None:
         model.load_state_dict(best_state)
 
+    # Baseline for the drop. If no epoch produced a finite score (e.g. single-class
+    # fold under AUROC), re-score the final model; may still be NaN -> fold skipped.
+    baseline = best_score
+    if not np.isfinite(baseline):
+        baseline, _ = _score_loader(test_loader)
+
     if args.verbose:
-        print(f"    best_f1={best_f1:.4f}, epochs={last_epoch + 1}")
+        print(f"    baseline {rank_metric}={baseline:.4f}, epochs={last_epoch + 1}")
 
     n_perm = n_permute_genes or n_genes
     drops = {}
+    if not np.isfinite(baseline):
+        # Undefined baseline -> every gene's drop is NaN for this fold.
+        for g in range(n_perm):
+            drops[g] = float("nan")
+        return baseline, drops
     for g in range(n_perm):
         if args.progress_every and (g == 0 or (g + 1) % int(args.progress_every) == 0):
             print(f"    permuting gene {g + 1}/{n_perm}", flush=True)
@@ -752,21 +799,15 @@ def run_torch_fold(
                     _, perm_x, _, _ = _reshape_for_gene_encoder(perm_x, perm_x, args, n_genes)
                 perm_ds = SimpleDataset(perm_x, test_ptau, test_thal, train=False, braak=test_braak)
                 perm_loader = DataLoader(perm_ds, batch_size=int(args.batch_size), shuffle=False)
-            _, _, _, perm_thal_f1, perm_braak_f1 = run_eval(
-                model,
-                perm_loader,
-                criterion_ptau,
-                criterion_thal,
-                device,
-                idx_to_thal,
-                **eval_kw,
-            )
-            per_rep.append(best_f1 - _sel(perm_thal_f1, perm_braak_f1))
+            perm_score, _ = _score_loader(perm_loader)
+            per_rep.append(baseline - perm_score)
         drops[g] = float(np.mean(per_rep))
-    return best_f1, drops
+    return baseline, drops
 
 
-def aggregate_rank(gene_drops: Dict[int, List[float]], gene_names: List[str], n_folds: int) -> List[dict]:
+def aggregate_rank(gene_drops: Dict[int, List[float]], gene_names: List[str], n_folds: int,
+                   metric: str = "f1") -> List[dict]:
+    mean_col = f"mean_{metric}_drop"
     rows = []
     for g, drops in gene_drops.items():
         while len(drops) < n_folds:
@@ -774,12 +815,12 @@ def aggregate_rank(gene_drops: Dict[int, List[float]], gene_names: List[str], n_
         row = {
             "gene": gene_names[g],
             "gene_index": g,
-            "mean_f1_drop": float(np.nanmean(drops)),
+            mean_col: float(np.nanmean(drops)),
         }
         for i, value in enumerate(drops):
-            row[f"fold{i + 1}_f1_drop"] = value
+            row[f"fold{i + 1}_{metric}_drop"] = value
         rows.append(row)
-    rows.sort(key=lambda r: -r["mean_f1_drop"])
+    rows.sort(key=lambda r: (np.isnan(r[mean_col]), -np.nan_to_num(r[mean_col], nan=-np.inf)))
     for rank, row in enumerate(rows, start=1):
         row["rank"] = rank
     return rows
@@ -796,6 +837,10 @@ def default_output_path(args: argparse.Namespace) -> str:
         bits.append("ordinal")
     if args.pca_components:
         bits.append(f"pca{args.pca_components}")
+    if getattr(args, "binarize", None) is not None:
+        bits.append(f"bin{int(args.binarize)}")
+    if str(getattr(args, "rank_metric", "f1")).lower() != "f1":
+        bits.append(str(args.rank_metric).lower())
     return os.path.join("ranked_lists_v2", "_".join(bits), "ranked_genes.csv")
 
 
@@ -815,6 +860,14 @@ def main() -> None:
     multitask = loaded["multitask"]
     if multitask and args.model_type not in ("mil", "flatten_mlp", "mlp"):
         raise ValueError(f"--multitask supports mil/flatten_mlp/mlp, not {args.model_type}")
+    rank_metric = str(getattr(args, "rank_metric", "f1")).lower()
+    if rank_metric == "auroc":
+        if args.model_type in ("logreg", "svm"):
+            raise ValueError("--rank_metric auroc is not supported for logreg/svm (F1 path only).")
+        if getattr(args, "binarize", None) is None and n_thal_classes > 2:
+            print("WARNING: --rank_metric auroc without --binarize on a multiclass task uses "
+                  "P(top class) as the score, which is a poorly defined ROC target. "
+                  "Strongly recommend --binarize.")
     n_genes = len(gene_names)  # TRUE gene count -> used for gene-width inference
     n_permute_genes = n_genes  # how many genes to actually permute (debug limit)
     if args.max_genes is not None:
@@ -861,16 +914,16 @@ def main() -> None:
                 n_permute_genes=n_permute_genes,
             )
         baseline_f1s.append(base_f1)
-        print(f"  baseline F1={base_f1:.4f}")
+        print(f"  baseline {rank_metric}={base_f1:.4f}")
         for g, drop in drops.items():
             gene_drops[g].append(drop)
 
-    rows = aggregate_rank(gene_drops, gene_names, len(fold_data))
+    rows = aggregate_rank(gene_drops, gene_names, len(fold_data), metric=rank_metric)
     out_path = args.output or default_output_path(args)
     out_dir = os.path.dirname(out_path)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
-    fieldnames = ["rank", "gene", "gene_index", "mean_f1_drop"]
+    fieldnames = ["rank", "gene", "gene_index", f"mean_{rank_metric}_drop"]
     if rows:
         fieldnames.extend([k for k in rows[0] if k.startswith("fold")])
     with open(out_path, "w", newline="", encoding="utf-8") as f:
@@ -878,7 +931,7 @@ def main() -> None:
         writer.writeheader()
         writer.writerows(rows)
 
-    print(f"\nAverage baseline F1: {float(np.mean(baseline_f1s)):.4f}")
+    print(f"\nAverage baseline {rank_metric}: {float(np.nanmean(baseline_f1s)):.4f}")
     print(f"Wrote {len(rows)} genes to {out_path}")
 
 

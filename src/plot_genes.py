@@ -537,7 +537,7 @@ def main():
                 gene_list = get_DEGs(region, top_k=args.top_k, cell_type=args.cell_type, disable_intersection=True, dge_results_dir=dge_results_dir)
                 # Cap to top_k genes by best padj across all comparisons (top 100 from union)
                 if len(gene_list) > args.top_k:
-                    gene_list = get_top_dge_union_genes(region, args.cell_type, args.top_k, dge_results_dir)
+                    gene_list = get_top_dge_union_genes(data=args.data, cell_type=args.cell_type, region=region, top_k=args.top_k, dge_results_dir=dge_results_dir)
                     print(f"Capped to top {args.top_k} genes from union (by best padj)")
                 print(f"Found {len(gene_list)} DEGs")
                 if len(gene_list) == 0:

@@ -47,7 +47,9 @@ from train_utils import (
     collate_mil_eval,
     evaluate_mil_model,
     evaluate_standard,
+    full_classification_metrics,
     generate_random_embeddings,
+    label_dist,
     scaler_partial_fit_bag,
     scaler_transform_bag_inplace,
     train_epoch_mil,
@@ -961,6 +963,14 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
                 test_loader = DataLoader(
                     test_ds, batch_size=1, shuffle=False, collate_fn=collate_mil_eval,
                 )
+                # Non-augmented view of TRAIN for train-set metrics.
+                train_eval_ds = BagDataset(
+                    train_bags, train_ptau_arr, train_thal_arr, train=False,
+                    mil_cells_per_patient=mil_cells, seed=mil_seed, braak=train_braak_arr,
+                )
+                train_eval_loader = DataLoader(
+                    train_eval_ds, batch_size=1, shuffle=False, collate_fn=collate_mil_eval,
+                )
 
                 model = MILModel(
                     cell_input_dim=cell_in,
@@ -1105,6 +1115,11 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
                 )
                 train_loader = DataLoader(train_ds, batch_size=bs, shuffle=True)
                 test_loader = DataLoader(test_ds, batch_size=bs, shuffle=False)
+                # Non-augmented view of TRAIN for train-set metrics (train/test comparison).
+                train_eval_ds = SimpleDataset(
+                    train_emb, train_ptau_arr, train_thal_arr, train=False, braak=train_braak_arr,
+                )
+                train_eval_loader = DataLoader(train_eval_ds, batch_size=bs, shuffle=False)
 
                 dropout = float(getattr(args, "dropout", 0.2))
                 mlp_sizes_str = getattr(args, "mlp_hidden_sizes", "")
@@ -1278,6 +1293,28 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
                     model, test_loader, criterion_ptau, criterion_thal,
                     device, idx_to_thal, **_eval_kw,
                 )
+                # Same eval on the (non-augmented) TRAIN set, for train-vs-test per-fold metrics.
+                (_, _, _, _, tr_true, tr_pred, _,
+                 tr_braak_true, tr_braak_pred,
+                 tr_thal_probs, tr_braak_probs) = run_eval(
+                    model, train_eval_loader, criterion_ptau, criterion_thal,
+                    device, idx_to_thal, **_eval_kw,
+                )
+
+            # --- Per-fold train/test metrics + class distributions (for --per_fold_out) ---
+            fold_metrics = {
+                "test_thal": full_classification_metrics(fold_true, fold_pred, fold_thal_probs),
+                "train_thal": full_classification_metrics(tr_true, tr_pred, tr_thal_probs),
+                "test_thal_dist": label_dist(fold_true),
+                "train_thal_dist": label_dist(tr_true),
+            }
+            if multitask and fold_braak_true is not None:
+                fold_metrics.update({
+                    "test_braak": full_classification_metrics(fold_braak_true, fold_braak_pred, fold_braak_probs),
+                    "train_braak": full_classification_metrics(tr_braak_true, tr_braak_pred, tr_braak_probs),
+                    "test_braak_dist": label_dist(fold_braak_true),
+                    "train_braak_dist": label_dist(tr_braak_true),
+                })
 
             # Combined (1:1) F1 is the primary reported metric for multitask.
             report_combined = ((report_f1 + report_braak_f1) / 2.0
@@ -1306,6 +1343,7 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
                 "best_test_mae": best_mae,
                 "thal_true": fold_true,
                 "thal_pred": fold_pred,
+                "metrics": fold_metrics,
             })
             all_true_labels.extend(fold_true)
             all_pred_labels.extend(fold_pred)
@@ -1401,6 +1439,33 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
             pickle.dump(payload, _pf)
         out(f"  Saved pooled held-out predictions -> {args.save_preds}")
 
+    if getattr(args, "per_fold_out", None):
+        import csv as _csv
+        shuf = (os.path.basename(args.shuffle_labels)
+                if getattr(args, "shuffle_labels", None) else "real")
+        rows = []
+        for r in all_seed_results:
+            m = r.get("metrics", {}) or {}
+            row = {"shuffle": shuf, "binarize": getattr(args, "binarize", None),
+                   "seed": r["seed"], "fold": r["test_fold"],
+                   "combined_test_f1": r["best_f1"]}
+            for split in ("train", "test"):
+                for task in ("thal", "braak"):
+                    mm = m.get(f"{split}_{task}")
+                    if mm:
+                        for k in ("f1_weighted", "f1_macro", "auroc", "acc", "n"):
+                            row[f"{split}_{task}_{k}"] = mm.get(k)
+                    dd = m.get(f"{split}_{task}_dist")
+                    if dd is not None:
+                        row[f"{split}_{task}_dist"] = ";".join(f"{k}:{v}" for k, v in dd.items())
+            rows.append(row)
+        fieldnames = list(dict.fromkeys(k for row in rows for k in row))
+        os.makedirs(os.path.dirname(os.path.abspath(args.per_fold_out)), exist_ok=True)
+        with open(args.per_fold_out, "w", newline="", encoding="utf-8") as _cf:
+            w = _csv.DictWriter(_cf, fieldnames=fieldnames, extrasaction="ignore")
+            w.writeheader(); w.writerows(rows)
+        out(f"  Saved per-fold train/test metrics ({len(rows)} rows) -> {args.per_fold_out}")
+
     return grand_f1, grand_mse, grand_mae, all_seed_results
 
 
@@ -1431,6 +1496,11 @@ if __name__ == "__main__":
         "--binarize", type=int, default=None, metavar="THRESH",
         help="Binarize the target: labels < THRESH -> 0, >= THRESH -> 1 "
              "(e.g. --binarize 3 for Thal 0-2 vs 3-5).",
+    )
+    parser.add_argument(
+        "--per_fold_out", type=str, default=None, metavar="CSV",
+        help="Write per-(seed,fold) train & test metrics (f1 weighted/macro, AUROC, acc) and "
+             "class distributions to this CSV -- for building distributions across runs.",
     )
     parser.add_argument(
         "--save_preds", type=str, default=None,

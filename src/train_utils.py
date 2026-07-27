@@ -15,7 +15,44 @@ import numpy as np
 import torch
 import torch.nn as nn
 from sklearn.decomposition import PCA
-from sklearn.metrics import f1_score, mean_absolute_error, mean_squared_error
+from sklearn.metrics import (
+    accuracy_score,
+    f1_score,
+    mean_absolute_error,
+    mean_squared_error,
+    roc_auc_score,
+)
+from collections import Counter
+
+
+def label_dist(labels):
+    """Compact class-count dict {class: n}, sorted by class."""
+    c = Counter(int(x) for x in labels)
+    return {k: c[k] for k in sorted(c)}
+
+
+def full_classification_metrics(true_labels, pred_labels, probs=None, positive_index=-1):
+    """f1 (weighted + macro), accuracy, and binary AUROC from a set of predictions.
+
+    probs: per-sample full softmax vectors (list of length-K). AUROC is only defined for a
+    binary target (uses probs[:, positive_index]); otherwise returned as NaN.
+    """
+    yt = [int(x) for x in true_labels]
+    yp = [int(x) for x in pred_labels]
+    m = {
+        "f1_weighted": float(f1_score(yt, yp, average="weighted", zero_division=0)),
+        "f1_macro": float(f1_score(yt, yp, average="macro", zero_division=0)),
+        "acc": float(accuracy_score(yt, yp)),
+        "auroc": float("nan"),
+        "n": len(yt),
+    }
+    if probs is not None and len(set(yt)) == 2:
+        try:
+            P = np.asarray(probs, dtype=float)
+            m["auroc"] = float(roc_auc_score(yt, P[:, positive_index]))
+        except Exception:
+            pass
+    return m
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, Dataset
 

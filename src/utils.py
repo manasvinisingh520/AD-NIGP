@@ -1040,16 +1040,13 @@ def get_top_ranked_genes(csv_path, top_k=5):
     return df["gene"].head(top_k).astype(str).str.strip().tolist()
 
 
-def get_top_dge_union_genes(region="EC", cell_type="Astrocytes", top_k=5, dge_results_dir=None):
+def get_top_dge_union_genes(data="Atlas", cell_type="Astrocytes", region="EC", top_k=5, dge_results_dir=None):
     """Return top K gene names from union of region DGE results (by best padj)."""
     default_dge_dir = Path("results/dge_final")
     dge_dir = Path(dge_results_dir) if dge_results_dir else default_dge_dir
     if not dge_dir.exists():
         raise FileNotFoundError(f"DGE results directory not found: {dge_dir}")
-    if cell_type == "Microglia":
-        pattern = f"dge_results_microglia_{region}_*.csv"
-    else:
-        pattern = f"dge_results_{region}_*.csv"
+    pattern = f"dge_results_{data}_{cell_type}_{region}_*.csv"
     dge_files = sorted(dge_dir.glob(pattern))
     if not dge_files:
         raise FileNotFoundError(f"No DGE files for region={region} in {dge_dir}")
