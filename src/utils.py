@@ -1065,6 +1065,51 @@ def get_top_dge_union_genes(data="Atlas", cell_type="Astrocytes", region="EC", t
     return sorted_genes[:top_k]
 
 
+def get_top_DEGs(trend="both", top_k=None, padj_thresh=0.05,
+                 stager_file="results/r_dge_out/stager_combined.csv",
+                 return_frame=False):
+    """Top stage-aware DEGs from the combined stageR table (results/r_dge_out/stager_combined.csv).
+
+    Produced by src/mixed_dge_thal_stager.R: an LRT omnibus screen (gene-level FDR gate)
+    plus Holm-confirmed contrasts (trend .L/.Q and per-stage thal_k_vs_0). Because stageR
+    sets a gene's confirmation padj to 1 whenever it fails the screen, any gene significant
+    in a trend column has already cleared the LRT screen -- so filtering on a trend column
+    implicitly requires screen-pass too.
+
+    Parameters
+    ----------
+    trend : {".L", ".Q", "both"}
+        Which trend shape defines candidacy (ranked by ascending trend padj):
+          .L   -> monotone dose-response with Thal stage      (column trend.L)
+          .Q   -> curvature / transient non-monotone response (column trend.Q)
+          both -> significant in .L OR .Q; ranked by the smaller (most significant) of the two.
+    top_k : int or None   genes to return (None = every gene passing the filter).
+    padj_thresh : float   keep only genes with trend padj < this (default 0.05).
+    return_frame : bool   if True return the ranked DataFrame (padjScreen + all confirmation
+                          columns + a 'trend_padj' sort key) instead of the gene-ID list.
+    """
+    key = str(trend).strip().lower().lstrip(".")
+    colmap = {"l": ["trend.L"], "q": ["trend.Q"],
+              "both": ["trend.L", "trend.Q"], "lq": ["trend.L", "trend.Q"]}
+    if key not in colmap:
+        raise ValueError(f"trend must be one of '.L', '.Q', 'both', got {trend!r}")
+    cols = colmap[key]
+    path = Path(stager_file)
+    if not path.exists():
+        raise FileNotFoundError(f"{path} not found. Run src/mixed_dge_thal_stager.R first.")
+    df = pd.read_csv(path, index_col=0)
+    missing = [c for c in cols + ["padjScreen"] if c not in df.columns]
+    if missing:
+        raise ValueError(f"{path} missing expected column(s): {missing}")
+    df = df.copy()
+    df["trend_padj"] = df[cols].min(axis=1)                 # most-significant selected trend p
+    df = df[df["trend_padj"] < padj_thresh]
+    df = df.sort_values(["trend_padj", "padjScreen"])       # best trend first, screen as tiebreak
+    if top_k is not None:
+        df = df.head(top_k)
+    return df if return_frame else df.index.tolist()
+
+
 def coerce_numeric_series(s):
     """Coerce a Series to numeric: strip, map '90+' -> 90, invalid -> NaN."""
     return pd.to_numeric(

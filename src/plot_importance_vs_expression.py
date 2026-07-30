@@ -17,8 +17,8 @@ from scipy.stats import spearmanr
 
 DATA, CT, REGION = "SEAAD", "Microglia", "MTG"
 RANKED_CSV = "ranked_lists_v2/SEAAD_Microglia_flatten_mlp_thalonly_trial25/ranked_genes.csv"
-TOP_N = 50
-OUT = f"images/importance_vs_expression_{DATA}_{CT}.png"
+TOP_N = 200
+OUT = f"images/importance_vs_basemean_{DATA}_{CT}.png"
 
 
 def per_donor_expr_stats():
@@ -71,48 +71,37 @@ def scatter(ax, x, y, top_mask, xlabel, ylabel, title, logx=False):
 
 
 def main():
-    stats = per_donor_expr_stats()
-
-    # ---- RANKED ----
-    r = pd.read_csv(RANKED_CSV)[["gene", "rank", "mean_f1_drop"]]
-    rk = stats.merge(r, on="gene", how="inner")
-    rk_top = rk["rank"] <= TOP_N
-
-    # ---- DGE ----
+    # DESeq2 baseMean per gene (its own expression measure) — used as the x-axis for BOTH panels.
     dg = dge_best()
     dg["neglog10padj"] = -np.log10(dg["padj"].clip(lower=1e-300))
-    dg = dg.sort_values("padj").reset_index(drop=True)
-    dg_top = np.arange(len(dg)) < TOP_N
+    base = dg[["gene", "baseMean"]]
 
-    fig, axes = plt.subplots(2, 2, figsize=(13, 11))
-    r1 = scatter(axes[0, 0], rk["expr_mean"].values, rk["mean_f1_drop"].values, rk_top.values,
-                 "mean log1p expression (per-donor)", "importance (mean F1 drop)",
-                 "RANKED: importance vs expression LEVEL")
-    r2 = scatter(axes[0, 1], rk["expr_var"].values, rk["mean_f1_drop"].values, rk_top.values,
-                 "expression variance across donors", "importance (mean F1 drop)",
-                 "RANKED: importance vs expression VARIANCE")
-    r3 = scatter(axes[1, 0], dg["baseMean"].values, dg["neglog10padj"].values, dg_top,
+    # ---- RANKED: importance vs DESeq2 baseMean ----
+    r = pd.read_csv(RANKED_CSV)[["gene", "rank", "mean_f1_drop"]]
+    rk = r.merge(base, on="gene", how="inner")   # keep ranked genes that have a baseMean
+    rk_top = rk["rank"] <= TOP_N
+
+    # ---- DGE: importance vs DESeq2 baseMean ----
+    dgs = dg.sort_values("padj").reset_index(drop=True)
+    dg_top = np.arange(len(dgs)) < TOP_N
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    r1 = scatter(axes[0], rk["baseMean"].values, rk["mean_f1_drop"].values, rk_top.values,
+                 "DESeq2 baseMean (expression level)", "importance (mean F1 drop)",
+                 "RANKED: importance vs DESeq2 baseMean", logx=True)
+    r3 = scatter(axes[1], dgs["baseMean"].values, dgs["neglog10padj"].values, dg_top,
                  "DESeq2 baseMean (expression level)", "importance (-log10 padj)",
-                 "DGE: importance vs expression LEVEL", logx=True)
-    # DGE variance proxy: |log2FC| isn't variance; use baseMean again vs rank is covered.
-    # Second DGE panel: importance vs |log2FC| to show it's not just fold-change-from-noise.
-    axes[1, 1].axis("off")
-    axes[1, 1].text(0.5, 0.5,
-                    f"Spearman ρ (importance vs expression):\n\n"
-                    f"RANKED vs expr level:     {r1:+.2f}\n"
-                    f"RANKED vs expr variance:  {r2:+.2f}\n"
-                    f"DGE   vs expr level:      {r3:+.2f}\n\n"
-                    f"(|ρ| near 0  → importance is NOT just expression;\n"
-                    f" |ρ| large   → importance largely tracks expression)",
-                    ha="center", va="center", fontsize=12, family="monospace",
-                    bbox=dict(boxstyle="round", facecolor="#f5f5f5"))
+                 "DGE: importance vs DESeq2 baseMean", logx=True)
 
-    fig.suptitle(f"{DATA} {CT} — is gene importance just expression level?",
-                 fontsize=15, fontweight="bold")
-    fig.tight_layout(rect=[0, 0, 1, 0.97])
+    fig.suptitle(f"{DATA} {CT} — is gene importance just expression (DESeq2 baseMean)?\n"
+                 f"RANKED ρ={r1:+.2f}   |   DGE ρ={r3:+.2f}   "
+                 f"(|ρ|~0 → not expression; large → tracks expression)",
+                 fontsize=13, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.94])
     os.makedirs("images", exist_ok=True)
     fig.savefig(OUT, dpi=150, bbox_inches="tight", facecolor="white")
-    print(f"RANKED  Spearman: importance vs expr level={r1:+.3f}, vs expr variance={r2:+.3f}")
+    print(f"RANKED genes with a baseMean: {len(rk)} of {len(r)}")
+    print(f"RANKED  Spearman: importance vs baseMean={r1:+.3f}")
     print(f"DGE     Spearman: importance vs baseMean={r3:+.3f}")
     print(f"Saved -> {OUT}")
 

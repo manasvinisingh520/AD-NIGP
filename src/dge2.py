@@ -568,6 +568,20 @@ if __name__ == "__main__":
              'For Atlas Astrocytes batch use: -covariates Flowcell.'
     )
 
+    parser.add_argument(
+        '-binarize',
+        action='store_true',
+        help='Binarize the condition into low(1) vs high(2) and run the single low-vs-high contrast. '
+             'ADNC: Not-AD/Low vs Intermediate/High. Thal phase: <thr vs >=thr (default thr=3). '
+             'Output tagged _binADNC / _binThal.'
+    )
+    parser.add_argument(
+        '-binarize_threshold',
+        type=int,
+        default=None,
+        help='Threshold for -binarize on numeric staging (Thal phase). Default 3 (Thal>=3 = high).'
+    )
+
     # Parse arguments
     args = parser.parse_args()
     
@@ -639,6 +653,10 @@ if __name__ == "__main__":
             condition_col = "_dge_condition"
             sea_ad_already_pseudobulked = True
             print(f"Combined: {adata.n_obs} pseudobulk samples × {adata.n_vars} genes. Condition levels 1–4. Patients: {patient_col}.")
+            if getattr(args, "binarize", False):
+                _bmap = {"1": "1", "2": "1", "3": "2", "4": "2"}
+                adata.obs["_dge_condition"] = adata.obs["_dge_condition"].map(_bmap)
+                print("Binarized ADNC: 1=low (Not AD/Low), 2=high (Intermediate/High).")
         else:
             # Single file
             adata = anndata.read_h5ad(adata_path)
@@ -662,6 +680,26 @@ if __name__ == "__main__":
                     print(f"Mapped condition to levels 1–4; dropped {n_dropped} cells with unmapped values (e.g. Reference).")
                 condition_col = "_dge_condition"
                 print(f"Condition levels for DGE: 1=Not AD, 2=Low, 3=Intermediate, 4=High. Patients: {patient_col}.")
+                if getattr(args, "binarize", False):
+                    _bmap = {"1": "1", "2": "1", "3": "2", "4": "2"}
+                    adata.obs["_dge_condition"] = adata.obs["_dge_condition"].map(_bmap)
+                    print("Binarized ADNC: 1=low (Not AD/Low), 2=high (Intermediate/High).")
+            elif condition_col == "Thal phase":
+                # "Thal 0".."Thal 5" -> 0..5; "Reference"/unmapped -> NaN (dropped).
+                raw = adata.obs[condition_col].astype(str).str.strip()
+                thal_map = {f"Thal {i}": str(i) for i in range(6)}
+                adata.obs["_dge_condition"] = raw.map(thal_map)
+                n_before = adata.n_obs
+                adata = adata[adata.obs["_dge_condition"].notna()].copy()
+                print(f"Mapped Thal phase to 0-5; dropped {n_before - adata.n_obs} cells (Reference/unmapped).")
+                condition_col = "_dge_condition"
+                if getattr(args, "binarize", False):
+                    thr = int(getattr(args, "binarize_threshold", None) or 3)
+                    adata.obs["_dge_condition"] = adata.obs["_dge_condition"].map(
+                        lambda x: "2" if int(x) >= thr else "1")
+                    print(f"Binarized Thal: 1=low (Thal<{thr}), 2=high (Thal>={thr}).")
+                else:
+                    print("Thal levels 0-5 for DGE.")
     elif args.data == "ROSMAP":
         adata, condition_col, patient_col = _load_rosmap_anndata(
             args.cell_type,
@@ -800,12 +838,19 @@ if __name__ == "__main__":
             if len(parts) != 2:
                 raise ValueError(f"Each --groups value must be group1,group2 (e.g. 1,2), got: {g}")
             group_tuples.append((str(parts[0].strip()), str(parts[1].strip())))
+    elif getattr(args, "binarize", False):
+        group_tuples = [('1', '2')]   # binary: low (Not AD/Low) vs high (Intermediate/High)
     else:
         group_tuples = [('1', '2'), ('1', '3'), ('1', '4'), ('2', '3'), ('2', '4'), ('3', '4')]
     print(f"Condition comparisons: {group_tuples}")
 
     cov_tag = ("_cov" + "-".join(covariates)) if covariates else ""
-    out_suffix = f"{args.data}_{args.cell_type}_{region}_pseudobulk{pseudobulk_label}_seed{args.seed}{cov_tag}"
+    if getattr(args, "binarize", False):
+        _cc = str(args.condition_col)
+        bin_tag = "_binThal" if _cc == "Thal phase" else ("_binBraak" if _cc == "Braak stage" else "_binADNC")
+    else:
+        bin_tag = ""
+    out_suffix = f"{args.data}_{args.cell_type}_{region}_pseudobulk{pseudobulk_label}_seed{args.seed}{bin_tag}{cov_tag}"
     output_file = os.path.join(output_dir, f"dge_results_{out_suffix}.csv")
     dge = DGEAnalyzer(
         data_file=adata,

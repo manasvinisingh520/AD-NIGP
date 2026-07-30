@@ -1,0 +1,2 @@
+combined_rank,gene,gene_symbol,n_seeds_top200,consensus_mean_f1_drop,mean_rank_across_seeds,mean_log1p_expr
+1,ENSG00000009950,MLXIPL,8,0.001684,449.4,0.3494

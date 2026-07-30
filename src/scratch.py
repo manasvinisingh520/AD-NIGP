@@ -66,7 +66,7 @@ def get_dge_genes_by_contrast_count(
     return sorted(genes)
 
 
-genes = get_dge_genes_by_contrast_count(n_contrasts=5, mode="atleast")
+genes = pd.read_csv("results/GRN_Analysis/mi3.0/GRN_analysis_f1_top200_min5_SEAAD_Microglia_MTG_top52_mi3_summary.csv", usecols=[0]).squeeze("columns").tolist()
 with open("results/scratch.txt", "w") as f:
     for gene in genes:
         f.write(f"{gene}\n")
