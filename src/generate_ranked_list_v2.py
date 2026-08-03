@@ -98,6 +98,8 @@ def parse_args() -> argparse.Namespace:
         help="Optional autosearch *_best_params.json; trial_params override matching CLI args.",
     )
     parser.add_argument("--expr_transform", type=str, default="log1p")
+    parser.add_argument("--filtered", action="store_true",
+                        help="Load the _filtered v2 data pickle (built by create_data_v2.py --filtered).")
     parser.add_argument("--n_folds_eval", type=int, default=8)
     parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--patience", type=int, default=40)
@@ -217,7 +219,8 @@ def make_criteria(args: argparse.Namespace) -> Tuple[Optional[nn.Module], nn.Mod
 
 def load_fold_data(args: argparse.Namespace):
     data = _load_v2_pickle(args.region, args.cell_type, expr_transform=args.expr_transform,
-                           dataset=getattr(args, "data", "Atlas"))
+                           dataset=getattr(args, "data", "Atlas"),
+                           filtered=getattr(args, "filtered", False))
     raw_folds = _select_folds(data, args.input_type)
     patient_info_folds = data["patient_info_folds"]
     ptau_folds = data["ptau_folds"]

@@ -52,14 +52,21 @@ ALL_SEARCHABLE_MODELS = EXPR_MODEL_CHOICES + EMB_MODEL_CHOICES
 # Models with Thal+Braak heads (the only ones valid under --multitask).
 MULTITASK_MODELS = ("mlp", "flatten_mlp", "mil")
 _MULTITASK = False  # set by main() from --multitask; narrows the model search space below
+_ALLOWED_MODELS = None  # set by main() from --models; restricts the searchable model_types
 
 
 def _expr_models():
-    return [m for m in EXPR_MODEL_CHOICES if m in MULTITASK_MODELS] if _MULTITASK else EXPR_MODEL_CHOICES
+    ms = [m for m in EXPR_MODEL_CHOICES if m in MULTITASK_MODELS] if _MULTITASK else list(EXPR_MODEL_CHOICES)
+    if _ALLOWED_MODELS:
+        ms = [m for m in ms if m in _ALLOWED_MODELS]
+    return ms
 
 
 def _emb_models():
-    return [m for m in EMB_MODEL_CHOICES if m in MULTITASK_MODELS] if _MULTITASK else EMB_MODEL_CHOICES
+    ms = [m for m in EMB_MODEL_CHOICES if m in MULTITASK_MODELS] if _MULTITASK else list(EMB_MODEL_CHOICES)
+    if _ALLOWED_MODELS:
+        ms = [m for m in ms if m in _ALLOWED_MODELS]
+    return ms
 
 PCA_CHOICES = [None, 16, 50, 100]
 MLP_MENU = ["", "64,32,16", "128,64,32", "256,128,64,32"]
@@ -171,11 +178,15 @@ def suggest_trial_optuna(trial, *, fixed_input_type: Optional[str] = None) -> Tr
 
     if input_type == "expression":
         # Use a distinct Optuna parameter name for expression-only models
-        model_type = trial.suggest_categorical("model_type_expr", _expr_models())
+        choices = _expr_models()
+        # When pinned to a single model, assign directly -- registering a 1-choice
+        # categorical would clash with a study that stored the full space.
+        model_type = choices[0] if len(choices) == 1 else trial.suggest_categorical("model_type_expr", choices)
     else:
         # And a separate name for embedding-based models to avoid
         # dynamic value spaces on a single parameter.
-        model_type = trial.suggest_categorical("model_type_emb", _emb_models())
+        choices = _emb_models()
+        model_type = choices[0] if len(choices) == 1 else trial.suggest_categorical("model_type_emb", choices)
 
     is_sklearn = model_type in ("logreg", "svm")
     is_scvi = model_type == "scvi"
@@ -515,9 +526,11 @@ def params_to_namespace(
     data: str = "Atlas",
     multitask: bool = False,
     braak_weight: float = 1.0,
+    filtered: bool = False,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         data=data,
+        filtered=filtered,
         multitask=multitask,
         braak_weight=braak_weight,
         region=region,
@@ -888,6 +901,7 @@ def run_optuna_sampler(args: argparse.Namespace) -> None:
             quiet=not args.verbose, no_online_augment=args.no_online_augment,
             attention_heads=args.attention_heads,
             multitask=args.multitask, braak_weight=args.braak_weight,
+            filtered=getattr(args, "filtered", False),
         )
         f1, err = _run_one_trial(ns)
         row = {"trial": trial.number, "value": f1, "error": err or "", "exp_id": exp_id, **asdict(p)}
@@ -955,6 +969,7 @@ def run_random_sampler(args: argparse.Namespace) -> None:
             quiet=not args.verbose, no_online_augment=args.no_online_augment,
             attention_heads=args.attention_heads,
             multitask=args.multitask, braak_weight=args.braak_weight,
+            filtered=getattr(args, "filtered", False),
         )
         f1, err = _run_one_trial(ns)
         row = {"trial": i, "value": f1, "error": err or "", "exp_id": exp_id, **asdict(p)}
@@ -1079,6 +1094,7 @@ def run_llm_sampler(args: argparse.Namespace) -> None:
                 quiet=not args.verbose, no_online_augment=args.no_online_augment,
                 attention_heads=args.attention_heads,
                 multitask=args.multitask, braak_weight=args.braak_weight,
+                filtered=getattr(args, "filtered", False),
             )
             f1, err = _run_one_trial(ns)
             row = {"trial": trial_id, "value": f1, "error": err or "", "exp_id": exp_id, **asdict(p)}
@@ -1119,6 +1135,12 @@ def main() -> None:
     parser.add_argument("--cell_type", type=str, nargs="+", default=["Astrocytes"],
                         choices=["Astrocytes", "Microglia"],
                         help="One or more cell types (runs sequentially per type).")
+    parser.add_argument("--filtered", action="store_true",
+                        help="Load the _filtered v2 data pickle (create_data_v2.py --filtered).")
+    parser.add_argument("--models", type=str, nargs="+", default=None,
+                        choices=ALL_SEARCHABLE_MODELS,
+                        help="Restrict the model_type search space (e.g. --models flatten_mlp). "
+                             "Default: search all models for the chosen input_type(s).")
     parser.add_argument("--data", type=str, default="Atlas", choices=["Atlas", "SEAAD"],
                         help="Dataset. SEAAD loads SEAAD_<cell_type>_v2_data_*.pkl; "
                              "pass any --region label (used only for study/db naming).")
@@ -1179,11 +1201,14 @@ def main() -> None:
     if args.total_trials is not None:
         args.n_trials = args.total_trials
 
-    global _MULTITASK
+    global _MULTITASK, _ALLOWED_MODELS
     _MULTITASK = bool(args.multitask)  # narrows the model search space to Thal+Braak-capable models
     if _MULTITASK:
         print(f"[autosearch] multitask ON: searching only {MULTITASK_MODELS}; "
               f"objective = combined 1:1 Thal+Braak F1 (braak_weight={args.braak_weight})")
+    _ALLOWED_MODELS = set(args.models) if getattr(args, "models", None) else None
+    if _ALLOWED_MODELS:
+        print(f"[autosearch] restricting model_type search to: {sorted(_ALLOWED_MODELS)}")
 
     cell_types = args.cell_type          # list (nargs="+")
     input_types = args.input_type        # list or None

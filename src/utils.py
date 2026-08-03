@@ -1040,8 +1040,17 @@ def get_top_ranked_genes(csv_path, top_k=5):
     return df["gene"].head(top_k).astype(str).str.strip().tolist()
 
 
-def get_top_dge_union_genes(data="Atlas", cell_type="Astrocytes", region="EC", top_k=5, dge_results_dir=None):
-    """Return top K gene names from union of region DGE results (by best padj)."""
+def get_top_dge_union_genes(data="Atlas", cell_type="Astrocytes", region="EC", top_k=5,
+                            dge_results_dir=None, padj_thresh=None, lfc_thresh=None):
+    """Return top K gene names from the union of region DGE results, ranked by best padj.
+
+    A gene's score is its smallest padj across the region's contrast files. Optional filters
+    are applied per contrast (a gene qualifies via any single contrast passing both):
+      padj_thresh : keep only genes reaching padj < padj_thresh in some contrast.
+      lfc_thresh  : additionally require |log2FoldChange| >= lfc_thresh in that same contrast.
+    With both None (default) every tested gene is eligible, so the result is a pure top-K by
+    best padj. Genes are sorted by best qualifying padj and the top_k returned.
+    """
     default_dge_dir = Path("results/dge_final")
     dge_dir = Path(dge_results_dir) if dge_results_dir else default_dge_dir
     if not dge_dir.exists():
@@ -1055,13 +1064,20 @@ def get_top_dge_union_genes(data="Atlas", cell_type="Astrocytes", region="EC", t
         df = pd.read_csv(path, index_col=0)
         if "padj" not in df.columns:
             continue
-        for gene in df.index[df["padj"].notna()]:
-            p = float(df.loc[gene, "padj"])
+        sub = df[df["padj"].notna()]
+        if padj_thresh is not None:
+            sub = sub[sub["padj"] < padj_thresh]
+        if lfc_thresh is not None:
+            if "log2FoldChange" not in sub.columns:
+                raise ValueError(f"{path} has no log2FoldChange column for lfc_thresh filter.")
+            sub = sub[sub["log2FoldChange"].abs() >= lfc_thresh]
+        for gene, p in sub["padj"].items():
+            p = float(p)
             if gene not in gene_to_best_padj or p < gene_to_best_padj[gene]:
                 gene_to_best_padj[gene] = p
     if not gene_to_best_padj:
-        raise ValueError("No genes with valid padj in DGE results.")
-    sorted_genes = sorted(gene_to_best_padj.keys(), key=lambda g: gene_to_best_padj[g])
+        raise ValueError("No genes pass the DGE filters (padj_thresh / lfc_thresh too strict?).")
+    sorted_genes = sorted(gene_to_best_padj, key=lambda g: gene_to_best_padj[g])
     return sorted_genes[:top_k]
 
 

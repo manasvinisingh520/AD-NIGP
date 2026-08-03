@@ -125,6 +125,9 @@ def _build_folds(
 def main(args):
     cell_type = args.cell_type
     data = getattr(args, "data", "Atlas")
+    filt_tag = "_filtered" if getattr(args, "filtered", False) else ""
+    if filt_tag:
+        print("Using the FILTERED gene-embedding variant.")
 
     if data in ("SEAAD", "ROSMAP"):
         if cell_type not in ("Astrocytes", "Microglia"):
@@ -151,13 +154,15 @@ def main(args):
         # --- AnnData (all datasets load their pre-built perCell object) ---
         adata = load_percell_anndata(data, cell_type, region)
 
-        # --- Gene embeddings ---
+        # --- Gene embeddings (optionally the _filtered variant) ---
         if data in ("SEAAD", "ROSMAP"):
-            emb_path = os.path.join(embeddings_dir, f"{data}_{cell_type}_gene_embeddings.tsv")
+            emb_path = os.path.join(embeddings_dir, f"{data}_{cell_type}{filt_tag}_gene_embeddings.tsv")
         elif cell_type == "Astrocytes":
-            emb_path = os.path.join(embeddings_dir, f"{region}_gene_embeddings.tsv")
+            emb_path = os.path.join(embeddings_dir, f"{region}{filt_tag}_gene_embeddings.tsv")
         else:  # Microglia
-            emb_path = os.path.join(embeddings_dir, f"{region}_Microglia_gene_embeddings.tsv")
+            emb_path = os.path.join(embeddings_dir, f"{region}_Microglia{filt_tag}_gene_embeddings.tsv")
+        if not os.path.exists(emb_path):
+            raise FileNotFoundError(f"Gene embedding file not found: {emb_path}")
 
         embeddings_dict = load_gene_embeddings(emb_path, gene_list=adata.var_names)
         adata = adata[:, adata.var_names.isin(embeddings_dict.keys())].copy()
@@ -298,11 +303,11 @@ def main(args):
         out_dir = os.path.join("data", "model_data")
         os.makedirs(out_dir, exist_ok=True)
         if data in ("SEAAD", "ROSMAP"):
-            out_name = f"{data}_{cell_type}_v2_data_{expr_transform}.pkl"
+            out_name = f"{data}_{cell_type}_v2_data_{expr_transform}{filt_tag}.pkl"
         elif cell_type == "Microglia":
-            out_name = f"{region}_Microglia_v2_data_{expr_transform}.pkl"
+            out_name = f"{region}_Microglia_v2_data_{expr_transform}{filt_tag}.pkl"
         else:
-            out_name = f"{region}_v2_data_{expr_transform}.pkl"
+            out_name = f"{region}_v2_data_{expr_transform}{filt_tag}.pkl"
         out_path = os.path.join(out_dir, out_name)
 
         payload = {
@@ -363,6 +368,13 @@ if __name__ == "__main__":
         choices=["log1p", "sqrt", "linear"],
         help="Transform applied to raw UMI counts before saving expression folds "
              "and before scaling gene embeddings. Default: log1p",
+    )
+    parser.add_argument(
+        "--filtered",
+        action="store_true",
+        help="Load the _filtered gene-embedding variant (e.g. "
+             "GREmLN/embeddings/SEAAD_Microglia_filtered_gene_embeddings.tsv) and tag the "
+             "output pickle with _filtered.",
     )
     args = parser.parse_args()
     main(args)

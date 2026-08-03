@@ -54,6 +54,8 @@ parser.add_argument('--region', type=str, default=None,
 parser.add_argument('--cell_type', type=str, default=None, choices=['Astrocytes', 'Microglia'],
                     help='Cell type; resolves the embedding stem for all datasets '
                          '(ROSMAP_<ct>, SEAAD_<ct>, or Atlas <region>[_Microglia]).')
+parser.add_argument('--filter', action='store_true',
+                    help='Call for filtered SEAAD by 3.04 MI threshold')
 parser.add_argument('--embeddings_dir', type=str, default=os.path.join('GREmLN', 'embeddings'),
                     help='Directory of *_cell_embeddings.tsv (default GREmLN/embeddings; use '
                          'pseudobulk_embeddings for the raw-pseudobulk UMAP embeddings).')
@@ -626,7 +628,10 @@ if args.combine_all:
 else:
     # Load single region
     region = args.region
-    embeddings_path = os.path.join(args.embeddings_dir, f"{region}_cell_embeddings.tsv")
+    if not args.filter:
+        embeddings_path = os.path.join(args.embeddings_dir, f"{region}_cell_embeddings.tsv")
+    else:
+        embeddings_path = os.path.join(args.embeddings_dir, f"{region}_filtered_cell_embeddings.tsv")
     if not os.path.exists(embeddings_path):
         raise FileNotFoundError(
             f"Embeddings not found: {embeddings_path} (data={args.data}, region={region})")

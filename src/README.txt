@@ -51,12 +51,6 @@ normalization_guide.md: different ways to normalize sn-RNA seq data (CPM, UMI ra
 plot_cell_embeddings.py: plots cell embeddings from GREmLN
                         goes through multiple dimensions and clusters (best silhoutte score)
 
-plot_expressionLevel.py: plots graph showing
-                        X-axis: Cell index (cells grouped by condition)
-                        Y-axis: Normalized gene expression (0–1)
-                        Colors: Different genes
-                        Vertical lines: Separating conditions
-
 plot_gene_embeddings.py: plot gene embeddings from GREmLN
 
 plot_genes.py: creates an image with genes on Y-axis and cell expression (normalized) by Colors
@@ -68,14 +62,6 @@ read_mtx_example.py: creates a "fake" mtx file to read
 scale_gene_embeddings.py: scale gene embeddings according to cell expression (not read over)
 
 scratch.py: simple scratch work
-
-test_binning.py: extracts top k genes per condition comparison for given region 
-                calculates overlap between all dge results 
-                tests reproducability of binning strategy
-
-test_motifs_dataset.py: test overlap between motif file and TF file (NOT USED)
-
-test_TF_dataset.py: test overlap between TF file and Astrocytes genes (USED)
 
 train_model.py: --model baseline | gene_encoder | mil (MIL: --mil_cells_per_patient, --mil_hidden_dim, ...; default no PCA on bags, use --mil_use_pca with --pca_components to shrink).
   Online augmentation (replaces deprecated create_data --augment_scaling / _augScaling pickles):

@@ -1,0 +1,6562 @@
+{
+  "root": "SOX8",
+  "nodes": {
+    "SOX8": {
+      "level": 0,
+      "type": "regulator"
+    },
+    "LINC00567": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000267172": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000286483": {
+      "level": 1,
+      "type": "gene"
+    },
+    "A2ML1-AS2": {
+      "level": 1,
+      "type": "gene"
+    },
+    "LINC02635": {
+      "level": 1,
+      "type": "gene"
+    },
+    "TRIM64C": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000271579": {
+      "level": 1,
+      "type": "gene"
+    },
+    "LINC00161": {
+      "level": 1,
+      "type": "gene"
+    },
+    "LINC01657": {
+      "level": 1,
+      "type": "gene"
+    },
+    "GNAT1": {
+      "level": 1,
+      "type": "gene"
+    },
+    "LINC00261": {
+      "level": 1,
+      "type": "gene"
+    },
+    "PRICKLE2-DT": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000230967": {
+      "level": 1,
+      "type": "gene"
+    },
+    "LINC00644": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000287138": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000251621": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000223530": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000261569": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000176782": {
+      "level": 1,
+      "type": "gene"
+    },
+    "CHP2": {
+      "level": 1,
+      "type": "gene"
+    },
+    "TRAJ3": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000286028": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000259989": {
+      "level": 1,
+      "type": "gene"
+    },
+    "OR1A2": {
+      "level": 1,
+      "type": "gene"
+    },
+    "FAM24A": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000278147": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000286807": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000257096": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000271724": {
+      "level": 1,
+      "type": "gene"
+    },
+    "OR2K2": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000233728": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000285698": {
+      "level": 1,
+      "type": "gene"
+    },
+    "APOA4": {
+      "level": 1,
+      "type": "gene"
+    },
+    "OR2AP1": {
+      "level": 1,
+      "type": "gene"
+    },
+    "GGTLC3": {
+      "level": 1,
+      "type": "gene"
+    },
+    "AC021146.12": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000264491": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000285800": {
+      "level": 1,
+      "type": "gene"
+    },
+    "SULT1C3": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000211938": {
+      "level": 1,
+      "type": "gene"
+    },
+    "NKX6-1": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000285586": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000251527": {
+      "level": 1,
+      "type": "gene"
+    },
+    "AGTR2": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000287046": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000262624": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000288089": {
+      "level": 1,
+      "type": "gene"
+    },
+    "SPO11": {
+      "level": 1,
+      "type": "gene"
+    },
+    "PRG3": {
+      "level": 1,
+      "type": "gene"
+    },
+    "IRS4": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000227489": {
+      "level": 1,
+      "type": "gene"
+    },
+    "MLNR": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000260679": {
+      "level": 1,
+      "type": "gene"
+    },
+    "TMEM239": {
+      "level": 1,
+      "type": "gene"
+    },
+    "LINC02419": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000241754": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000230686": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000287909": {
+      "level": 1,
+      "type": "gene"
+    },
+    "TBATA": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000224359": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000236336": {
+      "level": 1,
+      "type": "gene"
+    },
+    "UBL4B": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000253339": {
+      "level": 1,
+      "type": "gene"
+    },
+    "MRGPRG-AS1": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000250173": {
+      "level": 1,
+      "type": "gene"
+    },
+    "SP5": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000236028": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000229434": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000270159": {
+      "level": 1,
+      "type": "gene"
+    },
+    "LINC00851": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000258931": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000267992": {
+      "level": 1,
+      "type": "gene"
+    },
+    "CDKN2A-DT": {
+      "level": 1,
+      "type": "gene"
+    },
+    "TRAV22": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000251189": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000231080": {
+      "level": 1,
+      "type": "gene"
+    },
+    "OR8G5": {
+      "level": 1,
+      "type": "gene"
+    },
+    "HSFX1": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000225819": {
+      "level": 1,
+      "type": "gene"
+    },
+    "LINC02011": {
+      "level": 1,
+      "type": "gene"
+    },
+    "AC104389.5": {
+      "level": 1,
+      "type": "gene"
+    },
+    "OR4M1": {
+      "level": 1,
+      "type": "gene"
+    },
+    "LINC02304": {
+      "level": 1,
+      "type": "gene"
+    },
+    "SLC35D3": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000259870": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000275496": {
+      "level": 1,
+      "type": "gene"
+    },
+    "EVX2": {
+      "level": 1,
+      "type": "gene"
+    },
+    "AC078865.1": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000248416": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000211724": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000131737": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000250657": {
+      "level": 1,
+      "type": "gene"
+    },
+    "PAGE4": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000225698": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000287669": {
+      "level": 1,
+      "type": "gene"
+    },
+    "SPATA13": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000277235": {
+      "level": 1,
+      "type": "gene"
+    },
+    "OR4F6": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000272457": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000250150": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000229779": {
+      "level": 1,
+      "type": "gene"
+    },
+    "RXFP4": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000287128": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000236920": {
+      "level": 1,
+      "type": "gene"
+    },
+    "ENSG00000272329": {
+      "level": 2,
+      "type": "gene"
+    },
+    "ENSG00000224049": {
+      "level": 2,
+      "type": "gene"
+    },
+    "ENSG00000250338": {
+      "level": 2,
+      "type": "gene"
+    },
+    "LINC01779": {
+      "level": 2,
+      "type": "gene"
+    },
+    "ENSG00000261198": {
+      "level": 2,
+      "type": "gene"
+    },
+    "AC246793.1": {
+      "level": 2,
+      "type": "gene"
+    },
+    "ENSG00000253692": {
+      "level": 2,
+      "type": "gene"
+    },
+    "ENSG00000288001": {
+      "level": 2,
+      "type": "gene"
+    },
+    "ENSG00000286779": {
+      "level": 2,
+      "type": "gene"
+    },
+    "ENSG00000278907": {
+      "level": 2,
+      "type": "gene"
+    },
+    "ENSG00000182334": {
+      "level": 2,
+      "type": "gene"
+    },
+    "ENSG00000212901": {
+      "level": 2,
+      "type": "gene"
+    },
+    "LINC01955": {
+      "level": 2,
+      "type": "gene"
+    },
+    "ENSG00000238156": {
+      "level": 2,
+      "type": "gene"
+    },
+    "ENSG00000267304": {
+      "level": 2,
+      "type": "gene"
+    },
+    "SPRR2A": {
+      "level": 2,
+      "type": "gene"
+    },
+    "ENSG00000274276": {
+      "level": 2,
+      "type": "gene"
+    },
+    "KRT28": {
+      "level": 2,
+      "type": "gene"
+    },
+    "ENSG00000235620": {
+      "level": 2,
+      "type": "gene"
+    },
+    "ENSG00000266102": {
+      "level": 2,
+      "type": "gene"
+    },
+    "ENSG00000285997": {
+      "level": 2,
+      "type": "gene"
+    },
+    "ENSG00000256757": {
+      "level": 2,
+      "type": "gene"
+    },
+    "AC234771.1": {
+      "level": 2,
+      "type": "gene"
+    },
+    "ENSG00000287840": {
+      "level": 2,
+      "type": "gene"
+    },
+    "HOTAIR": {
+      "level": 2,
+      "type": "gene"
+    },
+    "ENSG00000226777": {
+      "level": 2,
+      "type": "gene"
+    },
+    "ENSG00000227175": {
+      "level": 2,
+      "type": "gene"
+    },
+    "ENSG00000280881": {
+      "level": 2,
+      "type": "gene"
+    },
+    "ENSG00000275322": {
+      "level": 2,
+      "type": "gene"
+    },
+    "NKX2-2-AS1": {
+      "level": 2,
+      "type": "gene"
+    },
+    "ENSG00000273362": {
+      "level": 2,
+      "type": "gene"
+    },
+    "ENSG00000282041": {
+      "level": 2,
+      "type": "gene"
+    },
+    "AC245177.1": {
+      "level": 2,
+      "type": "gene"
+    },
+    "ENSG00000253374": {
+      "level": 2,
+      "type": "gene"
+    },
+    "IGLV1-50": {
+      "level": 2,
+      "type": "gene"
+    },
+    "ENSG00000244619": {
+      "level": 2,
+      "type": "gene"
+    },
+    "NKX2-8": {
+      "level": 2,
+      "type": "gene"
+    },
+    "DCD": {
+      "level": 2,
+      "type": "gene"
+    },
+    "ENSG00000179468": {
+      "level": 2,
+      "type": "gene"
+    },
+    "MAGEB2": {
+      "level": 2,
+      "type": "gene"
+    },
+    "NKX2-5": {
+      "level": 2,
+      "type": "gene"
+    },
+    "LINC02665": {
+      "level": 2,
+      "type": "gene"
+    },
+    "ENSG00000233085": {
+      "level": 2,
+      "type": "gene"
+    },
+    "ENSG00000266968": {
+      "level": 2,
+      "type": "gene"
+    },
+    "LINC02535": {
+      "level": 3,
+      "type": "gene"
+    },
+    "LINC01082": {
+      "level": 3,
+      "type": "gene"
+    },
+    "TCF21": {
+      "level": 3,
+      "type": "gene"
+    },
+    "ENSG00000258857": {
+      "level": 3,
+      "type": "gene"
+    },
+    "ENSG00000211710": {
+      "level": 3,
+      "type": "gene"
+    },
+    "OR13C2": {
+      "level": 3,
+      "type": "gene"
+    },
+    "CCL1": {
+      "level": 3,
+      "type": "gene"
+    },
+    "ENSG00000253895": {
+      "level": 3,
+      "type": "gene"
+    },
+    "LINC00538": {
+      "level": 3,
+      "type": "gene"
+    },
+    "ENSG00000275418": {
+      "level": 3,
+      "type": "gene"
+    },
+    "ENSG00000236106": {
+      "level": 3,
+      "type": "gene"
+    },
+    "KRTAP10-1": {
+      "level": 3,
+      "type": "gene"
+    },
+    "ENSG00000285010": {
+      "level": 3,
+      "type": "gene"
+    },
+    "ENSG00000205097": {
+      "level": 3,
+      "type": "gene"
+    },
+    "ENSG00000258945": {
+      "level": 3,
+      "type": "gene"
+    },
+    "GSC": {
+      "level": 3,
+      "type": "gene"
+    },
+    "ENSG00000234481": {
+      "level": 3,
+      "type": "gene"
+    },
+    "ENSG00000278633": {
+      "level": 3,
+      "type": "gene"
+    },
+    "ENSG00000260482": {
+      "level": 3,
+      "type": "gene"
+    },
+    "ENSG00000287848": {
+      "level": 4,
+      "type": "gene"
+    },
+    "AL121894.1": {
+      "level": 4,
+      "type": "gene"
+    },
+    "AC091179.1": {
+      "level": 4,
+      "type": "gene"
+    },
+    "NMBR-AS1": {
+      "level": 4,
+      "type": "gene"
+    },
+    "ENSG00000265664": {
+      "level": 4,
+      "type": "gene"
+    },
+    "ENSG00000232197": {
+      "level": 4,
+      "type": "gene"
+    },
+    "ENSG00000255552": {
+      "level": 4,
+      "type": "gene"
+    }
+  },
+  "edges": [
+    {
+      "source": "SOX8",
+      "target": "SPO11",
+      "MI": 3.0478
+    },
+    {
+      "source": "SOX8",
+      "target": "PAGE4",
+      "MI": 3.041
+    },
+    {
+      "source": "SOX8",
+      "target": "MLNR",
+      "MI": 3.0472
+    },
+    {
+      "source": "SOX8",
+      "target": "AC021146.12",
+      "MI": 3.0509
+    },
+    {
+      "source": "SOX8",
+      "target": "APOA4",
+      "MI": 3.0518
+    },
+    {
+      "source": "SOX8",
+      "target": "GNAT1",
+      "MI": 3.0667
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000131737",
+      "MI": 3.0411
+    },
+    {
+      "source": "SOX8",
+      "target": "IRS4",
+      "MI": 3.0474
+    },
+    {
+      "source": "SOX8",
+      "target": "PRG3",
+      "MI": 3.0477
+    },
+    {
+      "source": "SOX8",
+      "target": "AC078865.1",
+      "MI": 3.0413
+    },
+    {
+      "source": "SOX8",
+      "target": "NKX6-1",
+      "MI": 3.0503
+    },
+    {
+      "source": "SOX8",
+      "target": "TBATA",
+      "MI": 3.0446
+    },
+    {
+      "source": "SOX8",
+      "target": "CHP2",
+      "MI": 3.0574
+    },
+    {
+      "source": "SOX8",
+      "target": "HSFX1",
+      "MI": 3.0421
+    },
+    {
+      "source": "SOX8",
+      "target": "OR2K2",
+      "MI": 3.0531
+    },
+    {
+      "source": "SOX8",
+      "target": "OR1A2",
+      "MI": 3.0561
+    },
+    {
+      "source": "SOX8",
+      "target": "RXFP4",
+      "MI": 3.0404
+    },
+    {
+      "source": "SOX8",
+      "target": "EVX2",
+      "MI": 3.0414
+    },
+    {
+      "source": "SOX8",
+      "target": "OR4M1",
+      "MI": 3.0419
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000176782",
+      "MI": 3.0578
+    },
+    {
+      "source": "SOX8",
+      "target": "OR2AP1",
+      "MI": 3.0516
+    },
+    {
+      "source": "SOX8",
+      "target": "AGTR2",
+      "MI": 3.0485
+    },
+    {
+      "source": "SOX8",
+      "target": "SLC35D3",
+      "MI": 3.0418
+    },
+    {
+      "source": "SOX8",
+      "target": "OR4F6",
+      "MI": 3.0408
+    },
+    {
+      "source": "SOX8",
+      "target": "UBL4B",
+      "MI": 3.0445
+    },
+    {
+      "source": "SOX8",
+      "target": "SULT1C3",
+      "MI": 3.0507
+    },
+    {
+      "source": "SOX8",
+      "target": "TMEM239",
+      "MI": 3.0464
+    },
+    {
+      "source": "SOX8",
+      "target": "FAM24A",
+      "MI": 3.0561
+    },
+    {
+      "source": "SOX8",
+      "target": "SP5",
+      "MI": 3.0439
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000211724",
+      "MI": 3.0411
+    },
+    {
+      "source": "SOX8",
+      "target": "TRAV22",
+      "MI": 3.0429
+    },
+    {
+      "source": "SOX8",
+      "target": "TRAJ3",
+      "MI": 3.0571
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000211938",
+      "MI": 3.0505
+    },
+    {
+      "source": "SOX8",
+      "target": "AC104389.5",
+      "MI": 3.0419
+    },
+    {
+      "source": "SOX8",
+      "target": "TRIM64C",
+      "MI": 3.0707
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000223530",
+      "MI": 3.0583
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000224359",
+      "MI": 3.0446
+    },
+    {
+      "source": "SOX8",
+      "target": "LINC01657",
+      "MI": 3.0677
+    },
+    {
+      "source": "SOX8",
+      "target": "CDKN2A-DT",
+      "MI": 3.0436
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000225698",
+      "MI": 3.041
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000225819",
+      "MI": 3.042
+    },
+    {
+      "source": "SOX8",
+      "target": "LINC00161",
+      "MI": 3.0688
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000227489",
+      "MI": 3.0473
+    },
+    {
+      "source": "SOX8",
+      "target": "SPATA13",
+      "MI": 3.0409
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000229434",
+      "MI": 3.0438
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000229779",
+      "MI": 3.0405
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000230686",
+      "MI": 3.0448
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000230967",
+      "MI": 3.0608
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000231080",
+      "MI": 3.0426
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000233728",
+      "MI": 3.0522
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000236028",
+      "MI": 3.0439
+    },
+    {
+      "source": "SOX8",
+      "target": "MRGPRG-AS1",
+      "MI": 3.044
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000236336",
+      "MI": 3.0446
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000236920",
+      "MI": 3.0402
+    },
+    {
+      "source": "SOX8",
+      "target": "LINC00851",
+      "MI": 3.0437
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000241754",
+      "MI": 3.0458
+    },
+    {
+      "source": "SOX8",
+      "target": "PRICKLE2-DT",
+      "MI": 3.0626
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000248416",
+      "MI": 3.0411
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000250150",
+      "MI": 3.0405
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000250173",
+      "MI": 3.044
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000250657",
+      "MI": 3.041
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000251189",
+      "MI": 3.0426
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000251527",
+      "MI": 3.0496
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000251621",
+      "MI": 3.0589
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000253339",
+      "MI": 3.0443
+    },
+    {
+      "source": "SOX8",
+      "target": "OR8G5",
+      "MI": 3.0426
+    },
+    {
+      "source": "SOX8",
+      "target": "A2ML1-AS2",
+      "MI": 3.0752
+    },
+    {
+      "source": "SOX8",
+      "target": "LINC02419",
+      "MI": 3.0464
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000257096",
+      "MI": 3.0544
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000258931",
+      "MI": 3.0437
+    },
+    {
+      "source": "SOX8",
+      "target": "LINC02304",
+      "MI": 3.0418
+    },
+    {
+      "source": "SOX8",
+      "target": "LINC00644",
+      "MI": 3.0607
+    },
+    {
+      "source": "SOX8",
+      "target": "LINC00567",
+      "MI": 3.087
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000259870",
+      "MI": 3.0417
+    },
+    {
+      "source": "SOX8",
+      "target": "LINC00261",
+      "MI": 3.0644
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000259989",
+      "MI": 3.0562
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000260679",
+      "MI": 3.0466
+    },
+    {
+      "source": "SOX8",
+      "target": "LINC02011",
+      "MI": 3.042
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000261569",
+      "MI": 3.0582
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000262624",
+      "MI": 3.048
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000264491",
+      "MI": 3.0509
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000267172",
+      "MI": 3.08
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000267992",
+      "MI": 3.0436
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000270159",
+      "MI": 3.0438
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000271579",
+      "MI": 3.0691
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000271724",
+      "MI": 3.0534
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000272457",
+      "MI": 3.0405
+    },
+    {
+      "source": "SOX8",
+      "target": "GGTLC3",
+      "MI": 3.0514
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000275496",
+      "MI": 3.0417
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000277235",
+      "MI": 3.0409
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000278147",
+      "MI": 3.0558
+    },
+    {
+      "source": "SOX8",
+      "target": "LINC02635",
+      "MI": 3.0746
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000285586",
+      "MI": 3.0501
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000285698",
+      "MI": 3.0522
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000285800",
+      "MI": 3.0507
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000286028",
+      "MI": 3.0565
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000286483",
+      "MI": 3.079
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000286807",
+      "MI": 3.0549
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000287046",
+      "MI": 3.0481
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000287128",
+      "MI": 3.0402
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000287138",
+      "MI": 3.059
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000287669",
+      "MI": 3.0409
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000287909",
+      "MI": 3.0448
+    },
+    {
+      "source": "SOX8",
+      "target": "ENSG00000288089",
+      "MI": 3.048
+    },
+    {
+      "source": "APOA4",
+      "target": "SPO11",
+      "MI": 3.0478
+    },
+    {
+      "source": "APOA4",
+      "target": "PAGE4",
+      "MI": 3.041
+    },
+    {
+      "source": "APOA4",
+      "target": "MLNR",
+      "MI": 3.0472
+    },
+    {
+      "source": "APOA4",
+      "target": "AC021146.12",
+      "MI": 3.0509
+    },
+    {
+      "source": "APOA4",
+      "target": "APOA4",
+      "MI": 3.0564
+    },
+    {
+      "source": "APOA4",
+      "target": "GNAT1",
+      "MI": 3.0664
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000131737",
+      "MI": 3.0411
+    },
+    {
+      "source": "APOA4",
+      "target": "IRS4",
+      "MI": 3.0474
+    },
+    {
+      "source": "APOA4",
+      "target": "PRG3",
+      "MI": 3.0477
+    },
+    {
+      "source": "APOA4",
+      "target": "AC078865.1",
+      "MI": 3.0413
+    },
+    {
+      "source": "APOA4",
+      "target": "NKX6-1",
+      "MI": 3.0503
+    },
+    {
+      "source": "APOA4",
+      "target": "TBATA",
+      "MI": 3.0446
+    },
+    {
+      "source": "APOA4",
+      "target": "CHP2",
+      "MI": 3.0574
+    },
+    {
+      "source": "APOA4",
+      "target": "AC246793.1",
+      "MI": 3.0436
+    },
+    {
+      "source": "APOA4",
+      "target": "HSFX1",
+      "MI": 3.0421
+    },
+    {
+      "source": "APOA4",
+      "target": "OR2K2",
+      "MI": 3.0531
+    },
+    {
+      "source": "APOA4",
+      "target": "OR1A2",
+      "MI": 3.055
+    },
+    {
+      "source": "APOA4",
+      "target": "RXFP4",
+      "MI": 3.0404
+    },
+    {
+      "source": "APOA4",
+      "target": "EVX2",
+      "MI": 3.0414
+    },
+    {
+      "source": "APOA4",
+      "target": "OR4M1",
+      "MI": 3.0419
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000176782",
+      "MI": 3.0578
+    },
+    {
+      "source": "APOA4",
+      "target": "OR2AP1",
+      "MI": 3.0619
+    },
+    {
+      "source": "APOA4",
+      "target": "AGTR2",
+      "MI": 3.0485
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000182334",
+      "MI": 3.0407
+    },
+    {
+      "source": "APOA4",
+      "target": "SLC35D3",
+      "MI": 3.044
+    },
+    {
+      "source": "APOA4",
+      "target": "OR4F6",
+      "MI": 3.0408
+    },
+    {
+      "source": "APOA4",
+      "target": "UBL4B",
+      "MI": 3.0445
+    },
+    {
+      "source": "APOA4",
+      "target": "SULT1C3",
+      "MI": 3.0507
+    },
+    {
+      "source": "APOA4",
+      "target": "TMEM239",
+      "MI": 3.0464
+    },
+    {
+      "source": "APOA4",
+      "target": "FAM24A",
+      "MI": 3.0561
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000211724",
+      "MI": 3.0411
+    },
+    {
+      "source": "APOA4",
+      "target": "TRAV22",
+      "MI": 3.0429
+    },
+    {
+      "source": "APOA4",
+      "target": "TRAJ3",
+      "MI": 3.0571
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000211938",
+      "MI": 3.0505
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000212901",
+      "MI": 3.0401
+    },
+    {
+      "source": "APOA4",
+      "target": "TRIM64C",
+      "MI": 3.0707
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000223530",
+      "MI": 3.0583
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000224049",
+      "MI": 3.048
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000224359",
+      "MI": 3.0446
+    },
+    {
+      "source": "APOA4",
+      "target": "LINC01657",
+      "MI": 3.0677
+    },
+    {
+      "source": "APOA4",
+      "target": "CDKN2A-DT",
+      "MI": 3.0436
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000225698",
+      "MI": 3.041
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000225819",
+      "MI": 3.042
+    },
+    {
+      "source": "APOA4",
+      "target": "LINC00161",
+      "MI": 3.0508
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000227489",
+      "MI": 3.0559
+    },
+    {
+      "source": "APOA4",
+      "target": "SPATA13",
+      "MI": 3.0409
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000229434",
+      "MI": 3.0438
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000230686",
+      "MI": 3.0448
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000230967",
+      "MI": 3.0608
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000233728",
+      "MI": 3.0522
+    },
+    {
+      "source": "APOA4",
+      "target": "LINC01779",
+      "MI": 3.0466
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000236028",
+      "MI": 3.0439
+    },
+    {
+      "source": "APOA4",
+      "target": "MRGPRG-AS1",
+      "MI": 3.0442
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000236336",
+      "MI": 3.0446
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000236920",
+      "MI": 3.0402
+    },
+    {
+      "source": "APOA4",
+      "target": "LINC00851",
+      "MI": 3.0437
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000241754",
+      "MI": 3.0458
+    },
+    {
+      "source": "APOA4",
+      "target": "PRICKLE2-DT",
+      "MI": 3.0585
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000248416",
+      "MI": 3.0411
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000250150",
+      "MI": 3.0405
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000250173",
+      "MI": 3.044
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000250338",
+      "MI": 3.0472
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000250657",
+      "MI": 3.0453
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000251189",
+      "MI": 3.0426
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000251527",
+      "MI": 3.0496
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000251621",
+      "MI": 3.0589
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000253339",
+      "MI": 3.0443
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000253692",
+      "MI": 3.0435
+    },
+    {
+      "source": "APOA4",
+      "target": "OR8G5",
+      "MI": 3.0426
+    },
+    {
+      "source": "APOA4",
+      "target": "A2ML1-AS2",
+      "MI": 3.0819
+    },
+    {
+      "source": "APOA4",
+      "target": "LINC02419",
+      "MI": 3.0464
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000257096",
+      "MI": 3.0544
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000258931",
+      "MI": 3.0453
+    },
+    {
+      "source": "APOA4",
+      "target": "LINC02304",
+      "MI": 3.0427
+    },
+    {
+      "source": "APOA4",
+      "target": "LINC00644",
+      "MI": 3.0607
+    },
+    {
+      "source": "APOA4",
+      "target": "LINC00567",
+      "MI": 3.087
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000259870",
+      "MI": 3.0417
+    },
+    {
+      "source": "APOA4",
+      "target": "LINC00261",
+      "MI": 3.0644
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000259989",
+      "MI": 3.0562
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000260679",
+      "MI": 3.0466
+    },
+    {
+      "source": "APOA4",
+      "target": "LINC02011",
+      "MI": 3.042
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000261198",
+      "MI": 3.0447
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000261569",
+      "MI": 3.0582
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000264491",
+      "MI": 3.0635
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000267172",
+      "MI": 3.08
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000267992",
+      "MI": 3.0436
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000270159",
+      "MI": 3.0438
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000271724",
+      "MI": 3.0534
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000272329",
+      "MI": 3.0606
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000272457",
+      "MI": 3.0405
+    },
+    {
+      "source": "APOA4",
+      "target": "GGTLC3",
+      "MI": 3.0514
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000275496",
+      "MI": 3.0417
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000278147",
+      "MI": 3.0558
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000278907",
+      "MI": 3.0412
+    },
+    {
+      "source": "APOA4",
+      "target": "LINC02635",
+      "MI": 3.0769
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000285586",
+      "MI": 3.0501
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000285698",
+      "MI": 3.0522
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000285800",
+      "MI": 3.0507
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000286028",
+      "MI": 3.0677
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000286483",
+      "MI": 3.0797
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000286779",
+      "MI": 3.0418
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000286807",
+      "MI": 3.0549
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000287046",
+      "MI": 3.0409
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000287128",
+      "MI": 3.0402
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000287138",
+      "MI": 3.059
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000287669",
+      "MI": 3.043
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000287909",
+      "MI": 3.0448
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000288001",
+      "MI": 3.0425
+    },
+    {
+      "source": "APOA4",
+      "target": "ENSG00000288089",
+      "MI": 3.048
+    },
+    {
+      "source": "TCF21",
+      "target": "SPO11",
+      "MI": 3.0478
+    },
+    {
+      "source": "TCF21",
+      "target": "PAGE4",
+      "MI": 3.041
+    },
+    {
+      "source": "TCF21",
+      "target": "MLNR",
+      "MI": 3.0472
+    },
+    {
+      "source": "TCF21",
+      "target": "APOA4",
+      "MI": 3.0518
+    },
+    {
+      "source": "TCF21",
+      "target": "GNAT1",
+      "MI": 3.0667
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000131737",
+      "MI": 3.0411
+    },
+    {
+      "source": "TCF21",
+      "target": "IRS4",
+      "MI": 3.0474
+    },
+    {
+      "source": "TCF21",
+      "target": "PRG3",
+      "MI": 3.0477
+    },
+    {
+      "source": "TCF21",
+      "target": "AC078865.1",
+      "MI": 3.0413
+    },
+    {
+      "source": "TCF21",
+      "target": "NKX6-1",
+      "MI": 3.0503
+    },
+    {
+      "source": "TCF21",
+      "target": "TBATA",
+      "MI": 3.0446
+    },
+    {
+      "source": "TCF21",
+      "target": "CHP2",
+      "MI": 3.0574
+    },
+    {
+      "source": "TCF21",
+      "target": "HSFX1",
+      "MI": 3.0421
+    },
+    {
+      "source": "TCF21",
+      "target": "OR2K2",
+      "MI": 3.0531
+    },
+    {
+      "source": "TCF21",
+      "target": "OR1A2",
+      "MI": 3.055
+    },
+    {
+      "source": "TCF21",
+      "target": "RXFP4",
+      "MI": 3.0404
+    },
+    {
+      "source": "TCF21",
+      "target": "AL121894.1",
+      "MI": 3.0434
+    },
+    {
+      "source": "TCF21",
+      "target": "EVX2",
+      "MI": 3.0414
+    },
+    {
+      "source": "TCF21",
+      "target": "OR4M1",
+      "MI": 3.0419
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000176782",
+      "MI": 3.0563
+    },
+    {
+      "source": "TCF21",
+      "target": "OR2AP1",
+      "MI": 3.0516
+    },
+    {
+      "source": "TCF21",
+      "target": "AGTR2",
+      "MI": 3.041
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000182334",
+      "MI": 3.0565
+    },
+    {
+      "source": "TCF21",
+      "target": "SLC35D3",
+      "MI": 3.0418
+    },
+    {
+      "source": "TCF21",
+      "target": "UBL4B",
+      "MI": 3.0445
+    },
+    {
+      "source": "TCF21",
+      "target": "SULT1C3",
+      "MI": 3.0507
+    },
+    {
+      "source": "TCF21",
+      "target": "TMEM239",
+      "MI": 3.0464
+    },
+    {
+      "source": "TCF21",
+      "target": "FAM24A",
+      "MI": 3.0561
+    },
+    {
+      "source": "TCF21",
+      "target": "TRAV22",
+      "MI": 3.0429
+    },
+    {
+      "source": "TCF21",
+      "target": "TRAJ3",
+      "MI": 3.0535
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000211938",
+      "MI": 3.0505
+    },
+    {
+      "source": "TCF21",
+      "target": "AC104389.5",
+      "MI": 3.0419
+    },
+    {
+      "source": "TCF21",
+      "target": "TRIM64C",
+      "MI": 3.0707
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000224049",
+      "MI": 3.048
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000224359",
+      "MI": 3.0446
+    },
+    {
+      "source": "TCF21",
+      "target": "LINC01657",
+      "MI": 3.0677
+    },
+    {
+      "source": "TCF21",
+      "target": "CDKN2A-DT",
+      "MI": 3.0436
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000225698",
+      "MI": 3.041
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000225819",
+      "MI": 3.042
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000226777",
+      "MI": 3.0501
+    },
+    {
+      "source": "TCF21",
+      "target": "LINC00161",
+      "MI": 3.0688
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000227489",
+      "MI": 3.0479
+    },
+    {
+      "source": "TCF21",
+      "target": "HOTAIR",
+      "MI": 3.0414
+    },
+    {
+      "source": "TCF21",
+      "target": "SPATA13",
+      "MI": 3.0409
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000229434",
+      "MI": 3.0438
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000229779",
+      "MI": 3.0405
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000230686",
+      "MI": 3.0448
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000230967",
+      "MI": 3.0589
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000231080",
+      "MI": 3.0426
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000233728",
+      "MI": 3.0522
+    },
+    {
+      "source": "TCF21",
+      "target": "LINC01779",
+      "MI": 3.0466
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000236028",
+      "MI": 3.0439
+    },
+    {
+      "source": "TCF21",
+      "target": "MRGPRG-AS1",
+      "MI": 3.044
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000236336",
+      "MI": 3.0446
+    },
+    {
+      "source": "TCF21",
+      "target": "LINC00851",
+      "MI": 3.0437
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000241754",
+      "MI": 3.0444
+    },
+    {
+      "source": "TCF21",
+      "target": "PRICKLE2-DT",
+      "MI": 3.0626
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000248416",
+      "MI": 3.0411
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000250150",
+      "MI": 3.0405
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000250173",
+      "MI": 3.044
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000250657",
+      "MI": 3.041
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000251189",
+      "MI": 3.0426
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000251527",
+      "MI": 3.0496
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000251621",
+      "MI": 3.0589
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000253339",
+      "MI": 3.0443
+    },
+    {
+      "source": "TCF21",
+      "target": "A2ML1-AS2",
+      "MI": 3.0752
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000257096",
+      "MI": 3.0544
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000258931",
+      "MI": 3.0437
+    },
+    {
+      "source": "TCF21",
+      "target": "LINC02304",
+      "MI": 3.0427
+    },
+    {
+      "source": "TCF21",
+      "target": "LINC00644",
+      "MI": 3.0607
+    },
+    {
+      "source": "TCF21",
+      "target": "LINC00567",
+      "MI": 3.0627
+    },
+    {
+      "source": "TCF21",
+      "target": "LINC00261",
+      "MI": 3.0644
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000259989",
+      "MI": 3.0562
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000260679",
+      "MI": 3.0466
+    },
+    {
+      "source": "TCF21",
+      "target": "LINC02011",
+      "MI": 3.042
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000261569",
+      "MI": 3.0582
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000262624",
+      "MI": 3.048
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000264491",
+      "MI": 3.0509
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000267172",
+      "MI": 3.08
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000267992",
+      "MI": 3.0436
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000271724",
+      "MI": 3.0534
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000272329",
+      "MI": 3.0425
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000272457",
+      "MI": 3.0405
+    },
+    {
+      "source": "TCF21",
+      "target": "GGTLC3",
+      "MI": 3.0514
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000275496",
+      "MI": 3.0453
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000278147",
+      "MI": 3.0558
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000278633",
+      "MI": 3.047
+    },
+    {
+      "source": "TCF21",
+      "target": "LINC02635",
+      "MI": 3.0746
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000285586",
+      "MI": 3.0501
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000285698",
+      "MI": 3.0522
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000286028",
+      "MI": 3.0565
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000286483",
+      "MI": 3.079
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000286779",
+      "MI": 3.0418
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000286807",
+      "MI": 3.0549
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000287128",
+      "MI": 3.0402
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000287138",
+      "MI": 3.059
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000287669",
+      "MI": 3.043
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000287848",
+      "MI": 3.0465
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000287909",
+      "MI": 3.0448
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000288001",
+      "MI": 3.0425
+    },
+    {
+      "source": "TCF21",
+      "target": "ENSG00000288089",
+      "MI": 3.048
+    },
+    {
+      "source": "GSC",
+      "target": "SPO11",
+      "MI": 3.0478
+    },
+    {
+      "source": "GSC",
+      "target": "PAGE4",
+      "MI": 3.041
+    },
+    {
+      "source": "GSC",
+      "target": "MLNR",
+      "MI": 3.0472
+    },
+    {
+      "source": "GSC",
+      "target": "APOA4",
+      "MI": 3.0518
+    },
+    {
+      "source": "GSC",
+      "target": "GNAT1",
+      "MI": 3.0667
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000131737",
+      "MI": 3.0411
+    },
+    {
+      "source": "GSC",
+      "target": "IRS4",
+      "MI": 3.0474
+    },
+    {
+      "source": "GSC",
+      "target": "PRG3",
+      "MI": 3.0438
+    },
+    {
+      "source": "GSC",
+      "target": "AC078865.1",
+      "MI": 3.0413
+    },
+    {
+      "source": "GSC",
+      "target": "NKX6-1",
+      "MI": 3.0503
+    },
+    {
+      "source": "GSC",
+      "target": "TBATA",
+      "MI": 3.0443
+    },
+    {
+      "source": "GSC",
+      "target": "CHP2",
+      "MI": 3.0547
+    },
+    {
+      "source": "GSC",
+      "target": "HSFX1",
+      "MI": 3.0421
+    },
+    {
+      "source": "GSC",
+      "target": "OR2K2",
+      "MI": 3.0531
+    },
+    {
+      "source": "GSC",
+      "target": "OR1A2",
+      "MI": 3.0527
+    },
+    {
+      "source": "GSC",
+      "target": "RXFP4",
+      "MI": 3.0404
+    },
+    {
+      "source": "GSC",
+      "target": "EVX2",
+      "MI": 3.0414
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000176782",
+      "MI": 3.0666
+    },
+    {
+      "source": "GSC",
+      "target": "OR2AP1",
+      "MI": 3.0515
+    },
+    {
+      "source": "GSC",
+      "target": "AGTR2",
+      "MI": 3.0417
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000182334",
+      "MI": 3.0407
+    },
+    {
+      "source": "GSC",
+      "target": "SLC35D3",
+      "MI": 3.0418
+    },
+    {
+      "source": "GSC",
+      "target": "OR4F6",
+      "MI": 3.0408
+    },
+    {
+      "source": "GSC",
+      "target": "UBL4B",
+      "MI": 3.0524
+    },
+    {
+      "source": "GSC",
+      "target": "SULT1C3",
+      "MI": 3.0507
+    },
+    {
+      "source": "GSC",
+      "target": "TMEM239",
+      "MI": 3.0464
+    },
+    {
+      "source": "GSC",
+      "target": "FAM24A",
+      "MI": 3.0561
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000205097",
+      "MI": 3.0481
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000211724",
+      "MI": 3.0411
+    },
+    {
+      "source": "GSC",
+      "target": "TRAV22",
+      "MI": 3.0429
+    },
+    {
+      "source": "GSC",
+      "target": "TRAJ3",
+      "MI": 3.0605
+    },
+    {
+      "source": "GSC",
+      "target": "AC104389.5",
+      "MI": 3.0419
+    },
+    {
+      "source": "GSC",
+      "target": "TRIM64C",
+      "MI": 3.0707
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000223530",
+      "MI": 3.0583
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000224049",
+      "MI": 3.048
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000224359",
+      "MI": 3.0446
+    },
+    {
+      "source": "GSC",
+      "target": "LINC01657",
+      "MI": 3.0741
+    },
+    {
+      "source": "GSC",
+      "target": "CDKN2A-DT",
+      "MI": 3.0436
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000225698",
+      "MI": 3.041
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000225819",
+      "MI": 3.042
+    },
+    {
+      "source": "GSC",
+      "target": "LINC00161",
+      "MI": 3.0642
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000227489",
+      "MI": 3.0479
+    },
+    {
+      "source": "GSC",
+      "target": "HOTAIR",
+      "MI": 3.0443
+    },
+    {
+      "source": "GSC",
+      "target": "SPATA13",
+      "MI": 3.0409
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000229434",
+      "MI": 3.0438
+    },
+    {
+      "source": "GSC",
+      "target": "AC091179.1",
+      "MI": 3.0437
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000229779",
+      "MI": 3.0405
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000230686",
+      "MI": 3.0448
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000230967",
+      "MI": 3.0608
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000232197",
+      "MI": 3.0412
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000233728",
+      "MI": 3.0596
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000234481",
+      "MI": 3.0445
+    },
+    {
+      "source": "GSC",
+      "target": "LINC01779",
+      "MI": 3.0466
+    },
+    {
+      "source": "GSC",
+      "target": "MRGPRG-AS1",
+      "MI": 3.044
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000236336",
+      "MI": 3.0446
+    },
+    {
+      "source": "GSC",
+      "target": "NMBR-AS1",
+      "MI": 3.0431
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000236920",
+      "MI": 3.053
+    },
+    {
+      "source": "GSC",
+      "target": "LINC00851",
+      "MI": 3.0437
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000241754",
+      "MI": 3.0458
+    },
+    {
+      "source": "GSC",
+      "target": "PRICKLE2-DT",
+      "MI": 3.0626
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000250150",
+      "MI": 3.0405
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000250338",
+      "MI": 3.0472
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000250657",
+      "MI": 3.041
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000251621",
+      "MI": 3.0589
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000253339",
+      "MI": 3.0443
+    },
+    {
+      "source": "GSC",
+      "target": "OR8G5",
+      "MI": 3.0426
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000255552",
+      "MI": 3.0409
+    },
+    {
+      "source": "GSC",
+      "target": "A2ML1-AS2",
+      "MI": 3.0699
+    },
+    {
+      "source": "GSC",
+      "target": "LINC02419",
+      "MI": 3.0464
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000257096",
+      "MI": 3.0414
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000258931",
+      "MI": 3.0437
+    },
+    {
+      "source": "GSC",
+      "target": "LINC02304",
+      "MI": 3.0427
+    },
+    {
+      "source": "GSC",
+      "target": "LINC00644",
+      "MI": 3.0607
+    },
+    {
+      "source": "GSC",
+      "target": "LINC00567",
+      "MI": 3.087
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000259870",
+      "MI": 3.0417
+    },
+    {
+      "source": "GSC",
+      "target": "LINC00261",
+      "MI": 3.0644
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000259989",
+      "MI": 3.0562
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000260679",
+      "MI": 3.0466
+    },
+    {
+      "source": "GSC",
+      "target": "LINC02011",
+      "MI": 3.042
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000261569",
+      "MI": 3.0582
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000262624",
+      "MI": 3.048
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000265664",
+      "MI": 3.0426
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000267172",
+      "MI": 3.08
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000267992",
+      "MI": 3.0491
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000270159",
+      "MI": 3.0438
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000271724",
+      "MI": 3.0534
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000272457",
+      "MI": 3.0405
+    },
+    {
+      "source": "GSC",
+      "target": "GGTLC3",
+      "MI": 3.0468
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000275418",
+      "MI": 3.0503
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000275496",
+      "MI": 3.0417
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000278147",
+      "MI": 3.0558
+    },
+    {
+      "source": "GSC",
+      "target": "LINC02635",
+      "MI": 3.0712
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000285586",
+      "MI": 3.0501
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000285698",
+      "MI": 3.0522
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000285800",
+      "MI": 3.0507
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000286028",
+      "MI": 3.0565
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000286483",
+      "MI": 3.079
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000286779",
+      "MI": 3.0418
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000286807",
+      "MI": 3.0549
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000287046",
+      "MI": 3.0481
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000287138",
+      "MI": 3.059
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000287669",
+      "MI": 3.043
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000287909",
+      "MI": 3.0448
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000288001",
+      "MI": 3.0455
+    },
+    {
+      "source": "GSC",
+      "target": "ENSG00000288089",
+      "MI": 3.048
+    },
+    {
+      "source": "NKX2-8",
+      "target": "SPO11",
+      "MI": 3.0478
+    },
+    {
+      "source": "NKX2-8",
+      "target": "PAGE4",
+      "MI": 3.041
+    },
+    {
+      "source": "NKX2-8",
+      "target": "MLNR",
+      "MI": 3.0472
+    },
+    {
+      "source": "NKX2-8",
+      "target": "AC021146.12",
+      "MI": 3.0509
+    },
+    {
+      "source": "NKX2-8",
+      "target": "APOA4",
+      "MI": 3.0518
+    },
+    {
+      "source": "NKX2-8",
+      "target": "GNAT1",
+      "MI": 3.0523
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000131737",
+      "MI": 3.0411
+    },
+    {
+      "source": "NKX2-8",
+      "target": "IRS4",
+      "MI": 3.0474
+    },
+    {
+      "source": "NKX2-8",
+      "target": "PRG3",
+      "MI": 3.0477
+    },
+    {
+      "source": "NKX2-8",
+      "target": "AC078865.1",
+      "MI": 3.0413
+    },
+    {
+      "source": "NKX2-8",
+      "target": "NKX6-1",
+      "MI": 3.0503
+    },
+    {
+      "source": "NKX2-8",
+      "target": "TBATA",
+      "MI": 3.0446
+    },
+    {
+      "source": "NKX2-8",
+      "target": "CHP2",
+      "MI": 3.0574
+    },
+    {
+      "source": "NKX2-8",
+      "target": "HSFX1",
+      "MI": 3.0421
+    },
+    {
+      "source": "NKX2-8",
+      "target": "OR2K2",
+      "MI": 3.0531
+    },
+    {
+      "source": "NKX2-8",
+      "target": "OR1A2",
+      "MI": 3.055
+    },
+    {
+      "source": "NKX2-8",
+      "target": "RXFP4",
+      "MI": 3.0404
+    },
+    {
+      "source": "NKX2-8",
+      "target": "EVX2",
+      "MI": 3.0414
+    },
+    {
+      "source": "NKX2-8",
+      "target": "OR4M1",
+      "MI": 3.0419
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000176782",
+      "MI": 3.0578
+    },
+    {
+      "source": "NKX2-8",
+      "target": "OR2AP1",
+      "MI": 3.0516
+    },
+    {
+      "source": "NKX2-8",
+      "target": "AGTR2",
+      "MI": 3.0485
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000182334",
+      "MI": 3.0407
+    },
+    {
+      "source": "NKX2-8",
+      "target": "SLC35D3",
+      "MI": 3.0418
+    },
+    {
+      "source": "NKX2-8",
+      "target": "OR4F6",
+      "MI": 3.0408
+    },
+    {
+      "source": "NKX2-8",
+      "target": "UBL4B",
+      "MI": 3.0445
+    },
+    {
+      "source": "NKX2-8",
+      "target": "SULT1C3",
+      "MI": 3.0507
+    },
+    {
+      "source": "NKX2-8",
+      "target": "TMEM239",
+      "MI": 3.0464
+    },
+    {
+      "source": "NKX2-8",
+      "target": "FAM24A",
+      "MI": 3.0561
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000211724",
+      "MI": 3.0411
+    },
+    {
+      "source": "NKX2-8",
+      "target": "TRAV22",
+      "MI": 3.0429
+    },
+    {
+      "source": "NKX2-8",
+      "target": "TRAJ3",
+      "MI": 3.0571
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000211938",
+      "MI": 3.0486
+    },
+    {
+      "source": "NKX2-8",
+      "target": "AC104389.5",
+      "MI": 3.0532
+    },
+    {
+      "source": "NKX2-8",
+      "target": "TRIM64C",
+      "MI": 3.0707
+    },
+    {
+      "source": "NKX2-8",
+      "target": "KRTAP10-1",
+      "MI": 3.0403
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000223530",
+      "MI": 3.0509
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000224359",
+      "MI": 3.0446
+    },
+    {
+      "source": "NKX2-8",
+      "target": "LINC01657",
+      "MI": 3.0677
+    },
+    {
+      "source": "NKX2-8",
+      "target": "CDKN2A-DT",
+      "MI": 3.0436
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000225698",
+      "MI": 3.041
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000225819",
+      "MI": 3.042
+    },
+    {
+      "source": "NKX2-8",
+      "target": "LINC00161",
+      "MI": 3.0688
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000227489",
+      "MI": 3.0479
+    },
+    {
+      "source": "NKX2-8",
+      "target": "HOTAIR",
+      "MI": 3.0443
+    },
+    {
+      "source": "NKX2-8",
+      "target": "SPATA13",
+      "MI": 3.0409
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000229434",
+      "MI": 3.0438
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000229779",
+      "MI": 3.0405
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000230686",
+      "MI": 3.0448
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000230967",
+      "MI": 3.0608
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000231080",
+      "MI": 3.0426
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000233728",
+      "MI": 3.0589
+    },
+    {
+      "source": "NKX2-8",
+      "target": "LINC02535",
+      "MI": 3.0742
+    },
+    {
+      "source": "NKX2-8",
+      "target": "LINC01779",
+      "MI": 3.0466
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000236028",
+      "MI": 3.0439
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000236106",
+      "MI": 3.0416
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000236336",
+      "MI": 3.0446
+    },
+    {
+      "source": "NKX2-8",
+      "target": "LINC00851",
+      "MI": 3.0437
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000241754",
+      "MI": 3.0458
+    },
+    {
+      "source": "NKX2-8",
+      "target": "PRICKLE2-DT",
+      "MI": 3.0626
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000248416",
+      "MI": 3.0411
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000250150",
+      "MI": 3.0405
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000250173",
+      "MI": 3.044
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000250657",
+      "MI": 3.041
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000251189",
+      "MI": 3.0426
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000251527",
+      "MI": 3.0496
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000251621",
+      "MI": 3.0589
+    },
+    {
+      "source": "NKX2-8",
+      "target": "OR8G5",
+      "MI": 3.0404
+    },
+    {
+      "source": "NKX2-8",
+      "target": "A2ML1-AS2",
+      "MI": 3.0752
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000257096",
+      "MI": 3.0544
+    },
+    {
+      "source": "NKX2-8",
+      "target": "NKX2-2-AS1",
+      "MI": 3.0515
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000258931",
+      "MI": 3.0437
+    },
+    {
+      "source": "NKX2-8",
+      "target": "LINC02304",
+      "MI": 3.0427
+    },
+    {
+      "source": "NKX2-8",
+      "target": "LINC00644",
+      "MI": 3.0607
+    },
+    {
+      "source": "NKX2-8",
+      "target": "LINC00567",
+      "MI": 3.087
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000259870",
+      "MI": 3.0417
+    },
+    {
+      "source": "NKX2-8",
+      "target": "LINC00261",
+      "MI": 3.0644
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000259989",
+      "MI": 3.0562
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000260679",
+      "MI": 3.0466
+    },
+    {
+      "source": "NKX2-8",
+      "target": "LINC02011",
+      "MI": 3.042
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000261569",
+      "MI": 3.0671
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000262624",
+      "MI": 3.0434
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000264491",
+      "MI": 3.0509
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000267172",
+      "MI": 3.08
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000267992",
+      "MI": 3.0459
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000271724",
+      "MI": 3.0568
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000272329",
+      "MI": 3.0445
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000272457",
+      "MI": 3.0405
+    },
+    {
+      "source": "NKX2-8",
+      "target": "GGTLC3",
+      "MI": 3.0514
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000275418",
+      "MI": 3.0421
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000275496",
+      "MI": 3.0417
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000278147",
+      "MI": 3.0558
+    },
+    {
+      "source": "NKX2-8",
+      "target": "LINC00538",
+      "MI": 3.0592
+    },
+    {
+      "source": "NKX2-8",
+      "target": "LINC02635",
+      "MI": 3.0746
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000285586",
+      "MI": 3.0501
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000285698",
+      "MI": 3.0522
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000285800",
+      "MI": 3.0507
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000286028",
+      "MI": 3.0565
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000286483",
+      "MI": 3.0762
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000286779",
+      "MI": 3.0418
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000286807",
+      "MI": 3.0549
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000287046",
+      "MI": 3.0481
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000287128",
+      "MI": 3.0402
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000287138",
+      "MI": 3.059
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000287669",
+      "MI": 3.043
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000287909",
+      "MI": 3.0448
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000288001",
+      "MI": 3.0425
+    },
+    {
+      "source": "NKX2-8",
+      "target": "ENSG00000288089",
+      "MI": 3.048
+    },
+    {
+      "source": "NKX6-1",
+      "target": "SPO11",
+      "MI": 3.0478
+    },
+    {
+      "source": "NKX6-1",
+      "target": "PAGE4",
+      "MI": 3.041
+    },
+    {
+      "source": "NKX6-1",
+      "target": "MLNR",
+      "MI": 3.0472
+    },
+    {
+      "source": "NKX6-1",
+      "target": "AC021146.12",
+      "MI": 3.0509
+    },
+    {
+      "source": "NKX6-1",
+      "target": "APOA4",
+      "MI": 3.0518
+    },
+    {
+      "source": "NKX6-1",
+      "target": "GNAT1",
+      "MI": 3.0667
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000131737",
+      "MI": 3.0411
+    },
+    {
+      "source": "NKX6-1",
+      "target": "IRS4",
+      "MI": 3.0474
+    },
+    {
+      "source": "NKX6-1",
+      "target": "PRG3",
+      "MI": 3.0477
+    },
+    {
+      "source": "NKX6-1",
+      "target": "AC078865.1",
+      "MI": 3.0413
+    },
+    {
+      "source": "NKX6-1",
+      "target": "NKX6-1",
+      "MI": 3.0503
+    },
+    {
+      "source": "NKX6-1",
+      "target": "TBATA",
+      "MI": 3.0446
+    },
+    {
+      "source": "NKX6-1",
+      "target": "CHP2",
+      "MI": 3.0544
+    },
+    {
+      "source": "NKX6-1",
+      "target": "HSFX1",
+      "MI": 3.044
+    },
+    {
+      "source": "NKX6-1",
+      "target": "OR2K2",
+      "MI": 3.0531
+    },
+    {
+      "source": "NKX6-1",
+      "target": "OR1A2",
+      "MI": 3.0496
+    },
+    {
+      "source": "NKX6-1",
+      "target": "RXFP4",
+      "MI": 3.0404
+    },
+    {
+      "source": "NKX6-1",
+      "target": "KRT28",
+      "MI": 3.0422
+    },
+    {
+      "source": "NKX6-1",
+      "target": "EVX2",
+      "MI": 3.0401
+    },
+    {
+      "source": "NKX6-1",
+      "target": "OR4M1",
+      "MI": 3.0419
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000176782",
+      "MI": 3.0578
+    },
+    {
+      "source": "NKX6-1",
+      "target": "OR2AP1",
+      "MI": 3.0456
+    },
+    {
+      "source": "NKX6-1",
+      "target": "AGTR2",
+      "MI": 3.0485
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000182334",
+      "MI": 3.0407
+    },
+    {
+      "source": "NKX6-1",
+      "target": "SLC35D3",
+      "MI": 3.0418
+    },
+    {
+      "source": "NKX6-1",
+      "target": "SULT1C3",
+      "MI": 3.0507
+    },
+    {
+      "source": "NKX6-1",
+      "target": "TMEM239",
+      "MI": 3.0598
+    },
+    {
+      "source": "NKX6-1",
+      "target": "FAM24A",
+      "MI": 3.0561
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000211724",
+      "MI": 3.0411
+    },
+    {
+      "source": "NKX6-1",
+      "target": "TRAV22",
+      "MI": 3.0429
+    },
+    {
+      "source": "NKX6-1",
+      "target": "TRAJ3",
+      "MI": 3.0571
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000211938",
+      "MI": 3.0505
+    },
+    {
+      "source": "NKX6-1",
+      "target": "AC104389.5",
+      "MI": 3.0419
+    },
+    {
+      "source": "NKX6-1",
+      "target": "TRIM64C",
+      "MI": 3.0707
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000223530",
+      "MI": 3.0583
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000224049",
+      "MI": 3.048
+    },
+    {
+      "source": "NKX6-1",
+      "target": "LINC01657",
+      "MI": 3.0677
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000225819",
+      "MI": 3.042
+    },
+    {
+      "source": "NKX6-1",
+      "target": "LINC00161",
+      "MI": 3.0688
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000227489",
+      "MI": 3.0479
+    },
+    {
+      "source": "NKX6-1",
+      "target": "SPATA13",
+      "MI": 3.0409
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000229434",
+      "MI": 3.0438
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000229779",
+      "MI": 3.0405
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000230686",
+      "MI": 3.0435
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000230967",
+      "MI": 3.0608
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000233728",
+      "MI": 3.0522
+    },
+    {
+      "source": "NKX6-1",
+      "target": "LINC01779",
+      "MI": 3.0466
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000236028",
+      "MI": 3.044
+    },
+    {
+      "source": "NKX6-1",
+      "target": "MRGPRG-AS1",
+      "MI": 3.044
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000236336",
+      "MI": 3.0446
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000236920",
+      "MI": 3.0402
+    },
+    {
+      "source": "NKX6-1",
+      "target": "LINC00851",
+      "MI": 3.0437
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000238156",
+      "MI": 3.0559
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000241754",
+      "MI": 3.045
+    },
+    {
+      "source": "NKX6-1",
+      "target": "SPRR2A",
+      "MI": 3.0448
+    },
+    {
+      "source": "NKX6-1",
+      "target": "PRICKLE2-DT",
+      "MI": 3.0626
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000248416",
+      "MI": 3.0411
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000250150",
+      "MI": 3.0405
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000250173",
+      "MI": 3.0514
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000250657",
+      "MI": 3.041
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000251189",
+      "MI": 3.0426
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000251527",
+      "MI": 3.0496
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000251621",
+      "MI": 3.0589
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000253339",
+      "MI": 3.0443
+    },
+    {
+      "source": "NKX6-1",
+      "target": "OR8G5",
+      "MI": 3.0426
+    },
+    {
+      "source": "NKX6-1",
+      "target": "A2ML1-AS2",
+      "MI": 3.0752
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000257096",
+      "MI": 3.0544
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000258931",
+      "MI": 3.0437
+    },
+    {
+      "source": "NKX6-1",
+      "target": "LINC02304",
+      "MI": 3.0427
+    },
+    {
+      "source": "NKX6-1",
+      "target": "LINC00644",
+      "MI": 3.0553
+    },
+    {
+      "source": "NKX6-1",
+      "target": "LINC00567",
+      "MI": 3.087
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000259870",
+      "MI": 3.0417
+    },
+    {
+      "source": "NKX6-1",
+      "target": "LINC00261",
+      "MI": 3.0644
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000259989",
+      "MI": 3.0562
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000260679",
+      "MI": 3.0466
+    },
+    {
+      "source": "NKX6-1",
+      "target": "LINC02011",
+      "MI": 3.042
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000261569",
+      "MI": 3.0582
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000262624",
+      "MI": 3.048
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000264491",
+      "MI": 3.0509
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000267172",
+      "MI": 3.0809
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000267304",
+      "MI": 3.049
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000267992",
+      "MI": 3.0436
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000270159",
+      "MI": 3.0438
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000271724",
+      "MI": 3.0482
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000272457",
+      "MI": 3.0405
+    },
+    {
+      "source": "NKX6-1",
+      "target": "GGTLC3",
+      "MI": 3.0494
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000274276",
+      "MI": 3.043
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000275496",
+      "MI": 3.0417
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000278147",
+      "MI": 3.0558
+    },
+    {
+      "source": "NKX6-1",
+      "target": "LINC01955",
+      "MI": 3.0661
+    },
+    {
+      "source": "NKX6-1",
+      "target": "LINC02635",
+      "MI": 3.0746
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000285586",
+      "MI": 3.0501
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000285698",
+      "MI": 3.0522
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000285800",
+      "MI": 3.0619
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000286028",
+      "MI": 3.0565
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000286483",
+      "MI": 3.0549
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000286779",
+      "MI": 3.0418
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000286807",
+      "MI": 3.0549
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000287046",
+      "MI": 3.0481
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000287128",
+      "MI": 3.0402
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000287138",
+      "MI": 3.059
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000287669",
+      "MI": 3.0499
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000287909",
+      "MI": 3.0448
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000288001",
+      "MI": 3.0425
+    },
+    {
+      "source": "NKX6-1",
+      "target": "ENSG00000288089",
+      "MI": 3.0499
+    },
+    {
+      "source": "AC246793.1",
+      "target": "SPO11",
+      "MI": 3.0478
+    },
+    {
+      "source": "AC246793.1",
+      "target": "PAGE4",
+      "MI": 3.041
+    },
+    {
+      "source": "AC246793.1",
+      "target": "MLNR",
+      "MI": 3.0472
+    },
+    {
+      "source": "AC246793.1",
+      "target": "CCL1",
+      "MI": 3.0404
+    },
+    {
+      "source": "AC246793.1",
+      "target": "AC021146.12",
+      "MI": 3.0509
+    },
+    {
+      "source": "AC246793.1",
+      "target": "APOA4",
+      "MI": 3.0518
+    },
+    {
+      "source": "AC246793.1",
+      "target": "GNAT1",
+      "MI": 3.0805
+    },
+    {
+      "source": "AC246793.1",
+      "target": "TCF21",
+      "MI": 3.0428
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000131737",
+      "MI": 3.0411
+    },
+    {
+      "source": "AC246793.1",
+      "target": "IRS4",
+      "MI": 3.0474
+    },
+    {
+      "source": "AC246793.1",
+      "target": "AC245177.1",
+      "MI": 3.0414
+    },
+    {
+      "source": "AC246793.1",
+      "target": "PRG3",
+      "MI": 3.0477
+    },
+    {
+      "source": "AC246793.1",
+      "target": "AC078865.1",
+      "MI": 3.0413
+    },
+    {
+      "source": "AC246793.1",
+      "target": "NKX6-1",
+      "MI": 3.0503
+    },
+    {
+      "source": "AC246793.1",
+      "target": "TBATA",
+      "MI": 3.0446
+    },
+    {
+      "source": "AC246793.1",
+      "target": "CHP2",
+      "MI": 3.0544
+    },
+    {
+      "source": "AC246793.1",
+      "target": "HSFX1",
+      "MI": 3.0421
+    },
+    {
+      "source": "AC246793.1",
+      "target": "OR2K2",
+      "MI": 3.0531
+    },
+    {
+      "source": "AC246793.1",
+      "target": "OR1A2",
+      "MI": 3.055
+    },
+    {
+      "source": "AC246793.1",
+      "target": "RXFP4",
+      "MI": 3.0404
+    },
+    {
+      "source": "AC246793.1",
+      "target": "OR4M1",
+      "MI": 3.0419
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000176782",
+      "MI": 3.0578
+    },
+    {
+      "source": "AC246793.1",
+      "target": "OR2AP1",
+      "MI": 3.0516
+    },
+    {
+      "source": "AC246793.1",
+      "target": "AGTR2",
+      "MI": 3.0485
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000182334",
+      "MI": 3.0407
+    },
+    {
+      "source": "AC246793.1",
+      "target": "SLC35D3",
+      "MI": 3.0418
+    },
+    {
+      "source": "AC246793.1",
+      "target": "NKX2-5",
+      "MI": 3.0442
+    },
+    {
+      "source": "AC246793.1",
+      "target": "OR4F6",
+      "MI": 3.0408
+    },
+    {
+      "source": "AC246793.1",
+      "target": "UBL4B",
+      "MI": 3.0445
+    },
+    {
+      "source": "AC246793.1",
+      "target": "SULT1C3",
+      "MI": 3.0535
+    },
+    {
+      "source": "AC246793.1",
+      "target": "FAM24A",
+      "MI": 3.0561
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000211710",
+      "MI": 3.0419
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000211724",
+      "MI": 3.0411
+    },
+    {
+      "source": "AC246793.1",
+      "target": "TRAV22",
+      "MI": 3.0429
+    },
+    {
+      "source": "AC246793.1",
+      "target": "TRAJ3",
+      "MI": 3.0571
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000211938",
+      "MI": 3.0505
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000212901",
+      "MI": 3.0457
+    },
+    {
+      "source": "AC246793.1",
+      "target": "AC104389.5",
+      "MI": 3.0419
+    },
+    {
+      "source": "AC246793.1",
+      "target": "TRIM64C",
+      "MI": 3.0707
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000223530",
+      "MI": 3.0539
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000224049",
+      "MI": 3.048
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000224359",
+      "MI": 3.0446
+    },
+    {
+      "source": "AC246793.1",
+      "target": "LINC01657",
+      "MI": 3.0625
+    },
+    {
+      "source": "AC246793.1",
+      "target": "CDKN2A-DT",
+      "MI": 3.0436
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000225698",
+      "MI": 3.041
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000225819",
+      "MI": 3.042
+    },
+    {
+      "source": "AC246793.1",
+      "target": "LINC00161",
+      "MI": 3.0688
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000227489",
+      "MI": 3.0554
+    },
+    {
+      "source": "AC246793.1",
+      "target": "SPATA13",
+      "MI": 3.0409
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000229434",
+      "MI": 3.0468
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000229779",
+      "MI": 3.0405
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000230686",
+      "MI": 3.0476
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000230967",
+      "MI": 3.0608
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000231080",
+      "MI": 3.0426
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000233728",
+      "MI": 3.0522
+    },
+    {
+      "source": "AC246793.1",
+      "target": "LINC02535",
+      "MI": 3.0774
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000236028",
+      "MI": 3.0439
+    },
+    {
+      "source": "AC246793.1",
+      "target": "MRGPRG-AS1",
+      "MI": 3.044
+    },
+    {
+      "source": "AC246793.1",
+      "target": "LINC00851",
+      "MI": 3.0437
+    },
+    {
+      "source": "AC246793.1",
+      "target": "PRICKLE2-DT",
+      "MI": 3.0626
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000248416",
+      "MI": 3.0411
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000250150",
+      "MI": 3.0405
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000250173",
+      "MI": 3.044
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000250657",
+      "MI": 3.041
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000251189",
+      "MI": 3.0426
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000251527",
+      "MI": 3.0496
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000251621",
+      "MI": 3.0589
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000253339",
+      "MI": 3.0443
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000253895",
+      "MI": 3.0401
+    },
+    {
+      "source": "AC246793.1",
+      "target": "OR8G5",
+      "MI": 3.0426
+    },
+    {
+      "source": "AC246793.1",
+      "target": "A2ML1-AS2",
+      "MI": 3.0789
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000257096",
+      "MI": 3.065
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000258857",
+      "MI": 3.0422
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000258931",
+      "MI": 3.0437
+    },
+    {
+      "source": "AC246793.1",
+      "target": "LINC00644",
+      "MI": 3.0682
+    },
+    {
+      "source": "AC246793.1",
+      "target": "LINC00567",
+      "MI": 3.087
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000259870",
+      "MI": 3.0417
+    },
+    {
+      "source": "AC246793.1",
+      "target": "LINC00261",
+      "MI": 3.0644
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000259989",
+      "MI": 3.0562
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000260679",
+      "MI": 3.0466
+    },
+    {
+      "source": "AC246793.1",
+      "target": "LINC02011",
+      "MI": 3.042
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000261569",
+      "MI": 3.0582
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000262624",
+      "MI": 3.048
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000264491",
+      "MI": 3.0509
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000267172",
+      "MI": 3.0757
+    },
+    {
+      "source": "AC246793.1",
+      "target": "LINC01082",
+      "MI": 3.0495
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000270159",
+      "MI": 3.0438
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000271724",
+      "MI": 3.0534
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000272457",
+      "MI": 3.0405
+    },
+    {
+      "source": "AC246793.1",
+      "target": "GGTLC3",
+      "MI": 3.0514
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000275496",
+      "MI": 3.0417
+    },
+    {
+      "source": "AC246793.1",
+      "target": "OR13C2",
+      "MI": 3.0404
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000278147",
+      "MI": 3.0531
+    },
+    {
+      "source": "AC246793.1",
+      "target": "LINC02635",
+      "MI": 3.0711
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000285586",
+      "MI": 3.0501
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000285698",
+      "MI": 3.0522
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000285800",
+      "MI": 3.0507
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000286028",
+      "MI": 3.0565
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000286483",
+      "MI": 3.079
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000286779",
+      "MI": 3.0418
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000286807",
+      "MI": 3.0549
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000287046",
+      "MI": 3.0481
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000287128",
+      "MI": 3.0402
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000287138",
+      "MI": 3.0547
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000287669",
+      "MI": 3.043
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000287909",
+      "MI": 3.0448
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000288001",
+      "MI": 3.0425
+    },
+    {
+      "source": "AC246793.1",
+      "target": "ENSG00000288089",
+      "MI": 3.0553
+    },
+    {
+      "source": "HSFX1",
+      "target": "PAGE4",
+      "MI": 3.0449
+    },
+    {
+      "source": "HSFX1",
+      "target": "MLNR",
+      "MI": 3.0421
+    },
+    {
+      "source": "HSFX1",
+      "target": "AC021146.12",
+      "MI": 3.0509
+    },
+    {
+      "source": "HSFX1",
+      "target": "APOA4",
+      "MI": 3.0518
+    },
+    {
+      "source": "HSFX1",
+      "target": "GNAT1",
+      "MI": 3.0667
+    },
+    {
+      "source": "HSFX1",
+      "target": "IRS4",
+      "MI": 3.0474
+    },
+    {
+      "source": "HSFX1",
+      "target": "AC245177.1",
+      "MI": 3.0449
+    },
+    {
+      "source": "HSFX1",
+      "target": "PRG3",
+      "MI": 3.0477
+    },
+    {
+      "source": "HSFX1",
+      "target": "AC078865.1",
+      "MI": 3.0542
+    },
+    {
+      "source": "HSFX1",
+      "target": "NKX6-1",
+      "MI": 3.0503
+    },
+    {
+      "source": "HSFX1",
+      "target": "TBATA",
+      "MI": 3.0446
+    },
+    {
+      "source": "HSFX1",
+      "target": "CHP2",
+      "MI": 3.0574
+    },
+    {
+      "source": "HSFX1",
+      "target": "HSFX1",
+      "MI": 3.0471
+    },
+    {
+      "source": "HSFX1",
+      "target": "OR2K2",
+      "MI": 3.0531
+    },
+    {
+      "source": "HSFX1",
+      "target": "OR1A2",
+      "MI": 3.0473
+    },
+    {
+      "source": "HSFX1",
+      "target": "RXFP4",
+      "MI": 3.0404
+    },
+    {
+      "source": "HSFX1",
+      "target": "EVX2",
+      "MI": 3.0414
+    },
+    {
+      "source": "HSFX1",
+      "target": "OR4M1",
+      "MI": 3.0419
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000176782",
+      "MI": 3.0578
+    },
+    {
+      "source": "HSFX1",
+      "target": "OR2AP1",
+      "MI": 3.0453
+    },
+    {
+      "source": "HSFX1",
+      "target": "AGTR2",
+      "MI": 3.0513
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000182334",
+      "MI": 3.0407
+    },
+    {
+      "source": "HSFX1",
+      "target": "SLC35D3",
+      "MI": 3.0521
+    },
+    {
+      "source": "HSFX1",
+      "target": "OR4F6",
+      "MI": 3.0408
+    },
+    {
+      "source": "HSFX1",
+      "target": "UBL4B",
+      "MI": 3.0445
+    },
+    {
+      "source": "HSFX1",
+      "target": "SULT1C3",
+      "MI": 3.0507
+    },
+    {
+      "source": "HSFX1",
+      "target": "TMEM239",
+      "MI": 3.0557
+    },
+    {
+      "source": "HSFX1",
+      "target": "FAM24A",
+      "MI": 3.0561
+    },
+    {
+      "source": "HSFX1",
+      "target": "IGLV1-50",
+      "MI": 3.0427
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000211724",
+      "MI": 3.0411
+    },
+    {
+      "source": "HSFX1",
+      "target": "TRAV22",
+      "MI": 3.0429
+    },
+    {
+      "source": "HSFX1",
+      "target": "TRAJ3",
+      "MI": 3.0571
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000211938",
+      "MI": 3.0505
+    },
+    {
+      "source": "HSFX1",
+      "target": "TRIM64C",
+      "MI": 3.0707
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000223530",
+      "MI": 3.0622
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000224049",
+      "MI": 3.048
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000224359",
+      "MI": 3.0567
+    },
+    {
+      "source": "HSFX1",
+      "target": "LINC01657",
+      "MI": 3.0634
+    },
+    {
+      "source": "HSFX1",
+      "target": "CDKN2A-DT",
+      "MI": 3.0436
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000225698",
+      "MI": 3.041
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000225819",
+      "MI": 3.042
+    },
+    {
+      "source": "HSFX1",
+      "target": "LINC00161",
+      "MI": 3.0688
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000227489",
+      "MI": 3.0447
+    },
+    {
+      "source": "HSFX1",
+      "target": "SPATA13",
+      "MI": 3.0409
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000229434",
+      "MI": 3.0438
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000229779",
+      "MI": 3.0405
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000230686",
+      "MI": 3.0448
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000230967",
+      "MI": 3.0608
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000231080",
+      "MI": 3.0426
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000233728",
+      "MI": 3.0522
+    },
+    {
+      "source": "HSFX1",
+      "target": "LINC01779",
+      "MI": 3.0466
+    },
+    {
+      "source": "HSFX1",
+      "target": "MRGPRG-AS1",
+      "MI": 3.044
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000236336",
+      "MI": 3.0446
+    },
+    {
+      "source": "HSFX1",
+      "target": "LINC00851",
+      "MI": 3.0437
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000241754",
+      "MI": 3.0458
+    },
+    {
+      "source": "HSFX1",
+      "target": "PRICKLE2-DT",
+      "MI": 3.0574
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000244619",
+      "MI": 3.0404
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000248416",
+      "MI": 3.0411
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000250150",
+      "MI": 3.0405
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000250338",
+      "MI": 3.0523
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000250657",
+      "MI": 3.041
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000251189",
+      "MI": 3.0426
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000251527",
+      "MI": 3.0496
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000251621",
+      "MI": 3.0589
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000253339",
+      "MI": 3.0424
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000253374",
+      "MI": 3.0441
+    },
+    {
+      "source": "HSFX1",
+      "target": "OR8G5",
+      "MI": 3.0426
+    },
+    {
+      "source": "HSFX1",
+      "target": "A2ML1-AS2",
+      "MI": 3.0752
+    },
+    {
+      "source": "HSFX1",
+      "target": "LINC02419",
+      "MI": 3.0464
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000257096",
+      "MI": 3.0544
+    },
+    {
+      "source": "HSFX1",
+      "target": "NKX2-2-AS1",
+      "MI": 3.048
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000258931",
+      "MI": 3.0437
+    },
+    {
+      "source": "HSFX1",
+      "target": "LINC02304",
+      "MI": 3.0427
+    },
+    {
+      "source": "HSFX1",
+      "target": "LINC00644",
+      "MI": 3.0709
+    },
+    {
+      "source": "HSFX1",
+      "target": "LINC00567",
+      "MI": 3.087
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000259870",
+      "MI": 3.0486
+    },
+    {
+      "source": "HSFX1",
+      "target": "LINC00261",
+      "MI": 3.0644
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000259989",
+      "MI": 3.0562
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000260679",
+      "MI": 3.0466
+    },
+    {
+      "source": "HSFX1",
+      "target": "LINC02011",
+      "MI": 3.0414
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000261569",
+      "MI": 3.0582
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000262624",
+      "MI": 3.048
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000264491",
+      "MI": 3.0509
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000267172",
+      "MI": 3.08
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000267992",
+      "MI": 3.0436
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000270159",
+      "MI": 3.0438
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000271724",
+      "MI": 3.0449
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000273362",
+      "MI": 3.0469
+    },
+    {
+      "source": "HSFX1",
+      "target": "GGTLC3",
+      "MI": 3.0514
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000275496",
+      "MI": 3.0417
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000278147",
+      "MI": 3.0558
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000282041",
+      "MI": 3.0451
+    },
+    {
+      "source": "HSFX1",
+      "target": "LINC02635",
+      "MI": 3.0746
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000285586",
+      "MI": 3.0412
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000285698",
+      "MI": 3.0522
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000285800",
+      "MI": 3.0507
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000286028",
+      "MI": 3.0565
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000286483",
+      "MI": 3.0696
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000286779",
+      "MI": 3.0418
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000286807",
+      "MI": 3.0423
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000287046",
+      "MI": 3.0481
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000287128",
+      "MI": 3.0402
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000287138",
+      "MI": 3.059
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000287669",
+      "MI": 3.0405
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000287909",
+      "MI": 3.0448
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000288001",
+      "MI": 3.0425
+    },
+    {
+      "source": "HSFX1",
+      "target": "ENSG00000288089",
+      "MI": 3.048
+    },
+    {
+      "source": "EVX2",
+      "target": "SPO11",
+      "MI": 3.0412
+    },
+    {
+      "source": "EVX2",
+      "target": "MAGEB2",
+      "MI": 3.0461
+    },
+    {
+      "source": "EVX2",
+      "target": "PAGE4",
+      "MI": 3.041
+    },
+    {
+      "source": "EVX2",
+      "target": "MLNR",
+      "MI": 3.0472
+    },
+    {
+      "source": "EVX2",
+      "target": "AC021146.12",
+      "MI": 3.0509
+    },
+    {
+      "source": "EVX2",
+      "target": "APOA4",
+      "MI": 3.0518
+    },
+    {
+      "source": "EVX2",
+      "target": "GNAT1",
+      "MI": 3.0667
+    },
+    {
+      "source": "EVX2",
+      "target": "IRS4",
+      "MI": 3.0474
+    },
+    {
+      "source": "EVX2",
+      "target": "NKX2-8",
+      "MI": 3.0567
+    },
+    {
+      "source": "EVX2",
+      "target": "PRG3",
+      "MI": 3.0477
+    },
+    {
+      "source": "EVX2",
+      "target": "DCD",
+      "MI": 3.0538
+    },
+    {
+      "source": "EVX2",
+      "target": "AC078865.1",
+      "MI": 3.0413
+    },
+    {
+      "source": "EVX2",
+      "target": "NKX6-1",
+      "MI": 3.0503
+    },
+    {
+      "source": "EVX2",
+      "target": "TBATA",
+      "MI": 3.0446
+    },
+    {
+      "source": "EVX2",
+      "target": "CHP2",
+      "MI": 3.0574
+    },
+    {
+      "source": "EVX2",
+      "target": "HSFX1",
+      "MI": 3.0421
+    },
+    {
+      "source": "EVX2",
+      "target": "OR2K2",
+      "MI": 3.054
+    },
+    {
+      "source": "EVX2",
+      "target": "OR1A2",
+      "MI": 3.055
+    },
+    {
+      "source": "EVX2",
+      "target": "RXFP4",
+      "MI": 3.0404
+    },
+    {
+      "source": "EVX2",
+      "target": "EVX2",
+      "MI": 3.0414
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000179468",
+      "MI": 3.0494
+    },
+    {
+      "source": "EVX2",
+      "target": "OR2AP1",
+      "MI": 3.0516
+    },
+    {
+      "source": "EVX2",
+      "target": "AGTR2",
+      "MI": 3.0485
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000182334",
+      "MI": 3.0491
+    },
+    {
+      "source": "EVX2",
+      "target": "SLC35D3",
+      "MI": 3.0418
+    },
+    {
+      "source": "EVX2",
+      "target": "NKX2-5",
+      "MI": 3.0457
+    },
+    {
+      "source": "EVX2",
+      "target": "OR4F6",
+      "MI": 3.0408
+    },
+    {
+      "source": "EVX2",
+      "target": "UBL4B",
+      "MI": 3.0445
+    },
+    {
+      "source": "EVX2",
+      "target": "SULT1C3",
+      "MI": 3.0507
+    },
+    {
+      "source": "EVX2",
+      "target": "TMEM239",
+      "MI": 3.0496
+    },
+    {
+      "source": "EVX2",
+      "target": "FAM24A",
+      "MI": 3.0561
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000211724",
+      "MI": 3.0411
+    },
+    {
+      "source": "EVX2",
+      "target": "TRAV22",
+      "MI": 3.0429
+    },
+    {
+      "source": "EVX2",
+      "target": "TRAJ3",
+      "MI": 3.0571
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000211938",
+      "MI": 3.0505
+    },
+    {
+      "source": "EVX2",
+      "target": "AC104389.5",
+      "MI": 3.0419
+    },
+    {
+      "source": "EVX2",
+      "target": "TRIM64C",
+      "MI": 3.0771
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000223530",
+      "MI": 3.0583
+    },
+    {
+      "source": "EVX2",
+      "target": "LINC02665",
+      "MI": 3.0438
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000224049",
+      "MI": 3.048
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000224359",
+      "MI": 3.0446
+    },
+    {
+      "source": "EVX2",
+      "target": "LINC01657",
+      "MI": 3.0677
+    },
+    {
+      "source": "EVX2",
+      "target": "CDKN2A-DT",
+      "MI": 3.0421
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000225698",
+      "MI": 3.041
+    },
+    {
+      "source": "EVX2",
+      "target": "LINC00161",
+      "MI": 3.0642
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000227489",
+      "MI": 3.0479
+    },
+    {
+      "source": "EVX2",
+      "target": "HOTAIR",
+      "MI": 3.0428
+    },
+    {
+      "source": "EVX2",
+      "target": "SPATA13",
+      "MI": 3.0409
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000229434",
+      "MI": 3.0438
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000230686",
+      "MI": 3.0448
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000230967",
+      "MI": 3.051
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000231080",
+      "MI": 3.0426
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000233085",
+      "MI": 3.0434
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000233728",
+      "MI": 3.0522
+    },
+    {
+      "source": "EVX2",
+      "target": "LINC01779",
+      "MI": 3.042
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000236028",
+      "MI": 3.0439
+    },
+    {
+      "source": "EVX2",
+      "target": "MRGPRG-AS1",
+      "MI": 3.0424
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000236336",
+      "MI": 3.0446
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000236920",
+      "MI": 3.0402
+    },
+    {
+      "source": "EVX2",
+      "target": "LINC00851",
+      "MI": 3.0437
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000241754",
+      "MI": 3.0458
+    },
+    {
+      "source": "EVX2",
+      "target": "PRICKLE2-DT",
+      "MI": 3.0626
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000250150",
+      "MI": 3.0405
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000250173",
+      "MI": 3.044
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000250657",
+      "MI": 3.041
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000251189",
+      "MI": 3.0426
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000251527",
+      "MI": 3.0496
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000251621",
+      "MI": 3.0589
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000253339",
+      "MI": 3.0443
+    },
+    {
+      "source": "EVX2",
+      "target": "OR8G5",
+      "MI": 3.0426
+    },
+    {
+      "source": "EVX2",
+      "target": "A2ML1-AS2",
+      "MI": 3.0752
+    },
+    {
+      "source": "EVX2",
+      "target": "LINC02419",
+      "MI": 3.041
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000257096",
+      "MI": 3.0544
+    },
+    {
+      "source": "EVX2",
+      "target": "NKX2-2-AS1",
+      "MI": 3.0476
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000258931",
+      "MI": 3.0437
+    },
+    {
+      "source": "EVX2",
+      "target": "LINC02304",
+      "MI": 3.0427
+    },
+    {
+      "source": "EVX2",
+      "target": "LINC00644",
+      "MI": 3.0607
+    },
+    {
+      "source": "EVX2",
+      "target": "LINC00567",
+      "MI": 3.087
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000259870",
+      "MI": 3.0417
+    },
+    {
+      "source": "EVX2",
+      "target": "LINC00261",
+      "MI": 3.0644
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000259989",
+      "MI": 3.0562
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000260679",
+      "MI": 3.0466
+    },
+    {
+      "source": "EVX2",
+      "target": "LINC02011",
+      "MI": 3.042
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000261569",
+      "MI": 3.0484
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000262624",
+      "MI": 3.048
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000264491",
+      "MI": 3.0509
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000266968",
+      "MI": 3.0402
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000267172",
+      "MI": 3.08
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000267992",
+      "MI": 3.0482
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000270159",
+      "MI": 3.0438
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000271724",
+      "MI": 3.0534
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000272329",
+      "MI": 3.0652
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000272457",
+      "MI": 3.048
+    },
+    {
+      "source": "EVX2",
+      "target": "GGTLC3",
+      "MI": 3.0451
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000275496",
+      "MI": 3.0417
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000278147",
+      "MI": 3.0558
+    },
+    {
+      "source": "EVX2",
+      "target": "LINC02635",
+      "MI": 3.0705
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000285586",
+      "MI": 3.0501
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000285698",
+      "MI": 3.0495
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000285800",
+      "MI": 3.0507
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000286028",
+      "MI": 3.0565
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000286483",
+      "MI": 3.079
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000286779",
+      "MI": 3.0418
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000286807",
+      "MI": 3.0549
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000287046",
+      "MI": 3.0481
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000287128",
+      "MI": 3.041
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000287138",
+      "MI": 3.059
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000287669",
+      "MI": 3.043
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000287909",
+      "MI": 3.0448
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000288001",
+      "MI": 3.0425
+    },
+    {
+      "source": "EVX2",
+      "target": "ENSG00000288089",
+      "MI": 3.0513
+    },
+    {
+      "source": "NKX2-5",
+      "target": "SPO11",
+      "MI": 3.0478
+    },
+    {
+      "source": "NKX2-5",
+      "target": "PAGE4",
+      "MI": 3.041
+    },
+    {
+      "source": "NKX2-5",
+      "target": "AC021146.12",
+      "MI": 3.0509
+    },
+    {
+      "source": "NKX2-5",
+      "target": "APOA4",
+      "MI": 3.0518
+    },
+    {
+      "source": "NKX2-5",
+      "target": "GNAT1",
+      "MI": 3.0667
+    },
+    {
+      "source": "NKX2-5",
+      "target": "IRS4",
+      "MI": 3.0474
+    },
+    {
+      "source": "NKX2-5",
+      "target": "GSC",
+      "MI": 3.0427
+    },
+    {
+      "source": "NKX2-5",
+      "target": "NKX2-8",
+      "MI": 3.0603
+    },
+    {
+      "source": "NKX2-5",
+      "target": "PRG3",
+      "MI": 3.0477
+    },
+    {
+      "source": "NKX2-5",
+      "target": "AC078865.1",
+      "MI": 3.0413
+    },
+    {
+      "source": "NKX2-5",
+      "target": "TBATA",
+      "MI": 3.0406
+    },
+    {
+      "source": "NKX2-5",
+      "target": "CHP2",
+      "MI": 3.0574
+    },
+    {
+      "source": "NKX2-5",
+      "target": "OR2K2",
+      "MI": 3.0531
+    },
+    {
+      "source": "NKX2-5",
+      "target": "OR1A2",
+      "MI": 3.055
+    },
+    {
+      "source": "NKX2-5",
+      "target": "RXFP4",
+      "MI": 3.0412
+    },
+    {
+      "source": "NKX2-5",
+      "target": "EVX2",
+      "MI": 3.0459
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000176782",
+      "MI": 3.0578
+    },
+    {
+      "source": "NKX2-5",
+      "target": "OR2AP1",
+      "MI": 3.0516
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000182334",
+      "MI": 3.0407
+    },
+    {
+      "source": "NKX2-5",
+      "target": "SLC35D3",
+      "MI": 3.0418
+    },
+    {
+      "source": "NKX2-5",
+      "target": "OR4F6",
+      "MI": 3.0408
+    },
+    {
+      "source": "NKX2-5",
+      "target": "UBL4B",
+      "MI": 3.0445
+    },
+    {
+      "source": "NKX2-5",
+      "target": "SULT1C3",
+      "MI": 3.0507
+    },
+    {
+      "source": "NKX2-5",
+      "target": "FAM24A",
+      "MI": 3.0561
+    },
+    {
+      "source": "NKX2-5",
+      "target": "SP5",
+      "MI": 3.0472
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000205097",
+      "MI": 3.0481
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000211724",
+      "MI": 3.0411
+    },
+    {
+      "source": "NKX2-5",
+      "target": "TRAV22",
+      "MI": 3.0429
+    },
+    {
+      "source": "NKX2-5",
+      "target": "TRAJ3",
+      "MI": 3.0571
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000211938",
+      "MI": 3.0505
+    },
+    {
+      "source": "NKX2-5",
+      "target": "AC104389.5",
+      "MI": 3.0419
+    },
+    {
+      "source": "NKX2-5",
+      "target": "TRIM64C",
+      "MI": 3.0707
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000223530",
+      "MI": 3.0583
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000224049",
+      "MI": 3.048
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000224359",
+      "MI": 3.0446
+    },
+    {
+      "source": "NKX2-5",
+      "target": "LINC01657",
+      "MI": 3.0677
+    },
+    {
+      "source": "NKX2-5",
+      "target": "CDKN2A-DT",
+      "MI": 3.0436
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000225698",
+      "MI": 3.041
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000225819",
+      "MI": 3.042
+    },
+    {
+      "source": "NKX2-5",
+      "target": "LINC00161",
+      "MI": 3.0765
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000227489",
+      "MI": 3.0479
+    },
+    {
+      "source": "NKX2-5",
+      "target": "SPATA13",
+      "MI": 3.0409
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000229434",
+      "MI": 3.0438
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000229779",
+      "MI": 3.0405
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000230686",
+      "MI": 3.0448
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000230967",
+      "MI": 3.0608
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000231080",
+      "MI": 3.0426
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000233728",
+      "MI": 3.0556
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000234481",
+      "MI": 3.0423
+    },
+    {
+      "source": "NKX2-5",
+      "target": "LINC01779",
+      "MI": 3.0466
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000236028",
+      "MI": 3.0439
+    },
+    {
+      "source": "NKX2-5",
+      "target": "MRGPRG-AS1",
+      "MI": 3.044
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000236336",
+      "MI": 3.0509
+    },
+    {
+      "source": "NKX2-5",
+      "target": "LINC00851",
+      "MI": 3.0437
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000241754",
+      "MI": 3.0458
+    },
+    {
+      "source": "NKX2-5",
+      "target": "PRICKLE2-DT",
+      "MI": 3.0626
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000248416",
+      "MI": 3.0411
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000250150",
+      "MI": 3.0405
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000250173",
+      "MI": 3.044
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000251527",
+      "MI": 3.0496
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000251621",
+      "MI": 3.0589
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000253339",
+      "MI": 3.0443
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000253895",
+      "MI": 3.0461
+    },
+    {
+      "source": "NKX2-5",
+      "target": "OR8G5",
+      "MI": 3.0426
+    },
+    {
+      "source": "NKX2-5",
+      "target": "A2ML1-AS2",
+      "MI": 3.0685
+    },
+    {
+      "source": "NKX2-5",
+      "target": "LINC02419",
+      "MI": 3.0422
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000257096",
+      "MI": 3.0544
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000258931",
+      "MI": 3.0499
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000258945",
+      "MI": 3.0455
+    },
+    {
+      "source": "NKX2-5",
+      "target": "LINC02304",
+      "MI": 3.0427
+    },
+    {
+      "source": "NKX2-5",
+      "target": "LINC00644",
+      "MI": 3.0607
+    },
+    {
+      "source": "NKX2-5",
+      "target": "LINC00567",
+      "MI": 3.087
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000259870",
+      "MI": 3.0417
+    },
+    {
+      "source": "NKX2-5",
+      "target": "LINC00261",
+      "MI": 3.0402
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000259989",
+      "MI": 3.0562
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000260482",
+      "MI": 3.042
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000260679",
+      "MI": 3.0466
+    },
+    {
+      "source": "NKX2-5",
+      "target": "LINC02011",
+      "MI": 3.0428
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000261569",
+      "MI": 3.0582
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000262624",
+      "MI": 3.0629
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000264491",
+      "MI": 3.0537
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000267172",
+      "MI": 3.08
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000267992",
+      "MI": 3.0436
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000271724",
+      "MI": 3.0534
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000272457",
+      "MI": 3.0405
+    },
+    {
+      "source": "NKX2-5",
+      "target": "GGTLC3",
+      "MI": 3.0571
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000275496",
+      "MI": 3.0417
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000278147",
+      "MI": 3.0558
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000278633",
+      "MI": 3.0422
+    },
+    {
+      "source": "NKX2-5",
+      "target": "LINC02635",
+      "MI": 3.0746
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000285010",
+      "MI": 3.0493
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000285586",
+      "MI": 3.0501
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000285698",
+      "MI": 3.0522
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000285800",
+      "MI": 3.046
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000286028",
+      "MI": 3.0565
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000286483",
+      "MI": 3.079
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000286807",
+      "MI": 3.0549
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000287046",
+      "MI": 3.0481
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000287128",
+      "MI": 3.0402
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000287138",
+      "MI": 3.059
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000287669",
+      "MI": 3.043
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000288001",
+      "MI": 3.0425
+    },
+    {
+      "source": "NKX2-5",
+      "target": "ENSG00000288089",
+      "MI": 3.048
+    },
+    {
+      "source": "SP5",
+      "target": "SPO11",
+      "MI": 3.0478
+    },
+    {
+      "source": "SP5",
+      "target": "MLNR",
+      "MI": 3.0472
+    },
+    {
+      "source": "SP5",
+      "target": "AC021146.12",
+      "MI": 3.0445
+    },
+    {
+      "source": "SP5",
+      "target": "APOA4",
+      "MI": 3.0518
+    },
+    {
+      "source": "SP5",
+      "target": "GNAT1",
+      "MI": 3.0667
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000131737",
+      "MI": 3.0411
+    },
+    {
+      "source": "SP5",
+      "target": "IRS4",
+      "MI": 3.0474
+    },
+    {
+      "source": "SP5",
+      "target": "PRG3",
+      "MI": 3.0477
+    },
+    {
+      "source": "SP5",
+      "target": "AC078865.1",
+      "MI": 3.0413
+    },
+    {
+      "source": "SP5",
+      "target": "NKX6-1",
+      "MI": 3.0503
+    },
+    {
+      "source": "SP5",
+      "target": "TBATA",
+      "MI": 3.0446
+    },
+    {
+      "source": "SP5",
+      "target": "CHP2",
+      "MI": 3.0574
+    },
+    {
+      "source": "SP5",
+      "target": "HSFX1",
+      "MI": 3.0421
+    },
+    {
+      "source": "SP5",
+      "target": "OR2K2",
+      "MI": 3.0531
+    },
+    {
+      "source": "SP5",
+      "target": "OR1A2",
+      "MI": 3.0628
+    },
+    {
+      "source": "SP5",
+      "target": "RXFP4",
+      "MI": 3.0404
+    },
+    {
+      "source": "SP5",
+      "target": "EVX2",
+      "MI": 3.0414
+    },
+    {
+      "source": "SP5",
+      "target": "OR4M1",
+      "MI": 3.0419
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000176782",
+      "MI": 3.0578
+    },
+    {
+      "source": "SP5",
+      "target": "OR2AP1",
+      "MI": 3.0516
+    },
+    {
+      "source": "SP5",
+      "target": "AGTR2",
+      "MI": 3.0485
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000182334",
+      "MI": 3.0407
+    },
+    {
+      "source": "SP5",
+      "target": "SLC35D3",
+      "MI": 3.0418
+    },
+    {
+      "source": "SP5",
+      "target": "OR4F6",
+      "MI": 3.0408
+    },
+    {
+      "source": "SP5",
+      "target": "UBL4B",
+      "MI": 3.0445
+    },
+    {
+      "source": "SP5",
+      "target": "SULT1C3",
+      "MI": 3.0507
+    },
+    {
+      "source": "SP5",
+      "target": "TMEM239",
+      "MI": 3.0521
+    },
+    {
+      "source": "SP5",
+      "target": "FAM24A",
+      "MI": 3.0561
+    },
+    {
+      "source": "SP5",
+      "target": "SP5",
+      "MI": 3.0408
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000211724",
+      "MI": 3.0411
+    },
+    {
+      "source": "SP5",
+      "target": "TRAJ3",
+      "MI": 3.0571
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000211938",
+      "MI": 3.0505
+    },
+    {
+      "source": "SP5",
+      "target": "AC104389.5",
+      "MI": 3.0419
+    },
+    {
+      "source": "SP5",
+      "target": "TRIM64C",
+      "MI": 3.0707
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000223530",
+      "MI": 3.0583
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000224049",
+      "MI": 3.0466
+    },
+    {
+      "source": "SP5",
+      "target": "AC234771.1",
+      "MI": 3.0434
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000224359",
+      "MI": 3.0481
+    },
+    {
+      "source": "SP5",
+      "target": "LINC01657",
+      "MI": 3.0677
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000225698",
+      "MI": 3.041
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000225819",
+      "MI": 3.042
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000226777",
+      "MI": 3.0408
+    },
+    {
+      "source": "SP5",
+      "target": "LINC00161",
+      "MI": 3.0688
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000227175",
+      "MI": 3.0406
+    },
+    {
+      "source": "SP5",
+      "target": "HOTAIR",
+      "MI": 3.0428
+    },
+    {
+      "source": "SP5",
+      "target": "SPATA13",
+      "MI": 3.0409
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000229434",
+      "MI": 3.0438
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000229779",
+      "MI": 3.0405
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000230686",
+      "MI": 3.0448
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000230967",
+      "MI": 3.0548
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000231080",
+      "MI": 3.0426
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000233728",
+      "MI": 3.0522
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000235620",
+      "MI": 3.0459
+    },
+    {
+      "source": "SP5",
+      "target": "LINC01779",
+      "MI": 3.0466
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000236028",
+      "MI": 3.0439
+    },
+    {
+      "source": "SP5",
+      "target": "MRGPRG-AS1",
+      "MI": 3.044
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000236336",
+      "MI": 3.0446
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000236920",
+      "MI": 3.0402
+    },
+    {
+      "source": "SP5",
+      "target": "LINC00851",
+      "MI": 3.0437
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000241754",
+      "MI": 3.0458
+    },
+    {
+      "source": "SP5",
+      "target": "PRICKLE2-DT",
+      "MI": 3.0626
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000248416",
+      "MI": 3.0411
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000250150",
+      "MI": 3.0405
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000250173",
+      "MI": 3.044
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000251189",
+      "MI": 3.0426
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000251621",
+      "MI": 3.0522
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000253339",
+      "MI": 3.0443
+    },
+    {
+      "source": "SP5",
+      "target": "OR8G5",
+      "MI": 3.0426
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000256757",
+      "MI": 3.0435
+    },
+    {
+      "source": "SP5",
+      "target": "A2ML1-AS2",
+      "MI": 3.0752
+    },
+    {
+      "source": "SP5",
+      "target": "LINC02419",
+      "MI": 3.0464
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000257096",
+      "MI": 3.0544
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000258931",
+      "MI": 3.0437
+    },
+    {
+      "source": "SP5",
+      "target": "LINC02304",
+      "MI": 3.0427
+    },
+    {
+      "source": "SP5",
+      "target": "LINC00644",
+      "MI": 3.0607
+    },
+    {
+      "source": "SP5",
+      "target": "LINC00567",
+      "MI": 3.087
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000259870",
+      "MI": 3.0417
+    },
+    {
+      "source": "SP5",
+      "target": "LINC00261",
+      "MI": 3.0644
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000259989",
+      "MI": 3.0562
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000260679",
+      "MI": 3.0466
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000261569",
+      "MI": 3.0582
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000264491",
+      "MI": 3.0509
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000266102",
+      "MI": 3.0456
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000267172",
+      "MI": 3.08
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000267992",
+      "MI": 3.0436
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000270159",
+      "MI": 3.0438
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000271724",
+      "MI": 3.0534
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000272457",
+      "MI": 3.0447
+    },
+    {
+      "source": "SP5",
+      "target": "GGTLC3",
+      "MI": 3.0514
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000274276",
+      "MI": 3.0404
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000275322",
+      "MI": 3.0401
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000275496",
+      "MI": 3.0417
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000278147",
+      "MI": 3.0558
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000280881",
+      "MI": 3.0405
+    },
+    {
+      "source": "SP5",
+      "target": "LINC02635",
+      "MI": 3.0746
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000285586",
+      "MI": 3.0561
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000285698",
+      "MI": 3.0522
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000285800",
+      "MI": 3.0507
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000285997",
+      "MI": 3.0445
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000286028",
+      "MI": 3.0565
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000286483",
+      "MI": 3.079
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000286779",
+      "MI": 3.0528
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000286807",
+      "MI": 3.0549
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000287046",
+      "MI": 3.0481
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000287128",
+      "MI": 3.0402
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000287138",
+      "MI": 3.059
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000287669",
+      "MI": 3.043
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000287840",
+      "MI": 3.0432
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000288001",
+      "MI": 3.0425
+    },
+    {
+      "source": "SP5",
+      "target": "ENSG00000288089",
+      "MI": 3.048
+    }
+  ]
+}

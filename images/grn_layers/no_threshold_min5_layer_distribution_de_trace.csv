@@ -1,0 +1,6 @@
+layer,n_genes,binThal_DE,binThal_pct,contrasts5of6_DE,contrasts5of6_pct
+0,75,11,14.67,0,0.0
+1,10893,109,1.0,2,0.02
+2,908,8,0.88,0,0.0
+3,28,0,0.0,0,0.0
+4,2,0,0.0,0,0.0
