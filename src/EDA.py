@@ -57,6 +57,14 @@ DATASET_CONFIG = {
             "braaksc": "Braak stage (0-VI)",
             "ceradsc": "CERAD score (1=Definite AD, 2=Probable, 3=Possible, 4=No AD)",
         },
+        # Derived AD-vs-control grouping (in addition to the stage stratifiers above).
+        # cogdx: 1=NCI (control), 4=AD, 5=AD+other -> AD; MCI/other-dementia excluded.
+        "case_control": {
+            "source": "cogdx",
+            "label": "ad_vs_control",
+            "mapping": {1: "Control", 4: "AD", 5: "AD"},
+            "caption": "AD vs control (cogdx: 1=NCI control; 4/5=AD)",
+        },
         "corr_cols": ["braaksc", "ceradsc", "age_death", "pmi", "educ", "cts_mmse30_lv"],
         "ordinal_maps": {},   # ROSMAP braaksc/ceradsc are already numeric
         "dist_continuous": ["age_death", "educ", "pmi", "cts_mmse30_lv"],
@@ -75,9 +83,9 @@ DATASET_CONFIG = {
         "braak_col": "Braak stage",
         "cerad_col": "CERAD score",
         "stratifiers": ["Braak stage", "CERAD score"],
-        "table1_continuous": ["Continuous Pseudo-progression Score"],   # only donor-level continuous
-        "table1_categorical": ["sex", "APOE4 status", "Cognitive status", "ADNC",
-                               "Age at death", "Years of education", "PMI",
+        "table1_continuous": [],   # no donor-level continuous vars shown
+        "table1_categorical": ["sex", "APOE4 status", "ADNC",
+                               "Age at death", "PMI",
                                "Thal phase", "Braak stage", "CERAD score"],
         "row_labels": {
             "Continuous Pseudo-progression Score": "Pseudo-progression score",
@@ -90,6 +98,14 @@ DATASET_CONFIG = {
         },
         "value_labels": {},             # values are already human-readable text
         "group_caption": {"Braak stage": "Braak stage", "CERAD score": "CERAD score"},
+        # Derived dementia-vs-no-dementia grouping (SEA-AD analog of AD vs control).
+        # 'Cognitive status' is already ~binary; map explicitly and drop anything else.
+        "case_control": {
+            "source": "Cognitive status",
+            "label": "dementia_vs_no_dementia",
+            "mapping": {"Dementia": "Dementia", "No dementia": "No dementia"},
+            "caption": "Dementia vs no dementia (Cognitive status)",
+        },
         "corr_cols": ["Braak stage", "CERAD score", "Thal phase", "ADNC",
                       "Continuous Pseudo-progression Score"],
         "ordinal_maps": {
@@ -567,16 +583,54 @@ def donor_table1(adata, groupby, id_col="individualID", continuous=None, categor
     return table
 
 
+def _add_case_control_col(adata, cc):
+    """Derive a two-level AD-vs-control column onto adata.obs per a case_control config.
+
+    `cc["source"]` is the diagnosis column; `cc["mapping"]` maps its values to group
+    labels (unmapped values -> NaN, i.e. donors excluded from that Table 1). Numeric
+    sources (e.g. ROSMAP cogdx) are coerced before lookup. Returns the new column name,
+    or None if the source column is absent.
+    """
+    src = cc["source"]
+    if src not in adata.obs.columns:
+        return None
+    mapping = cc["mapping"]
+    col = cc["label"]
+    numeric_keys = all(isinstance(k, (int, float)) and not isinstance(k, bool) for k in mapping)
+    if numeric_keys:
+        vals = _coerce_numeric_series(adata.obs[src])
+        mapped = [mapping.get(int(v)) if pd.notna(v) else None for v in vals]
+    else:
+        mapped = [mapping.get(str(v).strip()) if pd.notna(v) else None for v in adata.obs[src]]
+    adata.obs[col] = mapped
+    return col
+
+
 def dataset_table1(dataset, cell_type=None, groupby=None, save_dir="images"):
     """Build Table 1(s) for a dataset using its configured columns/labels.
 
-    groupby defaults to the dataset's Braak (and CERAD, if any) columns.
+    groupby defaults to the dataset's Braak (and CERAD, if any) columns, plus a derived
+    AD-vs-control grouping when the dataset config defines `case_control`.
     Loads obs only (backed), so it's cheap even for the large SEA-AD file.
     """
     cfg = _cfg(dataset, cell_type)
     adata = load_dataset(dataset, cell_type, backed=True)
     default_gbs = cfg.get("stratifiers") or [c for c in (cfg.get("braak_col"), cfg.get("cerad_col")) if c]
-    groupbys = [groupby] if groupby else list(default_gbs)
+    default_gbs = list(default_gbs)
+    group_caption = dict(cfg.get("group_caption", {}))
+
+    # Derive the AD-vs-control column (if configured) and fold it into the groupings.
+    cc = cfg.get("case_control")
+    if cc:
+        cc_col = _add_case_control_col(adata, cc)
+        if cc_col:
+            group_caption[cc_col] = cc.get("caption", cc_col)
+            if cc_col not in default_gbs:
+                default_gbs.append(cc_col)
+        else:
+            print(f"  skip case/control: source '{cc['source']}' not in {dataset} obs")
+
+    groupbys = [groupby] if groupby else default_gbs
     tag = f"{dataset}_{cell_type or cfg['cell_types'][0]}".lower()
     tables = {}
     for gb in groupbys:
@@ -588,7 +642,7 @@ def dataset_table1(dataset, cell_type=None, groupby=None, save_dir="images"):
             adata, gb, id_col=cfg["id_col"],
             continuous=cfg["table1_continuous"], categorical=cfg["table1_categorical"],
             row_labels=cfg["row_labels"], value_labels=cfg["value_labels"],
-            group_caption=cfg["group_caption"], save_path=out,
+            group_caption=group_caption, save_path=out,
         )
     return tables
 

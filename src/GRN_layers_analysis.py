@@ -16,6 +16,7 @@ from collections import Counter, defaultdict
 
 import numpy as np
 import pandas as pd
+from scipy.stats import fisher_exact
 
 GRN = "data/GRN/SEAAD/Microglia/Microglia_GRN.tsv"
 GRN_GENES = "data/GRN/SEAAD/Microglia/Microglia_GRN_genes.txt"
@@ -23,7 +24,7 @@ BINTHAL = ("results/dge_final/dge_results_SEA_AD_Microglia_MTG_"
            "pseudobulk100_seed100_binThal_covbatch_vendor_name_1_vs_2.csv")
 ADNC_GLOB = "results/dge_final/dge_results_SEA_AD_Microglia_MTG_*.csv"
 DEFAULT_GENES = ("results/grn_analysis/no_threshold/"
-                 "GRN_analysis_f1_top200_min5_SEAAD_Microglia_MTG_top75_summary.csv")
+                 "GRN_analysis_f1_trial26filt_min7_SEAAD_Microglia_MTG_top51_summary.csv")
 
 
 def load_or_build_nodes(grn_path, cache=GRN_GENES, chunksize=3_000_000):
@@ -153,22 +154,59 @@ def run(args):
             r = lv >= 0
             prev = glevel[r]
             glevel[r] = np.where(prev < 0, lv[r], np.minimum(prev, lv[r]))
+        de_total = {name: int(mask.sum()) for name, mask in de_masks.items()}  # DE genes in the GRN
         rows = []
         for lv in range(args.levels + 1):
             idx = np.where(glevel == lv)[0]
-            row = {"level": lv, "n_unique_genes": int(idx.size)}
+            m = int(idx.size)
+            row = {"level": lv, "n_unique_genes": m}
             for name, mask in de_masks.items():
-                row[f"{name}_DE"] = int(mask[idx].sum())
+                a = int(mask[idx].sum())                  # this level & DE
+                row[f"{name}_DE"] = a
+                # Fisher: is this level enriched/depleted for DE vs the rest of the GRN nodes?
+                b = m - a                                 # this level, not DE
+                c = de_total[name] - a                    # other GRN nodes & DE
+                d = n_nodes - m - c                       # other GRN nodes & not DE
             rows.append(row)
         df = pd.DataFrame(rows)
         print(f"\nseeds: {len(seeds)} genes (cascades built for {built}); "
               f"UNION, each gene at its earliest level (levels={args.levels}, top_k={top_k})")
         print("\nunique genes per level:")
         print(df.to_string(index=False))
+
+        # per-gene detail: every reached gene with its level + DE flags + symbol
+        import pickle
+        e2s = {}
+        if os.path.exists("data/genes_2_ensembl_ids.pkl"):
+            g2e = pickle.load(open("data/genes_2_ensembl_ids.pkl", "rb"))
+            e2s = {v: k for k, v in g2e.items()}
+        reached = np.where(glevel >= 0)[0]
+        detail = pd.DataFrame({
+            "gene": [genes_list[i] for i in reached],
+            "gene_symbol": [e2s.get(genes_list[i], genes_list[i]) for i in reached],
+            "level": glevel[reached].astype(int),
+        })
+        for name, mask in de_masks.items():
+            detail[f"{name}_DE"] = mask[reached].astype(int)
+        detail = detail.sort_values(["level", "gene"]).reset_index(drop=True)
+        if args.save_levels is not None:
+            detail = detail[detail["level"].isin(args.save_levels)].reset_index(drop=True)
+
         out = args.output
         os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
         df.to_csv(out, index=False)
-        print(f"\nsaved union table -> {out}")
+        lvl_tag = ("_L" + "".join(str(l) for l in sorted(args.save_levels))) if args.save_levels is not None else ""
+        genes_out = out.replace(".csv", f"{lvl_tag}_genes.csv")
+        # save the DE gene names in two columns (padded), not the full unique-gene list
+        bt = detail.loc[detail["binThal_DE"] == 1, "gene"].tolist()
+        c56 = detail.loc[detail["contrasts5of6_DE"] == 1, "gene"].tolist()
+        L = max(len(bt), len(c56), 1)
+        pd.DataFrame({"binThal_DE": bt + [""] * (L - len(bt)),
+                      "contrasts5of6_DE": c56 + [""] * (L - len(c56))}).to_csv(genes_out, index=False)
+        print(f"\nsaved union counts -> {out}")
+        print(f"saved DE gene names (binThal={len(bt)}, contrasts5of6={len(c56)}"
+              + (f"; levels {sorted(args.save_levels)}" if args.save_levels is not None else "")
+              + f") -> {genes_out}")
         return
 
     rows = []
@@ -216,6 +254,9 @@ if __name__ == "__main__":
     p.add_argument("--union", action="store_true",
                    help="De-duplicate across seeds: count UNIQUE genes per level (each gene at "
                         "its earliest level over all cascades) instead of summing per-gene.")
+    p.add_argument("--save_levels", type=int, nargs="+", default=None,
+                   help="With --union: restrict the saved per-gene detail to these levels "
+                        "(e.g. --save_levels 0 1). Default: save all reached genes.")
     p.add_argument("--output", default="results/grn_analysis/cascade_de_by_level.csv")
     main = run
     main(p.parse_args())
