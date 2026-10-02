@@ -162,6 +162,15 @@ DATASET_CONFIG = {
                 "meta_glob": "data/AtlasData/2025-12-27_Microglia_*_metadata.csv",
                 "id_col": "Donor ID",
                 "stratifiers": ["Braak", "CERAD"],
+                # Atlas has no clinical dementia field -> derive a NEUROPATHOLOGY-based
+                # AD vs control from Pathology Stage (1-2 = control, 3-4 = AD). This is
+                # AD pathology, NOT clinical dementia status.
+                "case_control": {
+                    "source": "Pathology Stage",
+                    "label": "ad_vs_control",
+                    "mapping": {1: "Control", 2: "Control", 3: "AD", 4: "AD"},
+                    "caption": "AD vs control (Pathology Stage 1-2 vs 3-4; neuropathology, not clinical dementia)",
+                },
                 "table1_continuous": [],
                 "table1_categorical": ["Sex", "APOE", "Braak", "CERAD", "Pathology Stage"],
                 "corr_cols": ["Braak", "CERAD", "Pathology Stage"],
