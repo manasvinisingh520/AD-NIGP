@@ -74,8 +74,12 @@ RANDOM_EMBEDDING_DIM = 16
 
 
 def _load_v2_pickle(region: str, cell_type: str, expr_transform: str = "log1p",
-                    dataset: str = "Atlas", filtered: bool = False) -> dict:
-    """Load v2 pickle, optionally selecting by expression transform suffix / filtered variant."""
+                    dataset: str = "Atlas", filtered: bool = False, data_tag: str = "") -> dict:
+    """Load v2 pickle, optionally selecting by expression transform suffix / filtered variant.
+
+    data_tag: extra filename suffix for control variants, e.g. "_embshuffle_seed0"
+              (gene-embedding shuffle from create_data_v2.py --shuffle_embeddings).
+    """
     if dataset in ("SEAAD", "ROSMAP"):
         base = f"{dataset}_{cell_type}_v2_data"
     elif cell_type == "Microglia":
@@ -83,7 +87,7 @@ def _load_v2_pickle(region: str, cell_type: str, expr_transform: str = "log1p",
     else:
         base = f"{region}_v2_data"
 
-    tag = "_filtered" if filtered else ""
+    tag = ("_filtered" if filtered else "") + (data_tag or "")
     candidates = []
     if expr_transform:
         candidates.append(f"{base}_{expr_transform}{tag}.pkl")
@@ -553,6 +557,7 @@ def _main_inner(args, out) -> Tuple[float, float, float, List[dict]]:
         expr_transform=expr_transform,
         dataset=getattr(args, "data", "Atlas"),
         filtered=getattr(args, "filtered", False),
+        data_tag=getattr(args, "data_tag", ""),
     )
     # --- Optional label-shuffle overlay (permutation-control; see shuffle_labels_v2.py) ---
     if getattr(args, "shuffle_labels", None):
@@ -1494,6 +1499,11 @@ if __name__ == "__main__":
         "--filtered", action="store_true",
         help="Load the _filtered v2 data pickle (built by create_data_v2.py --filtered), "
              "e.g. SEAAD_Microglia_v2_data_log1p_filtered.pkl.",
+    )
+    parser.add_argument(
+        "--data_tag", type=str, default="",
+        help="Extra suffix of the v2 data pickle for control variants, e.g. _embshuffle_seed0 "
+             "(gene embeddings shuffled across genes; create_data_v2.py --shuffle_embeddings 0).",
     )
     parser.add_argument(
         "--target", type=str, default="thal", choices=["thal", "braak"],

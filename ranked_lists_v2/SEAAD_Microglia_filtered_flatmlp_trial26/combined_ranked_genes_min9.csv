@@ -1,0 +1,2 @@
+combined_rank,gene,gene_symbol,n_seeds_pos,consensus_mean_f1_drop,mean_rank_across_seeds
+1,ENSG00000203867,RBM20,9,0.01107449494949489,597.9

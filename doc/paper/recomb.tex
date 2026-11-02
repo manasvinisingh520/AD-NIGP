@@ -1,0 +1,488 @@
+\documentclass[10pt,twocolumn,letterpaper]{article}
+\usepackage[letterpaper,margin=1in]{geometry}
+\usepackage{mathptmx}
+\usepackage{courier}
+\usepackage[T1]{fontenc}
+\usepackage{graphicx,booktabs,amsmath,xcolor,url,multirow}
+\usepackage[font=small,labelfont=bf,skip=3pt]{caption}
+\usepackage[hidelinks]{hyperref}
+\usepackage{enumitem}
+\usepackage{placeins}
+\setlength{\columnsep}{0.25in}
+\setlist{nosep,leftmargin=*}
+\setlength{\textfloatsep}{8pt plus 2pt minus 2pt}
+\setlength{\floatsep}{6pt plus 2pt minus 2pt}
+\setlength{\intextsep}{6pt plus 2pt minus 2pt}
+\setlength{\dbltextfloatsep}{8pt plus 2pt minus 2pt}
+\setlength{\parskip}{0pt}
+\renewcommand{\topfraction}{0.7}\renewcommand{\dbltopfraction}{0.7}\renewcommand{\bottomfraction}{0.5}
+\renewcommand{\textfraction}{0.2}\renewcommand{\floatpagefraction}{0.7}
+\renewcommand{\dblfloatpagefraction}{0.7}
+\newcommand{\todo}[1]{\textcolor{red}{[#1]}}
+\newcommand{\gene}[1]{\textit{#1}}
+\makeatletter
+\renewcommand\section{\@startsection{section}{1}{\z@}{-1.6ex plus -.4ex minus -.2ex}{0.8ex plus .2ex}{\normalfont\large\bfseries}}
+\renewcommand\subsection{\@startsection{subsection}{2}{\z@}{-1.2ex plus -.3ex minus -.2ex}{0.5ex plus .2ex}{\normalfont\normalsize\bfseries}}
+\renewcommand\paragraph{\@startsection{paragraph}{4}{\z@}{0.6ex plus .2ex}{-1em}{\normalfont\normalsize\itshape}}
+\makeatother
+
+\begin{document}
+
+%% ---------------- Title page (does not count toward the 10-page limit) ----------------
+\onecolumn
+\thispagestyle{empty}
+\begin{center}
+{\LARGE\bfseries Beyond Differential Expression: Network-Informed\\[2pt] Gene Prioritization for Alzheimer's Disease Progression\par}
+\vspace{14pt}
+{\large Manasvini Singh$^{1}$ \quad Jake \todo{Last name}$^{2}$\par}
+\vspace{6pt}
+{\small $^{1}$Campbell, CA, USA \quad $^{2}$\todo{Lab / Institution}\\
+\texttt{manasvinisingh520@gmail.com}\par}
+\vspace{6pt}
+{\small Code: \url{https://github.com/manasvinisingh520/sf2026}\par}
+\end{center}
+\vspace{10pt}
+\noindent\textbf{Abstract.}
+Differential gene expression (DGE) is the standard way to find genes associated with disease progression, but it scores each gene in isolation and misses regulators whose expression changes little. We present \emph{network-informed gene prioritization} (NIGP), a complementary direction to DGE: rather than testing which genes change, it ranks genes by how much a progression model needs them once their regulatory context is encoded. NIGP infers a cell-type- and region-specific gene regulatory network (GRN), embeds genes with the GRN-aware model GREmLN, trains a pathology-stage classifier on the expression-weighted embeddings, and ranks genes by permutation importance, keeping only genes that recur across random seeds beyond a permutation null. We apply NIGP to an Alzheimer's disease (AD) progression atlas (32 donors; five regions; astrocytes and microglia) and to the independent SEA-AD cohort (84 donors). In SEA-AD microglia, NIGP rankings were reproducible beyond chance (51 genes recurrent in $\geq$7 of 10 seeds vs.\ 9 expected) and drawn from a different candidate pool than DGE: only 8 of 133 DGE hits lie in the network, and NIGP genes had small fold changes (median $|\log_2\text{FC}|=0.16$). These genes were regulatory in character (DNA-binding transcription-factor activity, $p_{\text{adj}}=8\times10^{-21}$ against the genome). Unlike DGE genes, their chromatin accessibility moved in the same direction as their expression (73\%, $p=0.002$), beyond random gene sets from the same network and a model with shuffled gene embeddings. The network-informed representation also carried progression signal across regions and cell types and was far less confounded by technical batch than raw expression. NIGP thus adds a regulatory dimension to gene prioritization, recovering candidates that DGE does not surface.
+
+\clearpage
+\twocolumn
+\setcounter{page}{1}
+\pagestyle{plain}
+
+%% ---------------- Main text (10 pages max) ----------------
+\section{Introduction}
+Alzheimer's disease (AD) is the most common cause of dementia, affecting roughly one in nine adults over 65~\cite{rasmussen}, and is characterized pathologically by amyloid-$\beta$ plaques and tau neurofibrillary tangles. Symptoms are easily confused with typical aging, and by diagnosis an estimated 40--60\% of synapses may already be lost~\cite{spargo}. It is therefore important to identify molecular signals that precede large-scale atrophy and track disease progression. Single-cell RNA sequencing (scRNA-seq) allows this progression to be studied at cellular resolution, but it raises a modeling question: \emph{given single-cell expression, what representation of a gene best captures its role in disease progression?}
+
+The default answer is differential gene expression (DGE) analysis. Methods such as DESeq2~\cite{rosati} rank genes by the magnitude and significance of their expression difference across disease stages, and much of what is known about transcriptional change in AD rests on this approach. DGE detects strong gene-level shifts well, but it treats each gene independently. Genes act in coordinated programs: transcription factors regulate targets, and pathways activate and suppress one another. A gene can therefore play a significant part in disease-relevant regulation without a large marginal fold change, and a gene with a large fold change may be a downstream consequence rather than a driver. What is needed is a prioritization procedure that, like DGE, takes single-cell data from donors at different disease stages and returns a ranked gene list, but scores each gene in its regulatory context.
+
+\paragraph{Prior work: from networks to learned representations.}
+Two lines of work address this limitation. The first infers GRNs and scores genes by network context: ARACNe~\cite{aracne} reconstructs regulator--target edges from mutual information; SCENIC and SCENIC+~\cite{scenic,scenicplus} combine co-expression (GENIE3/GRNBoost2~\cite{genie3,grnboost}) with motif and chromatin-accessibility evidence; and VIPER~\cite{viper} scores transcription-factor (TF) activity from regulon expression. These methods established that network-aware analysis recovers regulators that per-gene DGE misses. The second line learns gene and cell representations from large scRNA-seq corpora: foundation models such as Geneformer, scGPT and scFoundation~\cite{geneformer,scgpt,scfoundation} pretrain transformers on tens of millions of cells. It remains an open question what these representations encode; recent work suggests that their attention may capture co-expression rather than a distinct regulatory signal~\cite{kendiukhov}. Whether embeddings that are \emph{explicitly} structured by a regulatory network carry information beyond raw expression for a concrete downstream task is therefore testable and largely untested.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{figures/fig1_overview.png}
+\caption{NIGP overview: per-region DGE baseline (left) and the network-informed procedure (ARACNe GRN $\to$ GREmLN embeddings $\to$ ranking model evaluated against amyloid/tau pathology $\to$ re-ranked gene list).}
+\label{fig:overview}
+\end{figure*}
+
+\paragraph{This work.}
+We propose \emph{network-informed gene prioritization} (NIGP), a gene-ranking procedure that approaches prioritization from a different direction than DGE and is meant to be used alongside it (Fig.~\ref{fig:overview}). DGE asks \emph{which genes change between stages}. NIGP asks \emph{which genes a predictive model of disease stage relies on once each gene is represented by its regulatory context}. The procedure has four steps: (i) infer a cell-type- and region-specific GRN with ARACNe; (ii) embed genes with GREmLN~\cite{gremln}, a single-cell model that takes the GRN as explicit input; (iii) represent each donor by expression-weighted gene embeddings and train a stage classifier under donor-level cross-validation; and (iv) rank genes by permutation importance, keeping only genes that recur across random seeds beyond a permutation null. The output is a ranked gene list, directly comparable with a DGE list.
+
+We evaluate NIGP primarily through the gene lists it produces, comparing them with DGE on reproducibility, overlap, pathway enrichment and chromatin accessibility. We also characterize the representation underlying the ranking, comparing it with raw expression for stage classification and batch robustness under a matched pipeline. We develop the method on a single-cell AD progression atlas (32 donors; five regions; astrocytes and microglia) and validate it on the independent SEA-AD cohort (84 donors; microglia). Our claims concern NIGP as instantiated with ARACNe and GREmLN; the procedure is modular, and other GRN and embedding methods can be substituted.
+
+\paragraph{Contributions.}
+\begin{itemize}
+\item \textbf{A gene-prioritization procedure} (NIGP) that turns a GRN-aware representation, a stage classifier and seed-aggregated permutation importance into a ranked gene list with a permutation-based reproducibility test (Sec.~\ref{sec:method}).
+\item \textbf{Reproducible gene lists distinct from DGE}: on a filtered GRN, rankings recur across seeds far beyond chance, and draw on a different candidate pool than DGE: few DGE hits lie in the GRN, and NIGP genes have small fold changes that a fold-change threshold would discard.
+\item \textbf{Biological support}: the prioritized genes are regulatory in character, prioritized TFs show pathology-associated footprint changes, and the accessibility of prioritized genes tracks their expression (73\% concordant, $p=0.002$), beyond random network genes and a shuffled-embedding control, unlike that of DGE genes.
+\item \textbf{A characterization of the scoring model}: the network-informed representation is substantially more robust to technical batch than raw expression. We also quantify how best-epoch selection inflates stage-classification F1 in small cohorts, and identify which findings are independent of it.
+\end{itemize}
+
+\section{Methods}
+\subsection{Data}
+\paragraph{AD progression atlas (development) \cite{serrano}.}
+We used a single-nucleus RNA-seq atlas of 32 donors across five regions: prefrontal cortex (PFC), secondary and primary visual cortex (V2, V1), inferior temporal gyrus (ITG) and entorhinal cortex (EC). Astrocytes and microglia were processed separately (microglia: ITG, PFC and a cross-region pool). Cells with fewer than 200 UMIs or more than 15\% mitochondrial reads were removed, and donors with fewer than 80 cells in a given region were excluded. Progression was indexed by Thal phase.
+
+\paragraph{SEA-AD (independent validation) \cite{seaad}.}
+We used middle temporal gyrus (MTG) microglia from the Seattle Alzheimer's Disease Brain Cell Atlas, given their well-documented disease-associated reactivity~\cite{hansen}. Of 89 donors processed, 84 carried a dementia/no-dementia designation and were analyzed (Table~\ref{tab:cohort}). The groups differed on neuropathology (ADNC, Thal, Braak, CERAD; all $p<0.001$) but not on sex, age at death, \gene{APOE4} status or post-mortem interval, so the cohort is separated by pathology rather than by these potential confounders. Donors were split into eight stratified folds (73--74 training and 10--11 held-out donors per fold); all cells of a donor fall in the same fold.
+
+\begin{table}[!htb]
+\centering\scriptsize
+\caption{SEA-AD microglia cohort, dementia vs.\ no dementia, $n$ (\%). $p$-values from $\chi^2$ tests.}
+\label{tab:cohort}
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{llccc c}
+\toprule
+& & Overall & Dementia & No dem. & $p$ \\
+\midrule
+$n$ & & 84 & 42 & 42 & \\
+Sex & female & 51 (60.7) & 27 (64.3) & 24 (57.1) & 0.655 \\
+ & male & 33 (39.3) & 15 (35.7) & 18 (42.9) & \\
+\gene{APOE4} & no & 59 (70.2) & 26 (61.9) & 33 (78.6) & 0.152\\
+ & yes & 25 (29.8) & 16 (38.1) & 9 (21.4) & \\
+ADNC & High & 42 (50.0) & 31 (73.8) & 11 (26.2) & $<$0.001\\
+ & Intermediate & 21 (25.0) & 7 (16.7) & 14 (33.3) & \\
+ & Low & 12 (14.3) & 4 (9.5) & 8 (19.0) & \\
+ & Not AD & 9 (10.7) & 0 (0.0) & 9 (21.4) & \\
+Age at death & 65--77 & 8 (9.5) & 6 (14.3) & 2 (4.8) & 0.282\\
+ & 78--89 & 30 (35.7) & 13 (31.0) & 17 (40.5) & \\
+ & 90+ & 46 (54.8) & 23 (54.8) & 23 (54.8) & \\
+PMI (h) & 3.2--5.9 & 31 (36.9) & 13 (31.0) & 18 (42.9) & 0.508\\
+ & 5.9--8.7 & 32 (38.1) & 18 (42.9) & 14 (33.3) & \\
+ & 8.7--11.4 & 21 (25.0) & 11 (26.2) & 10 (23.8) & \\
+Thal & 0 & 9 (10.7) & 0 (0.0) & 9 (21.4) & $<$0.001\\
+ & 1 & 5 (6.0) & 1 (2.4) & 4 (9.5) & \\
+ & 2 & 7 (8.3) & 1 (2.4) & 6 (14.3) & \\
+ & 3 & 12 (14.3) & 5 (11.9) & 7 (16.7) & \\
+ & 4 & 30 (35.7) & 18 (42.9) & 12 (28.6) & \\
+ & 5 & 21 (25.0) & 17 (40.5) & 4 (9.5) & \\
+Braak & 0 & 2 (2.4) & 0 (0.0) & 2 (4.8) & $<$0.001\\
+ & II & 4 (4.8) & 2 (4.8) & 2 (4.8) & \\
+ & III & 6 (7.1) & 2 (4.8) & 4 (9.5) & \\
+ & IV & 23 (27.4) & 4 (9.5) & 19 (45.2) & \\
+ & V & 34 (40.5) & 20 (47.6) & 14 (33.3) & \\
+ & VI & 15 (17.9) & 14 (33.3) & 1 (2.4) & \\
+CERAD & Absent & 16 (19.0) & 2 (4.8) & 14 (33.3) & $<$0.001\\
+ & Sparse & 12 (14.3) & 2 (4.8) & 10 (23.8) & \\
+ & Moderate & 26 (31.0) & 14 (33.3) & 12 (28.6) & \\
+ & Frequent & 30 (35.7) & 24 (57.1) & 6 (14.3) & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+\subsection{Network-informed gene prioritization}\label{sec:method}
+\paragraph{Problem.} We observe donors $d=1,\dots,D$ with stage labels $y_d$ (Thal phase) and expression $x_{d,g}$ for genes $g\in\mathcal{G}$ in one cell type and region. A prioritization method maps $\{(x_d,y_d)\}$ to a ranking of $\mathcal{G}$. DGE ranks $g$ by a marginal test of $x_{\cdot,g}$ against $y$. NIGP ranks $g$ by its contribution to predicting $y$ from a representation in which each gene carries its regulatory context. NIGP has four steps (Fig.~\ref{fig:overview}), described below with DGE as the baseline. Because embeddings showed strong region-specific structure (Sec.~\ref{sec:region}), every step is run per region and cell type.
+
+\paragraph{Baseline: DGE.}
+Cells were aggregated into pseudobulk samples of 100 cells per bin within each donor (fixed seed) and analyzed with PyDESeq2. Genes with fewer than 10 total counts were removed. The design was $\sim$\,flowcell + condition (atlas) or $\sim$\,batch + condition (SEA-AD), and genes were called significant at Benjamini--Hochberg $p_{\text{adj}}<0.05$ and $|\log_2\text{FC}|\geq1$. On the atlas, which is organized by pathology group, DGE compared the atlas's pathology groups pairwise within each cell type and region. On SEA-AD, every DGE comparison in this paper uses a single contrast matching the label NIGP models: low (Thal 0--2) vs.\ high (Thal 3--5) amyloid stage. This binarized-Thal contrast yielded 133 DEGs, which form the DGE list for all SEA-AD analyses (overlap, chromatin accessibility and enrichment).
+
+\paragraph{Step 1: GRN inference.}
+GRNs were inferred with GPU-accelerated ARACNe on the per-donor pseudobulk expression matrices. Because single-network estimates are unstable on sparse single-cell data, ARACNe was run over bootstrap resamples and consolidated into a consensus network (astrocytes: 100 bootstraps; microglia: 10 bootstraps). Regulators were restricted to the University of Toronto human TF list~\cite{lambert}. Each edge carries an MI weight. We kept both the unfiltered network and an MI-filtered network so we could test whether edge confidence affects downstream results. On SEA-AD microglia the unfiltered network covered 4,394 genes. Thresholding at MI\,$\geq$\,3.04 (the 99th percentile of the edge-MI distribution; Fig.~\ref{fig:mi}) left 2,703 genes in the filtered network.
+
+
+\begin{figure}[!htb]
+\centering
+\includegraphics[width=0.8\columnwidth]{figures/fig3_mi_distribution.png}
+\caption{Edge MI distribution of the SEA-AD microglia ARACNe GRN (log scale). Dashed line: MI\,=\,3.04 filter (99th percentile).}
+\label{fig:mi}
+\end{figure}
+
+
+\paragraph{Step 2: GRN-aware gene embeddings.}
+GREmLN~\cite{gremln} takes the expression matrix together with the GRN and produces 512-dimensional gene and cell embeddings, in which genes with similar regulatory context lie close together. Let $e_g\in\mathbb{R}^{512}$ be the embedding of gene $g$ and $P$ a PCA projection to $k$ dimensions ($k=16$ in tuned models). Each donor is represented by the expression-weighted embedding tensor
+\begin{equation}
+\tilde{X}_{d,g,:}=\log(1+x_{d,g})\,P e_g \in\mathbb{R}^{k},\qquad \tilde{X}_d\in\mathbb{R}^{|\mathcal{G}|\times k},\label{eq:rep}
+\end{equation}
+so that a gene's contribution is its expression in the coordinates of its regulatory context. The same construction applied per pseudocell gives a cell-level variant. Gene embeddings were visualized with UMAP colored by mean expression, donor and batch, and batch structure was quantified directly (Sec.~\ref{sec:batch}).
+
+\paragraph{Step 3: scoring model and controlled comparison.} In NIGP the stage classifier is a \emph{scoring model}. Its role is to provide a function whose sensitivity to each gene can be measured (Step 4), not to be a finished stage predictor; gene rankings are accepted only if they are reproducible beyond a permutation null.
+The expression and embedding arms used the same pipeline: identical donor-level folds, preprocessing, Optuna~\cite{optuna} search space (model family among MLP, flattened-embedding MLP, attention-pooled multiple-instance learning (MIL) and linear SVM; learning rate, dropout, batch size, weight decay, label smoothing, PCA dimension and augmentation), the same training schedule (up to 200 epochs, patience 40, minimum 30 epochs) and the same evaluation. The only difference was the input: a gene expression matrix versus the GREmLN representation. Models were trained to classify Thal phase. For each held-out fold, the checkpoint with the highest held-out F1 was retained, identically in both arms; we therefore report these F1 values as best-epoch estimates. As a sensitivity analysis, we recomputed SEA-AD F1 from the saved per-epoch curves with each fold's epoch chosen from the other seven folds, and with the mean over the last 10 epochs. We report weighted F1 both \emph{generalized} (mean over held-out folds) and \emph{pooled} (computed on all held-out predictions). For the atlas astrocytes, the tuned configuration of each arm was retrained with 10 seeds $\times$ 8 folds.
+
+\paragraph{Input-configuration ablation (SEA-AD).}
+We compared four inputs under a fixed pipeline: (1) GREmLN gene embeddings, patient-level; (2) GREmLN cell embeddings, pseudocell-level; (3) raw expression, patient-level; (4) raw expression, pseudocell-level.
+
+\paragraph{Step 4: seed-aggregated permutation importance.}
+For seed $s$ and held-out fold $f$, let $F_{s,f}$ be the held-out F1 and $F_{s,f}^{(\pi_g)}$ the F1 after permuting gene $g$'s slice $\tilde{X}_{\cdot,g,:}$ across held-out donors. The importance of $g$ in seed $s$ and its recurrence across $S$ seeds are
+\begin{equation}
+I_g^{(s)}=\frac{1}{K}\sum_{f=1}^{K}\bigl(F_{s,f}-F_{s,f}^{(\pi_g)}\bigr),\qquad R_g=\sum_{s=1}^{S}\mathbb{1}\bigl[I_g^{(s)}>0\bigr],\label{eq:imp}
+\end{equation}
+with $K=8$ folds and $S=10$ seeds. The NIGP list at threshold $r$ is $L_r=\{g:R_g\geq r\}$, ordered by $\bar I_g=\frac1S\sum_s I_g^{(s)}$. To test whether recurrence exceeds chance, we compare $|L_r|$ with a null in which gene labels are permuted independently within each seed. This preserves each seed's number of positive genes. We used 1,000 permutations and report the empirical $p$-value.
+
+\subsection{Evaluation}
+\paragraph{Robustness.}
+We compared runs on true labels against runs with donor labels shuffled (same folds and hyperparameters, 3 seeds), examining both mean F1 and fold-to-fold variability.
+
+\paragraph{Overlap and enrichment.} We measured the overlap of NIGP lists with the binarized-Thal DGE list, and the differential-expression status of NIGP genes in the same contrast. For overlap with AD genetic risk, we took the genes mapped to all AD associations in the GWAS Catalog~\cite{gwascatalog} and tested each list against its own candidate pool: the 2,703 genes given to the NIGP model, or the 18,650 genes tested by DGE. For the SEA-AD NIGP lists we used g:Profiler (g:GOSt; GO, KEGG, Reactome, WikiPathways and TF-target terms) with multiple-testing-adjusted $p$-values~\cite{gprofiler}. The NIGP list and the binarized-Thal DGE list were tested the same way, against all annotated genes as the background.
+
+\paragraph{Chromatin accessibility.}
+To test whether prioritized genes are regulatorily active in a disease-relevant manner, we used SEA-AD MTG snATAC-seq (218,882 peaks), keeping microglia/PVM nuclei from the ATAC-only assay so that all counts come from one protocol. Of the 84 cohort donors, 10 with fewer than 250,000 microglial counts or a fraction of reads in peaks (FRiP) below 0.2 were removed, leaving 74 (median 75 microglia nuclei per donor). This analysis validates the prioritized genes; it is not used to build GRNs. We ran two analyses.
+
+\emph{TF footprinting.} TF binding was scored with TOBIAS BINDetect using JASPAR motifs on the SEA-AD microglia pseudobulk accessibility tracks for ADNC\,0/1 and ADNC\,3 (SEA-AD releases these tracks by ADNC stage only, so footprinting uses ADNC rather than Thal), with default footprint-score normalization. BINDetect scores each motif's differential binding against the distribution of all motifs and flags motifs whose change exceeds that background.
+
+\emph{Gene-level differential accessibility.} Per donor, counts were summed over all microglial nuclei, and gene activity was the summed counts of peaks overlapping each protein-coding gene body plus 2\,kb upstream (GENCODE v44). Genes with $\geq$10 counts in at least as many donors as the smallest group were kept (15,578 genes). PyDESeq2 compared low (Thal 0--2; $n=21$) with high (Thal 3--5; $n=53$) amyloid stage, the same split as the RNA DGE, under $\sim$\,FRiP + sex + condition. Although the observed batch--Thal association was sizeable (Cram\'er's $V=0.544$), it was not greater than expected under 10,000 permutations of Thal labels (null mean $V=0.571$; empirical $p=0.66$), consistent with inflation from sparse batch categories. Together with the absence of obvious batch separation in PCA, this motivated an unadjusted primary ATAC analysis, with batch-adjusted results ($\sim$\,vendor batch + FRiP + sex + condition) reported as a sensitivity analysis. This differs deliberately from the RNA DGE, which does adjust for batch. In RNA, batch explained 38\% of expression variance (Sec.~\ref{sec:batch}), whereas the ATAC data showed neither batch structure in PCA nor a batch--Thal association. For each pre-specified gene set (NIGP genes recurrent in $\geq$6 or $\geq$7 seeds; DGE genes), we tested whether the fraction of nominally changed genes exceeded the genome-wide rate (one-sided binomial test), and re-adjusted $p$-values within the set (Benjamini--Hochberg). We also tested whether accessibility moved in the same direction as RNA expression in the binarized-Thal contrast (binomial test against 50\%). Two controls checked whether this agreement is specific to NIGP's selection. (i) We drew 1,000 random sets of 48 measurable genes from the GRN and computed the same agreement, giving an empirical $p$-value. (ii) We randomly reassigned GRN-derived gene embeddings to genes, keeping expression values and using one fixed permutation across all training seeds, reran NIGP, and repeated the analysis for its genes recurrent in $\geq$7 seeds. (iii) To ask whether the trained model adds anything beyond network structure alone, we ranked the same GRN's genes by two standard centrality measures, degree and PageRank, and took the top-ranked genes until each list had 48 ATAC-measurable genes, matching the NIGP list.
+
+
+\section{Results}
+\subsection{Cohort characterization}
+In the atlas, cases and controls were balanced on sex but differed on \gene{APOE} genotype ($p=0.047$), with \gene{APOE4} alleles enriched among cases. Because \gene{APOE4} strongly affects glial gene expression, we treat SEA-AD, where \gene{APOE4} status did not differ between groups ($p=0.152$) and sex, age and post-mortem interval were also balanced, as the more stringent test. All gene-level NIGP analyses (Sec.~\ref{sec:filtered}--\ref{sec:atacres}) are performed in this \gene{APOE}-balanced cohort. \gene{APOE} was not used as a covariate in either arm, so the comparison is symmetric. Neuropathological staging variables were strongly concordant in both cohorts: in the atlas, Braak, CERAD and overall pathology stage were highly inter-correlated (Spearman $r=0.89$--$0.98$). Because the atlas groups are defined on staging, part of this concordance is by construction. In SEA-AD, Braak, CERAD, Thal, ADNC and a continuous pseudo-progression score were mutually correlated ($r\approx0.65$--$0.87$). We therefore treat these measures as a common progression axis.
+
+
+\subsection{DGE recovers strong but independent expression shifts}
+On the atlas, the DESeq2 baseline identified genes with large, highly significant expression differences (astrocyte EC top genes: \gene{PLPP1}, \gene{DMD}, \gene{PPP1R12A}, \gene{NRP2}, \gene{ARRDC3}, \gene{FER}, \gene{SOX6}, \gene{FP236383.3}, \gene{AP000317.1}, \gene{AHCYL1}). These are well suited to capturing strong marginal shifts.
+
+\subsection{Regulatory embeddings reveal region-specific structure}\label{sec:region}
+GREmLN cell embeddings separated cleanly by brain region for both astrocytes and microglia (Fig.~\ref{fig:umap}), indicating that regional identity is a dominant axis of regulatory variation. This motivated building region-specific GRNs and models rather than pooling across regions.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.78\textwidth]{figures/fig5_region_umap.png}
+\caption{GREmLN cell embeddings cluster by brain region in astrocytes (left; EC, ITG, PFC, V1, V2) and microglia (right; cross-region, ITG, PFC).}
+\label{fig:umap}
+\end{figure*}
+
+\subsection{The scoring model's representation under best-epoch evaluation}
+We first compared the two candidate representations for the scoring model. Under the matched pipeline, best-epoch F1 of embedding-based models exceeded that of expression-based models in every region and both cell types, on both generalized and pooled metrics (Tables~\ref{tab:astro}--\ref{tab:micro}). For astrocytes, where each arm was retrained over 10 seeds, the embedding advantage ranged from +0.1 (V1) to +12.6 (PFC) percentage points in generalized F1. Microglia showed the largest gains (ITG generalized F1 0.78 vs.\ 0.52). These values use best-epoch selection, whose effect we quantify on SEA-AD in Sec.~\ref{sec:evalpit}.
+
+\begin{table}[!htb]
+\centering\small
+\caption{Atlas astrocytes: best-epoch Thal-phase F1, embedding vs.\ expression (10 seeds $\times$ 8 folds; generalized = mean $\pm$ s.d.\ over runs).}
+\label{tab:astro}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lcccc}
+\toprule
+& \multicolumn{2}{c}{Generalized} & \multicolumn{2}{c}{Pooled} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+Region & Embed. & Expr. & Embed. & Expr. \\
+\midrule
+EC  & 0.452$\pm$0.29 & 0.388$\pm$0.26 & 0.476 & 0.435 \\
+ITG & 0.491$\pm$0.22 & 0.453$\pm$0.24 & 0.500 & 0.448 \\
+PFC & 0.569$\pm$0.16 & 0.443$\pm$0.23 & 0.560 & 0.441 \\
+V2  & 0.474$\pm$0.22 & 0.369$\pm$0.23 & 0.479 & 0.373 \\
+V1  & 0.390$\pm$0.25 & 0.389$\pm$0.22 & 0.388 & 0.381 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[!htb]
+\centering\small
+\caption{Atlas microglia: best-epoch Thal-phase F1 of the best tuned configuration per arm (8-fold CV).}
+\label{tab:micro}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lcccc}
+\toprule
+& \multicolumn{2}{c}{Generalized} & \multicolumn{2}{c}{Pooled} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+Region & Embed. & Expr. & Embed. & Expr. \\
+\midrule
+ITG & 0.779 & 0.524 & 0.771 & 0.544 \\
+PFC & 0.721 & 0.627 & 0.719 & 0.600 \\
+Cross-region & 0.652 & 0.356 & 0.684 & 0.370 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{GREmLN embeddings are more batch-robust than raw expression}\label{sec:batch}
+Raw-expression profiles for SEA-AD microglia carried visible batch structure, so we quantified how strongly technical batch ($\sim$50 batches) was reflected in each representation (Table~\ref{tab:batch}). This is expected from the construction in Eq.~\ref{eq:rep}: each gene's embedding is shared across all donors, so batch enters a donor's representation only through the expression weights, not through the embedding coordinates. On all three batch metrics GREmLN embeddings were markedly better mixed: batch silhouette fell from $-0.069$ to $-0.138$ (lower = less batch separation), integration LISI rose from 6.31 to 14.60, and the variance attributable to batch fell from 38\% to 14\%. Biological signal was retained by silhouette (ASW by Thal stage $-0.019$ vs.\ $-0.072$) but not by cLISI, which rose from 2.84 to 4.05, indicating more stage mixing. Both ASW$_{\text{bio}}$ values are low, consistent with fine-grained Thal staging being hard to resolve at the single-cell level. In practice, the binarized-Thal DGE required batch as a covariate, whereas the GREmLN arm did not.
+
+\begin{table}[!htb]
+\centering\small
+\caption{Batch and biological-conservation metrics, SEA-AD microglia ($\uparrow$/$\downarrow$: direction of better).}
+\label{tab:batch}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lcc}
+\toprule
+Metric & Raw expr. & GREmLN \\
+\midrule
+ASW$_{\text{batch}}$ ($\downarrow$) & $-0.069$ & $-0.138$ \\
+iLISI$_{\text{batch}}$ ($\uparrow$) & 6.31 & 14.60 \\
+PCR$_{\text{batch}}$ ($\downarrow$) & 0.382 & 0.143 \\
+ASW$_{\text{bio}}$, Thal ($\uparrow$) & $-0.072$ & $-0.019$ \\
+cLISI$_{\text{bio}}$, Thal ($\downarrow$) & 2.84 & 4.05 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{NIGP and DGE prioritize different genes in the atlas}
+Ranking genes with NIGP produced a different top list than DGE (astrocyte EC: \gene{IL2RA}, \gene{HES4}, \gene{AGRN}, \gene{DVL1}, \gene{FNDC10}, \gene{MMP23B}, \gene{PRKCZ}, \gene{HES5}, \gene{PRDM16}, \gene{AJAP1}).
+
+
+\subsection{Perturbation analysis links performance to specific genes}
+Permutation importance on the best astrocyte EC model ranked genes by the F1 drop when their values were shuffled (top: \gene{HES4}, \gene{PRKCZ}, \gene{DVL1}, \gene{PRDM16}, \gene{MMP23B}). This links predictive performance to individual genes and gives a candidate list for follow-up.
+
+
+\subsection{Independent validation on SEA-AD}\label{sec:seaad}
+\paragraph{Input configuration.}
+Under the fixed pipeline with joint Thal+Braak labels, GREmLN gene-level embeddings (config 1) clearly outperformed cell-level pseudocell embeddings (config 2) (Table~\ref{tab:ablation}), so gene-level embeddings became the NIGP default. The joint Thal+Braak objective was itself unsatisfactory: its confusion matrices concentrated predictions on the majority stages, and in a matched rerun the two arms were indistinguishable (Thal 0.359 vs.\ 0.361; Braak 0.495 vs.\ 0.524). We therefore trained the final models on Thal phase alone.
+
+\begin{table}[!htb]
+\centering\small
+\caption{SEA-AD microglia input ablation (joint Thal+Braak objective): generalized / pooled F1.}
+\label{tab:ablation}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lcc}
+\toprule
+Configuration & Thal & Braak \\
+\midrule
+1. GREmLN gene, patient & 0.39 / 0.40 & 0.50 / 0.51 \\
+2. GREmLN cell, pseudocell & 0.24 / 0.23 & 0.34 / 0.31 \\
+3. Raw expr., patient & 0.29 / 0.32 & 0.33 / 0.36 \\
+4. Raw expr., pseudocell & 0.27 / 0.24 & 0.45 / 0.42 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Per-fold comparison (Thal).} With best-epoch selection, GREmLN gene embeddings scored higher than matched raw expression for Thal phase in every fold (mean F1 0.449 vs.\ 0.401; Wilcoxon $p=0.0078$; Table~\ref{tab:perfold}). Sec.~\ref{sec:evalpit} examines how much of this depends on epoch selection.
+
+\begin{table}[!htb]
+\centering\small
+\caption{Per-fold best-epoch Thal F1, SEA-AD microglia (mean over seeds). See text for epoch-selection sensitivity analysis.}
+\label{tab:perfold}
+\begin{tabular}{cccc}
+\toprule
+Fold & Embedding & Expression & $\Delta$ \\
+\midrule
+1 & 0.353 & 0.268 & +0.085 \\
+2 & 0.480 & 0.422 & +0.058 \\
+3 & 0.436 & 0.424 & +0.012 \\
+4 & 0.435 & 0.403 & +0.032 \\
+5 & 0.377 & 0.355 & +0.022 \\
+6 & 0.549 & 0.444 & +0.105 \\
+7 & 0.611 & 0.610 & +0.001 \\
+8 & 0.354 & 0.285 & +0.069 \\
+\midrule
+Mean & 0.449 & 0.401 & +0.048 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Best-epoch selection inflates F1 in small-cohort staging}\label{sec:evalpit}
+Small cohorts make stage classifiers hard to evaluate, and we quantified this directly on SEA-AD. With 10--11 held-out donors per fold and six Thal classes, a single donor moving between classes changes fold F1 by about 0.1. Per-epoch F1 curves are therefore jagged, and the best epoch of a 100--200-epoch curve lies well above its typical value. Using the saved per-epoch curves, we recomputed the Table~\ref{tab:perfold} comparison without using the held-out fold to choose the epoch. When each fold's epoch was chosen from the other seven folds, the two arms scored 0.19 (embedding) vs.\ 0.25 (expression). Averaged over the last 10 epochs, they were equal (0.225 vs.\ 0.223), close to the majority-class baseline ($\approx$0.19). A label-shuffling control showed the same effect. Retraining the filtered-network model on shuffled donor labels gave a similar mean weighted F1 (0.503 vs.\ 0.506), but macro F1 decreased (0.361 vs.\ 0.414). Fold-to-fold consistency also collapsed: the s.d.\ of per-fold F1 more than doubled (0.165 vs.\ 0.076). The shuffled runs reach comparable average F1 by fitting the label composition of individual folds.
+
+Best-epoch F1 in cohorts of this size is thus an optimistic, high-variance estimate. It cannot by itself separate two representations, and we do not use it as evidence for NIGP. The gene-level results that follow are designed not to depend on it. Rankings are accepted only if they recur across seeds beyond a permutation null (Sec.~\ref{sec:filtered}), and they are evaluated against external evidence: overlap with DGE, chromatin accessibility and GWAS.
+
+\subsection{Filtered GRNs yield reproducible rankings}\label{sec:filtered}
+We ran the ranking procedure across multiple seeds with the unfiltered and MI-filtered SEA-AD microglia networks and counted genes recurrently ranked at each seed threshold (Table~\ref{tab:seeds}). With the filtered network, 381, 147, 51, 10 and 1 genes recurred in $\geq$5 through $\geq$9 of 10 seeds. This is well above the permutation null (233, 56, 9, 0.9 and 0 expected; observed counts exceed the null 99.9th percentile at $\geq$5 through $\geq$8, $p<0.001$). With the unfiltered network almost no gene recurred (2 at $\geq$5 of 11 seeds; none at $\geq$7). Most genes in that model showed no F1 drop at all in most seeds (77--99\% exactly zero), so its importance signal was too diffuse to rank reproducibly. One explanation is that low-confidence edges spread each gene's regulatory context across many weakly related genes, so permuting any single gene rarely changes the prediction. Filtering concentrates each gene's context on its high-confidence regulators, which makes its contribution measurable. Filtering to high-confidence edges is what makes reproducible prioritization possible, which justifies using the filtered network as the NIGP input.
+
+\begin{table}[!htb]
+\centering\small
+\caption{Genes recurrently ranked across seeds, SEA-AD microglia. Null: permutation expectation for the filtered network.}
+\label{tab:seeds}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lccc}
+\toprule
+Threshold & Filtered & Null (filt.) & Unfiltered \\
+\midrule
+$\geq$5 seeds & 381 & 233 & 2 \\
+$\geq$6 seeds & 147 & 56 & 1 \\
+$\geq$7 seeds & 51 & 9 & 0 \\
+$\geq$8 seeds & 10 & 0.9 & 0 \\
+$\geq$9 seeds & 1 & 0.0 & 0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{NIGP and DGE draw on different candidate pools}\label{sec:overlap}
+NIGP and DGE draw on largely different candidate pools. Only 8 of the 133 binarized-Thal DEGs (and 1 of the top 10) lie in the filtered GRN, because the network keeps genes with confident regulatory edges, while DGE's strongest hits include immune transcripts outside it (Sec.~\ref{sec:layers}). Accordingly, only one gene (\gene{MEIS1}) appears in both the NIGP lists ($\geq$6 or $\geq$7 seeds) and the DGE list. Within the GRN, 23\% of measurable genes were differentially expressed ($p_{\text{adj}}<0.05$) and only 8 passed the DGE fold-change threshold. NIGP genes were modestly more often differentially expressed than this network average (35 of 120, 29\%), but their median absolute $\log_2$ fold change was 0.16, far below the DGE threshold of 1. This is expected for regulators. TF activity is often controlled by cofactors, localization and post-translational modification rather than transcript level, and a modest change in a TF's expression can be amplified across its targets. A fold-change threshold discards such genes, whereas a score based on regulatory context can retain them. NIGP therefore surfaces genes that a fold-change threshold would discard, yet these same genes contribute to the progression model's predictions, recur across seeds, and are regulatory in character (below). This is the complementarity NIGP is designed for: DGE captures large shifts, while NIGP captures genes whose importance emerges from regulatory context. Neither list was enriched for AD GWAS genes from the GWAS Catalog~\cite{gwascatalog,bellenguez} (NIGP $\geq$6 seeds: 24 of 147, $1.26\times$ expected, $p=0.13$; DGE: 12 of 133, $0.79\times$, $p=0.85$; one-sided hypergeometric test against each list's candidate pool). This is consistent with both lists capturing progression-associated changes rather than inherited genetic risk.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.92\textwidth]{figures/fig7_go_nigp_vs_dge.png}
+\caption{Top g:Profiler terms for SEA-AD microglia gene lists, each against all annotated genes. Left: NIGP genes recurrent in $\geq$7 seeds. Right: binarized-Thal DGE genes. Dashed line: $p_{\text{adj}}=0.05$; axes are scaled per panel. The two lists capture different layers: NIGP terms reflect its regulator-centered candidate pool, while DGE terms reflect the genes with the largest expression changes.}
+\label{fig:enrich}
+\end{figure*}
+
+\subsection{NIGP and DGE capture different biological layers}\label{sec:layers}
+Gene-set enrichment of the 51 genes recurrent in $\geq$7 filtered-network seeds (Fig.~\ref{fig:enrich}, left) showed strong over-representation of regulatory and transcriptional categories: regulation of RNA metabolic process ($p_{\text{adj}}=1.6\times10^{-28}$), DNA-binding TF activity ($7.98\times10^{-21}$), DNA binding ($2.21\times10^{-21}$), zinc ion binding ($5.36\times10^{-12}$), nucleus ($2.05\times10^{-11}$) and chromatin ($7.80\times10^{-9}$). A similar signal appeared in the 132-gene top-200/$\geq$5-seed list from the unfiltered-network model (DNA binding $1.49\times10^{-16}$; transcription regulator activity $1.90\times10^{-6}$; regulation of nucleobase-containing compound metabolism $8.07\times10^{-10}$), so the signal does not depend on a particular network or seed threshold. The binarized-Thal DGE genes, tested the same way, showed a different profile: an immune response led by T cell activation ($p_{\text{adj}}=1.8\times10^{-10}$), with T cell receptor complex, immunological synapse and dendritic cell chemotaxis terms. The list included \gene{CD8A}, \gene{ITK} and \gene{CXCR4}, all higher at high Thal stage (Fig.~\ref{fig:enrich}, right). This is consistent with the T cell infiltration reported in the AD brain~\cite{gate}. DGE thus captures the immune response to pathology, and NIGP captures transcriptional regulators. The NIGP regulatory profile is consistent with its origin in a TF-centered GRN, and the genes' link to pathology is supported independently by accessibility (Sec.~\ref{sec:atacres}) and by the control analyses below (Sec.~\ref{sec:controls}).
+
+\subsection{Prioritized genes show disease-associated chromatin accessibility}\label{sec:atacres}
+\paragraph{Footprinting.} Six prioritized TFs (\gene{ETV4}, \gene{FOXN4}, \gene{SP2}, \gene{KLF12}, \gene{TBX15}, \gene{ZNF135}) were flagged by BINDetect as changing beyond the all-motif background between ADNC\,0/1 and ADNC\,3 (Table~\ref{tab:atac}). Four gained footprint score in high pathology (\gene{ETV4}, \gene{FOXN4}, \gene{SP2}, \gene{KLF12}). \gene{TBX15} and \gene{ZNF135} also rose in raw mean score, but by less than the global shift across all motifs, so BINDetect assigns them negative differential scores. We lead with this differential status rather than raw $p$-values: with $10^5$--$10^6$ binding sites per motif, nearly every raw comparison is nominally significant, and most motifs increased from ADNC\,0/1 to ADNC\,3, reflecting a global accessibility shift.
+
+\paragraph{Gene-level accessibility vs.\ DGE.} Genome-wide, donor-level accessibility differences between low and high Thal stage were weak: no gene passed $p_{\text{adj}}<0.05$, and 8.6\% had nominal $p<0.05$ (Table~\ref{tab:atacsets}). NIGP lists had somewhat more nominally changed loci than this rate (15\% of $\geq$7-seed genes, 12\% of $\geq$6-seed genes), but not significantly so ($p=0.12$ and $0.14$). The clearer signal was direction. NIGP genes' accessibility moved in the same direction as their expression in 73\% of $\geq$7-seed genes ($p=0.002$) and 66\% of $\geq$6-seed genes ($p=5\times10^{-4}$), against a non-significant 64\% for DGE genes ($p=0.08$). The strongest locus in both lists was \gene{MEIS1} (accessibility $p=0.002$, concordant with its RNA change), and within the $\geq$7-seed list \gene{MEIS1} and \gene{ZNF222} remained significant after within-set correction. The batch-adjusted sensitivity analysis gave the same picture: agreement of 69\% ($p=0.013$) and 67\% ($p=1.3\times10^{-4}$) for NIGP vs.\ 62\% ($p=0.14$) for DGE.
+
+Why DGE genes show no accessibility signal is itself informative. Part of the DGE signal comes from immune transcripts such as T-cell genes (Sec.~\ref{sec:layers}), whose change likely reflects cell composition rather than microglial gene regulation, so microglial chromatin need not follow it. In addition, only 47 of the 133 DGE genes are measurable as protein-coding genes with peaks. NIGP genes, by contrast, are regulators drawn from a microglia-specific GRN, which is where chromatin changes would be expected. Together with footprinting, this is preliminary evidence that the prioritized genes occupy chromatin that changes with AD pathology, consistently with their expression.
+
+\subsection{Regulatory embedding alignment and biological validation against GRN-based controls}\label{sec:controls}
+To determine whether NIGP prioritization depends on biologically meaningful regulatory representations rather than network membership or topology alone, we evaluated three complementary controls.
+
+\emph{Shuffled embeddings.} First, we randomly reassigned GRN-derived gene embeddings to genes while preserving expression values and using a fixed permutation across all training seeds. Despite comparable classification F1, the shuffled model yielded only 21 genes recurrent in at least 7 of 10 seeds, compared with 51 for the original NIGP model, with only 2 genes shared between the lists. Among ATAC-measurable genes, RNA--ATAC directional concordance without batch adjustment was 72.9\% (35/48) for NIGP versus 53.3\% (8/15) for the shuffled model.
+
+\emph{Random GRN gene sets.} Second, to test whether NIGP's biological concordance exceeded that expected from GRN membership alone, we compared its 48 ATAC-measurable genes against 1,000 randomly sampled sets of 48 measurable genes from the same filtered GRN. NIGP's 72.9\% concordance significantly exceeded the random-set distribution (empirical $p=0.006$; Fig.~\ref{fig:atacnull}).
+
+\emph{Topology-based rankings.} Third, we compared NIGP with two topology-based ranking baselines, degree centrality and PageRank, selecting 48 ATAC-measurable genes per method (Table~\ref{tab:central}). NIGP exhibited higher observed RNA--ATAC concordance (72.9\%) than degree centrality (60.4\%) and PageRank (43.8\%), as well as a greater proportion of genes with nominal differential accessibility (7/48 versus 2/48 and 4/48, respectively). Two NIGP genes, \gene{MEIS1} and \gene{ZNF222}, additionally passed within-list multiple-testing correction in the unadjusted analysis, whereas neither topology-based baseline yielded significant genes.
+
+\emph{Batch handling.} We used the unadjusted ATAC analysis as the primary comparison because PCA showed no obvious batch separation and a permutation test found no evidence of batch--Thal association (10,000 permutations; empirical $p=0.66$). As a sensitivity analysis, batch-adjusted RNA--ATAC concordance remained elevated for NIGP relative to random GRN gene sets (68.8\%; empirical $p=0.019$), although degree centrality achieved the same 68.8\% concordance.
+
+Together, these results demonstrate that regulatory embedding alignment influences the genes prioritized by NIGP and that its selected genes exhibit greater RNA--chromatin directional consistency than random GRN genes. The observed advantages over topology-based baselines are descriptive and do not, by themselves, establish statistically significant superiority.
+
+
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.82\textwidth]{figures/fig_atac_null.png}
+\caption{ATAC--RNA direction agreement of the NIGP $\geq$7-seed list (red line) vs.\ 1,000 random sets of 48 GRN genes (gray), binarized-Thal contrast, primary unadjusted analysis (left) and batch-adjusted sensitivity analysis (right). Dotted line: 50\%.}
+\label{fig:atacnull}
+\end{figure*}
+
+
+\begin{table}[!htb]
+\centering\small
+\caption{Prioritized TFs flagged by TOBIAS BINDetect as differentially bound between ADNC\,0/1 and ADNC\,3 (mean footprint scores).}
+\label{tab:atac}
+\begin{tabular}{lccc}
+\toprule
+TF & ADNC\,0 & ADNC\,3 & $\Delta$ \\
+\midrule
+\gene{ETV4} & 0.887 & 0.987 & $+0.084$ \\
+\gene{FOXN4} & 0.797 & 0.920 & $+0.073$ \\
+\gene{SP2} & 0.719 & 0.843 & $+0.052$ \\
+\gene{KLF12} & 0.735 & 0.862 & $+0.052$ \\
+\gene{TBX15} & 0.178 & 0.227 & $-0.025$ \\
+\gene{ZNF135} & 0.200 & 0.252 & $-0.024$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[!htb]
+\centering\small
+\caption{Gene-level ATAC differential accessibility (Thal 0--2 vs.\ 3--5; primary, unadjusted analysis) for pre-specified gene sets. $p<0.05$: nominal (genome-wide rate 8.6\%). Concordance: accessibility and RNA change in the same direction (binomial test vs.\ 50\%). Only 47 of the 133 DGE genes are protein-coding genes with peaks. Batch-adjusted results are given in the text.}
+\label{tab:atacsets}
+\setlength{\tabcolsep}{2.5pt}\footnotesize
+\begin{tabular}{lcccc}
+\toprule
+Gene set & $n$ & $p<0.05$ & Concordant & $p_{\text{bin}}$ \\
+\midrule
+NIGP, $\geq$7 seeds & 48 & 7 (15\%) & 35/48 (73\%) & 0.002 \\
+NIGP, $\geq$6 seeds & 128 & 15 (12\%) & 84/128 (66\%) & $5\times10^{-4}$ \\
+DGE (binarized Thal) & 47 & 6 (13\%) & 30/47 (64\%) & 0.08 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[!htb]
+\centering\small
+\caption{NIGP vs.\ GRN-centrality rankings of the same network, 48 ATAC-measurable genes per list (binarized Thal; NIGP $\geq$7 seeds; within-list significant: \gene{MEIS1}, \gene{ZNF222}). Agreement with RNA direction; in parentheses, $p$: empirical, against random 48-gene GRN sets.}
+\label{tab:central}
+\setlength{\tabcolsep}{2pt}\footnotesize
+\begin{tabular}{lccc}
+\toprule
+ & NIGP & Degree & PageRank \\
+\midrule
+ATAC $p<0.05$ & \textbf{7 (14.6\%)} & 2 (4.2\%) & 4 (8.3\%) \\
+Sig.\ within list & \textbf{2} & 0 & 0 \\
+Agreement & \textbf{72.9\%} (0.006) & 60.4\% (0.17) & 43.8\% (0.94) \\
+\quad batch-adj. & 68.8\% (0.019) & 68.8\% (0.017) & 50.0\% (0.75) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\FloatBarrier
+\section{Discussion}
+We introduced NIGP, a gene-prioritization procedure that complements differential expression by asking which genes a progression model needs once each gene is represented in its regulatory context. Two results support it. First, the resulting gene lists were reproducible beyond chance and drew on a different candidate pool than DGE: regulators with small fold changes that a fold-change threshold would discard. Second, those genes were not noise. Drawn from the regulatory space defined by the GRN, their accessibility tracked their expression beyond random GRN gene sets and a shuffled-embedding model, which DGE genes did not. Prioritized TFs also showed pathology-associated footprint changes. Together, this suggests that DGE and NIGP are complementary. DGE finds the genes that change most; NIGP finds regulators whose role is visible only in context. In practice, the two lists can be used together for candidate selection. Two further observations matter for practitioners. Regulatory embeddings separated strongly by region, so region-specific modeling is necessary. And because the embedding absorbs much of the batch structure, NIGP needs no batch covariates.
+
+\paragraph{Scope and limitations.}
+Stage classification itself is limited by cohort size. Six-class Thal staging with 10--11 held-out donors per fold yields noisy per-epoch F1, and the reported best-epoch values are optimistic. As quantified in Sec.~\ref{sec:evalpit}, the embedding advantage in SEA-AD did not hold under fold-independent epoch selection. NIGP's contribution therefore lies in the gene ranking rather than the classifier's accuracy. Nested cross-validation and coarser (e.g., binary) staging are natural next steps for the classification component. Atlas microglia results use the best tuned configuration rather than multi-seed retraining, and independent validation covers microglia only. The ATAC evidence is associational: footprinting used stage-aggregated tracks, and gene-level results rest on nominal $p$-values and direction concordance, and the advantages over topology-based rankings are descriptive. The atlas carried an \gene{APOE} imbalance, which the \gene{APOE}-balanced SEA-AD replication addresses. Finally, NIGP inherits the coverage of its GRN, and the bootstrap count and MI threshold are tunable choices.
+
+\paragraph{Future directions.}
+(i) Swapping in alternative GRN and embedding models within the same procedure; (ii) combining DGE and NIGP rankings into a joint prioritization; and (iii) donor-level footprinting to test TF binding with replicates.
+
+\section{Availability}
+Code, environment specification and analysis scripts are available at \url{https://github.com/manasvinisingh520/sf2026}. The AD progression atlas~\cite{serrano} and SEA-AD~\cite{seaad} are publicly available.
+
+\section*{Author contributions}
+M.S.\ conceived the project, designed and implemented NIGP, and generated the data and results. J.\todo{X}\ contributed to the independent-cohort (SEA-AD) validation and the biological experiments, and provided mentorship and analysis guidance.
+
+\section*{Acknowledgements}
+The authors thank lab members for sharing research and career perspectives, and the lab for supporting this work.
+
+%% References do not count toward the page limit
+
+{\small
+\begin{thebibliography}{99}\setlength{\itemsep}{0pt}
+\bibitem{rasmussen} J.~Rasmussen and H.~Langerman. Alzheimer's disease -- why we need early diagnosis. \emph{Degener.\ Neurol.\ Neuromuscul.\ Dis.}, 9:123--130, 2019.
+\bibitem{spargo} D.~Spargo et al. Estimating prevalence of early symptomatic Alzheimer's disease in the United States. \emph{Alzheimer's \& Dementia}, 15(4):e12497, 2023.
+\bibitem{rosati} D.~Rosati et al. Differential gene expression analysis pipelines and bioinformatic tools for the identification of specific biomarkers: a review. \emph{Comput.\ Struct.\ Biotechnol.\ J.}, 23:1154--1168, 2024.
+\bibitem{aracne} Califano Laboratory of Systems Biology. ARACNe. Columbia University. \url{https://califano.c2b2.columbia.edu/aracne}.
+\bibitem{scenic} S.~Aibar et al. SCENIC: single-cell regulatory network inference and clustering. \emph{Nat.\ Methods}, 14(11):1083--1086, 2017.
+\bibitem{scenicplus} C.~Bravo Gonz\'alez-Blas et al. SCENIC+: single-cell multiomic inference of enhancers and gene regulatory networks. \emph{Nat.\ Methods}, 20:1355--1367, 2023.
+\bibitem{genie3} V.~A.~Huynh-Thu et al. Inferring regulatory networks from expression data using tree-based methods. \emph{PLoS ONE}, 5(9):e12776, 2010.
+\bibitem{grnboost} T.~Moerman et al. GRNBoost2 and Arboreto: efficient and scalable inference of gene regulatory networks. \emph{Bioinformatics}, 35(12):2159--2161, 2019.
+\bibitem{viper} M.~J.~Alvarez et al. Functional characterization of somatic mutations in cancer using network-based inference of protein activity. \emph{Nat.\ Genet.}, 48(8):838--847, 2016.
+\bibitem{geneformer} C.~V.~Theodoris et al. Transfer learning enables predictions in network biology. \emph{Nature}, 618:616--624, 2023.
+\bibitem{scgpt} H.~Cui et al. scGPT: toward building a foundation model for single-cell multi-omics using generative AI. \emph{Nat.\ Methods}, 21:1470--1480, 2024.
+\bibitem{scfoundation} M.~Hao et al. Large-scale foundation model on single-cell transcriptomics. \emph{Nat.\ Methods}, 21:1481--1491, 2024.
+\bibitem{kendiukhov} I.~Kendiukhov. Systematic evaluation of single-cell foundation model interpretability. \emph{BMC Genomics}, 27(1):634, 2026.
+\bibitem{gremln} M.~Zhang et al. GREmLN: a cellular regulatory network-aware transcriptomics foundation model. \emph{bioRxiv}, 2025. doi:10.1101/2025.07.03.663009.
+\bibitem{serrano} A.~Serrano-Pozo et al. Astrocyte transcriptomic changes along the spatiotemporal progression of Alzheimer's disease. \emph{Nat.\ Neurosci.}, 27(12):2384--2400, 2024.
+\bibitem{seaad} Allen Institute for Brain Science. Seattle Alzheimer's Disease Brain Cell Atlas (SEA-AD). AWS Open Data Registry. \url{https://registry.opendata.aws/allen-sea-ad-atlas}.
+\bibitem{hansen} D.~V.~Hansen et al. Microglia in Alzheimer's disease. \emph{J.\ Cell Biol.}, 217(2):459--472, 2018.
+\bibitem{lambert} S.~A.~Lambert et al. The human transcription factors. \emph{Cell}, 172(4):650--665, 2018.
+\bibitem{optuna} T.~Akiba et al. Optuna: a next-generation hyperparameter optimization framework. In \emph{Proc.\ KDD}, 2623--2631, 2019.
+\bibitem{gprofiler} L.~Kolberg et al. g:Profiler---interoperable web service for functional enrichment analysis and gene identifier mapping (2023 update). \emph{Nucleic Acids Res.}, 51(W1):W207--W212, 2023.
+\bibitem{gwascatalog} E.~Sollis et al. The NHGRI-EBI GWAS Catalog: knowledgebase and deposition resource. \emph{Nucleic Acids Res.}, 51(D1):D977--D985, 2023.
+\bibitem{bellenguez} C.~Bellenguez et al. New insights into the genetic etiology of Alzheimer's disease and related dementias. \emph{Nat.\ Genet.}, 54:412--436, 2022.
+\bibitem{gate} D.~Gate et al. Clonally expanded CD8 T cells patrol the cerebrospinal fluid in Alzheimer's disease. \emph{Nature}, 577:399--404, 2020.
+\end{thebibliography}}
+
+\end{document}

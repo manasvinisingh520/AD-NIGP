@@ -192,6 +192,16 @@ def main(args):
         embeddings_matrix = np.array(
             [embeddings_dict[g] for g in gene_names], dtype=np.float16
         )
+        # --- Optional control: shuffle gene embeddings across genes ---
+        # Each gene keeps its own expression but is paired with another gene's GREmLN vector,
+        # so any GRN-specific information tied to a gene is destroyed while the set of vectors,
+        # the expression, cells, folds and labels stay identical.
+        shuffle_seed = getattr(args, "shuffle_embeddings", None)
+        if shuffle_seed is not None:
+            perm = np.random.default_rng(shuffle_seed).permutation(len(gene_names))
+            embeddings_matrix = embeddings_matrix[perm]
+            print(f"Gene embeddings SHUFFLED across genes (seed {shuffle_seed}); "
+                  f"{(perm == np.arange(len(perm))).sum()} genes kept their own vector by chance")
         embedding_dim = int(embeddings_matrix.shape[1])
         print(
             f"Expression: {expression_matrix.shape}, "
@@ -302,12 +312,13 @@ def main(args):
         # --- Save ---
         out_dir = os.path.join("data", "model_data")
         os.makedirs(out_dir, exist_ok=True)
+        out_tag = filt_tag + (f"_embshuffle_seed{shuffle_seed}" if shuffle_seed is not None else "")
         if data in ("SEAAD", "ROSMAP"):
-            out_name = f"{data}_{cell_type}_v2_data_{expr_transform}{filt_tag}.pkl"
+            out_name = f"{data}_{cell_type}_v2_data_{expr_transform}{out_tag}.pkl"
         elif cell_type == "Microglia":
-            out_name = f"{region}_Microglia_v2_data_{expr_transform}{filt_tag}.pkl"
+            out_name = f"{region}_Microglia_v2_data_{expr_transform}{out_tag}.pkl"
         else:
-            out_name = f"{region}_v2_data_{expr_transform}{filt_tag}.pkl"
+            out_name = f"{region}_v2_data_{expr_transform}{out_tag}.pkl"
         out_path = os.path.join(out_dir, out_name)
 
         payload = {
@@ -375,6 +386,12 @@ if __name__ == "__main__":
         help="Load the _filtered gene-embedding variant (e.g. "
              "GREmLN/embeddings/SEAAD_Microglia_filtered_gene_embeddings.tsv) and tag the "
              "output pickle with _filtered.",
+    )
+    parser.add_argument(
+        "--shuffle_embeddings", type=int, default=None, metavar="SEED",
+        help="Control: randomly reassign gene embeddings across genes (seeded) before scaling; "
+             "output pickle tagged _embshuffle_seed<SEED>. Train with "
+             "train_model_v2.py --data_tag _embshuffle_seed<SEED>.",
     )
     args = parser.parse_args()
     main(args)
