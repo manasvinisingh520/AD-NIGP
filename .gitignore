@@ -73,3 +73,6 @@ ranking_model_runs/*
 ranking_model_runs_combined/*
 ranking_model_runs_combined_microglia/*
 ranking_model_runs.1/*
+
+# static export of embedding_viz (published to gh-pages branch)
+site/
